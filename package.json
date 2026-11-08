@@ -20,16 +20,26 @@
     "check:placeholders": "node scripts/check-placeholders.mjs",
     "check:secrets": "bash scripts/secrets-scan.sh",
     "check:migrations": "node scripts/check-migration-order.mjs",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run eval && npm run check:placeholders && npm run check:secrets && npm run check:migrations",
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run eval && npm run check:placeholders && npm run check:secrets && npm run check:migrations && npm run check:licenses",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "@cloudflare/workers-types": "5.20261024.1",
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.2",
     "eslint": "10.13.0",
     "globals": "17.13.0",
     "typescript": "6.0.3",
     "typescript-eslint": "8.72.0",
-    "vitest": "4.1.12"
+    "vite": "8.3.5",
+    "vitest": "4.1.12",
+    "wrangler": "4.152.0"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "fsevents": false,
+    "workerd": false
   }
 }

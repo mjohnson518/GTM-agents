@@ -1,0 +1,6 @@
+# GTM-agents: local development secrets. Copy to .dev.vars (gitignored) and fill in for `wrangler dev`.
+# In production, set each one with `wrangler secret put <NAME>`; never commit real values.
+GATEWAY_TOKEN=
+UNSUBSCRIBE_SIGNING_KEY=
+PRODUCT_WEBHOOK_SECRET=
+PRODUCT_READ_SECRET=

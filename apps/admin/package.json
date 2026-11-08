@@ -4,5 +4,13 @@
   "private": true,
   "description": "The GTM-agents operator dashboard (Lit and Vite), served at /admin.",
   "license": "Apache-2.0",
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "lit": "3.3.3"
+  }
 }

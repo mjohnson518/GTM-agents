@@ -28,4 +28,12 @@ The runtime of a GTM-agents deployment. Every decision the system makes is made 
 
 ## Status
 
-This package is a scaffold. Its first code is the runtime skeleton.
+The runtime skeleton exists:
+- `createWorker`, with the HTTP surface and the scheduled and queue handlers;
+- the configuration schema, the job registry and its cron parser;
+- the port interfaces and the adapter manifest schema;
+- the flag registry and autonomy levels;
+- the brain (parse, validate, lock, slice assembly, runtime loader) and templates (validate, render);
+- the baseline migration.
+
+The safety spine and the pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned.

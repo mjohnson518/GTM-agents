@@ -1,0 +1,75 @@
+{
+  "title": "GTM-agents brain item: personas",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "economic_buyer",
+        "champion",
+        "user",
+        "influencer",
+        "blocker"
+      ]
+    },
+    "seat": {
+      "type": "string",
+      "enum": [
+        "decision_maker",
+        "influencer",
+        "user",
+        "other"
+      ]
+    },
+    "titles": {
+      "minItems": 1,
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "seniority": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "c_level",
+          "vp",
+          "head",
+          "director",
+          "manager",
+          "lead",
+          "senior",
+          "individual"
+        ]
+      }
+    },
+    "exclude_titles": {
+      "minItems": 1,
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80
+      }
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "role",
+    "seat",
+    "titles",
+    "text"
+  ],
+  "additionalProperties": false
+}

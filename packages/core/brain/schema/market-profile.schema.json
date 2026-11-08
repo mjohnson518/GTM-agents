@@ -1,0 +1,28 @@
+{
+  "title": "GTM-agents brain item: market-profile",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "category",
+        "segment",
+        "trend",
+        "buyer_behavior",
+        "timing",
+        "size"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "kind",
+    "text"
+  ],
+  "additionalProperties": false
+}

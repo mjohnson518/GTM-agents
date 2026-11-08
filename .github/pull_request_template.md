@@ -8,7 +8,7 @@
 
 ## Checklist
 
-- [ ] `npm run check` passes (typecheck, lint, tests, evals, placeholder, secret and migration checks)
+- [ ] `npm run check` passes (typecheck, lint, tests, evals, placeholder, secret, migration and license checks)
 - [ ] A test covers the new behavior, and would fail without this change
 - [ ] New behavior is behind a flag that defaults to off, or this change needs no flag
 - [ ] Fixtures and examples are synthetic (Acme, `*.example`), with no real people, replies, keys or resource ids

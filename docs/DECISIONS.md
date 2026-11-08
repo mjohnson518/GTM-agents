@@ -104,7 +104,7 @@ They live in one constant (`PERMANENT_HUMAN`). Their level is capped at "draft a
 
 **Decision.**
 - Every fixture is synthetic: the fictional company Acme, `*.example` domains, invented people and replies.
-- The worker template carries `${...}` placeholders for every resource name and id, and `gtm setup` fills them in a deployment's own copy.
+- The worker template carries `${...}` placeholders for every resource id and name, and `gtm setup` fills them in a deployment's own copy. The Worker and bucket names are the one exception: Wrangler validates their format even in a dry run, so they start as the generic defaults `gtm-agent` and `gtm-agent-bucket`.
 - `scripts/check-placeholders.mjs` and `scripts/secrets-scan.sh` run in the pre-commit hook and in CI. They reject UUID-shaped strings outside fixtures that declare themselves synthetic, real `*.workers.dev` hostnames, concrete resource ids in Wrangler config, and credential-shaped values.
 - A deployment's real brain, config and secrets live in its own private overlay ([examples/overlay](../examples/overlay/)).
 

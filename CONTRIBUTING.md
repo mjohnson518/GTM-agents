@@ -16,7 +16,7 @@ npm run check      # must be green before you open a pull request
 2. lint (with the house-rule, doc-link and conflict-copy checks);
 3. tests;
 4. evals;
-5. the placeholder, secret and migration checks.
+5. the placeholder, secret, migration and license checks.
 
 The pre-commit hook runs the same checks on what your commit would contain. If a hook fails, fix the cause. Never pass `--no-verify`.
 

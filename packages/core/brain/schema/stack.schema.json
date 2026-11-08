@@ -1,0 +1,33 @@
+{
+  "title": "GTM-agents brain item: stack",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "technology": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "relation": {
+      "type": "string",
+      "enum": [
+        "integrates",
+        "complements",
+        "replaces",
+        "competes",
+        "requires"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "technology",
+    "relation",
+    "text"
+  ],
+  "additionalProperties": false
+}

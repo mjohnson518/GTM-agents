@@ -1,0 +1,27 @@
+{
+  "title": "GTM-agents brain item: voice",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "do",
+        "dont",
+        "phrase",
+        "avoid",
+        "signoff"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "kind",
+    "text"
+  ],
+  "additionalProperties": false
+}

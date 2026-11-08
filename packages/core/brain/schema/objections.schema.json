@@ -1,0 +1,31 @@
+{
+  "title": "GTM-agents brain item: objections",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "objection": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "response": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "personas": {
+      "minItems": 1,
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+      }
+    }
+  },
+  "required": [
+    "objection",
+    "response"
+  ],
+  "additionalProperties": false
+}

@@ -13,9 +13,11 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the workspace layout and its package boundaries;
 - the repository checks (placeholders, secrets, migration order, house rules, conflict copies, doc links), run by the pre-commit hook and by CI;
 - the reference docs in this folder;
-- the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies.
+- the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies;
+- the core runtime skeleton: `createWorker`, configuration, the job registry, the port interfaces, the brain and template engines, and the baseline migration;
+- the worker template, which bundles from placeholders, and the admin shell.
 
-The runtime is not usable yet.
+The runtime does not run any GTM work yet: no jobs, adapters or agents are registered.
 
 ## Milestones
 

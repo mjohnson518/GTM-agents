@@ -1,0 +1,42 @@
+{
+  "title": "GTM-agents brain item: commercial",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "plan": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "price": {
+      "type": "number",
+      "minimum": 0
+    },
+    "currency": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "interval": {
+      "type": "string",
+      "enum": [
+        "month",
+        "year",
+        "one_time"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    }
+  },
+  "required": [
+    "plan",
+    "text"
+  ],
+  "additionalProperties": false
+}

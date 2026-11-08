@@ -175,8 +175,9 @@ A component reaches a prompt only if all of these hold:
 1. Its frontmatter says `status: approved`.
 2. Its frontmatter `component` matches the file name.
 3. The SHA-256 of the file's exact bytes matches its entry in the lock file.
+4. It parses cleanly and passes the single-file rules: no URLs outside `url` fields, no prices outside `commercial`.
 
-A draft is never read, and with no lock nothing is served. When a component is not served, prompts fall back to behavior that does not depend on it.
+The loader re-checks all of these at runtime. A draft is never read, and with no lock nothing is served. When a component is not served, prompts fall back to behavior that does not depend on it.
 
 ### Byte budgets
 
@@ -289,7 +290,8 @@ Is that something your team tracks today, or does it mostly show up as frustrati
 
 - The body is plain text. It has no footer, unsubscribe line or tracking: the send path appends the postal footer and the unsubscribe line to every email.
 - The only links allowed are `{{booking_url}}` and URLs on your own company domain.
-- Word counts after substitution: `cold_intro` 30 to 180, `follow_up` and `breakup` 12 to 120, `lifecycle` 12 to 160.
+- Word counts after substitution: `cold_intro` 30 to 180, `follow_up`, `breakup` and `check_in` 12 to 120, `proposal` and `lifecycle` 12 to 160. Validation rejects a body that is already over the maximum before substitution, and warns when it may be under the minimum; the send-time quality gate enforces the bounds on the rendered draft.
+- `{{company_context}}` is not allowed in a subject.
 - A `cold_intro` asks at least one question.
 - At most one exclamation mark. No em dashes or en dashes.
 - No placeholder syntax other than the variables above: no `{ }`, `[INSERT]`, `%s`, TODO or lorem.
@@ -305,7 +307,7 @@ npx gtm brain validate --write-lock    # validate, then write brain/brain.lock.j
 ```
 
 **Errors** (non-zero exit):
-- an unknown or missing component file name;
+- a file name that is not one of the fourteen components;
 - invalid frontmatter;
 - an unknown field or a missing required field;
 - a wrong enum value, an out-of-range number or a malformed date;

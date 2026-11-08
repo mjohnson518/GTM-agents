@@ -53,7 +53,7 @@ Core never imports a vendor SDK. Every third party (email providers, mailboxes, 
 
 ## Bindings
 
-`apps/worker/wrangler.jsonc` declares these bindings. Every resource name and id is a `${...}` placeholder until `gtm setup` fills it in.
+`apps/worker/wrangler.jsonc` declares these bindings. Every resource id and name is a `${...}` placeholder until `gtm setup` fills it in, except the Worker and bucket names, which start as the defaults `gtm-agent` and `gtm-agent-bucket` because Wrangler validates their format.
 
 | Binding | Cloudflare product | Used for |
 |---|---|---|

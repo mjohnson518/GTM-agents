@@ -1,0 +1,34 @@
+{
+  "title": "GTM-agents brain item: influencers",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "publication",
+        "newsletter",
+        "podcast",
+        "community",
+        "person",
+        "event"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "kind",
+    "name",
+    "text"
+  ],
+  "additionalProperties": false
+}

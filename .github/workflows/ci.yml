@@ -35,6 +35,23 @@ jobs:
       - run: npm run check:secrets
       - run: npm run check:migrations
 
+  worker:
+    name: Admin build and worker bundle (placeholders)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace @gtm-agents/admin
+      - name: wrangler deploy --dry-run (production and staging)
+        working-directory: apps/worker
+        run: |
+          npx wrangler deploy --dry-run --outdir dist
+          npx wrangler deploy --dry-run --env staging --outdir dist-staging
+
   secrets:
     name: Secrets scan (gitleaks)
     runs-on: ubuntu-latest
@@ -59,6 +76,5 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
-      - run: >-
-          npx --yes license-checker-rseidelsohn@5.0.1 --production --excludePrivatePackages
-          --onlyAllow "MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;0BSD;BlueOak-1.0.0;CC0-1.0;Unlicense"
+      # Workspace-aware: lists every workspace's production dependencies with `npm query`.
+      - run: npm run check:licenses

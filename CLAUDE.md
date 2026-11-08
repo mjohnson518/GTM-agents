@@ -18,6 +18,7 @@ npm run eval                     # behavior evals (gate, triage, templates); no 
 npm run check:placeholders       # template hygiene: UUIDs, workers.dev hosts, resource ids, secret-shaped values
 npm run check:secrets            # known credential formats
 npm run check:migrations         # migration order and idempotency
+npm run check:licenses           # production dependencies of every workspace are permissively licensed
 npm run check                    # all of the above, in that order; must be green before staging
 ```
 
@@ -71,7 +72,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 ## Hygiene
 
 - **Fixtures are synthetic.** The fictional company is Acme (`examples/brains/acme`), and every person, account, address and reply in a test is invented, on `*.example` domains. No fixture ever holds a real person's data, and no real contact list is ever added to the repository.
-- **The template stays deployable from placeholders.** `apps/worker/wrangler.jsonc` carries `${...}` placeholders for every resource id and name. `scripts/check-placeholders.mjs` (pre-commit and CI) fails on UUID-shaped strings outside synthetic fixtures, real `*.workers.dev` hostnames, concrete resource ids in Wrangler config, and secret-shaped values. A fixture that needs UUIDs declares itself synthetic on its first line with `gtm:synthetic-fixture`.
+- **The template stays deployable from placeholders.** `apps/worker/wrangler.jsonc` carries `${...}` placeholders for every resource id and name, except the Worker and bucket names, whose format Wrangler validates; those start as generic defaults. `scripts/check-placeholders.mjs` (pre-commit and CI) fails on UUID-shaped strings outside synthetic fixtures, real `*.workers.dev` hostnames, concrete resource ids in Wrangler config, and secret-shaped values. A fixture that needs UUIDs declares itself synthetic on its first line with `gtm:synthetic-fixture`.
 - **Secrets come from `wrangler secret put`** (or `.dev.vars`, which is gitignored, for local development), never from code, config files or tests. `scripts/secrets-scan.sh` runs in the pre-commit hook and in CI.
 - **Agents working in this repository stage their changes and hand the commit to a person.** They do not commit, push, rewrite history or touch remotes ([ADR-008](docs/DECISIONS.md#adr-008-agents-stage-humans-commit)). The hooks in `.githooks/` are the gate, and nobody bypasses them. Commit subjects are short, imperative and capitalized, with no trailing period.
 - **Every source file starts with a header comment** naming this project and what the file owns, for example `// GTM-agents: the action gate`.

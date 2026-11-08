@@ -1,0 +1,9 @@
+// GTM-agents: bindings for the core test suite. Local only: Miniflare creates these in memory.
+{
+  "name": "gtm-core-tests",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [{ "binding": "DB", "database_name": "gtm-core-tests", "database_id": "local-test-database" }],
+  "kv_namespaces": [{ "binding": "KV", "id": "local-test-kv" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "gtm-core-tests" }]
+}

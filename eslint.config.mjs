@@ -38,7 +38,6 @@ export default defineConfig(
       "**/.wrangler/**",
       "**/coverage/**",
       "apps/worker/public/**",
-      "docs/planning/**",
       ".local/**",
     ],
   },
@@ -65,6 +64,13 @@ export default defineConfig(
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
       ],
       "@typescript-eslint/consistent-type-imports": "error",
+    },
+  },
+  {
+    // Test doubles often implement async interfaces without awaiting anything.
+    files: ["**/test/**/*.ts", "tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/require-await": "off",
     },
   },
   {

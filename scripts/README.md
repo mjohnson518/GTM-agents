@@ -12,6 +12,8 @@ Each check accepts the same inputs: no flag (tracked files plus untracked files 
 | `check-house-rules.mjs` | Em dashes and en dashes anywhere in tracked text |
 | `check-conflict-copies.mjs` | Duplicates left by file-sync tools, such as `index 2.ts` or `notes (1).md` |
 | `check-doc-links.mjs` | Relative Markdown links that point at missing files |
+| `check-licenses.mjs` | A production dependency of any workspace whose license is not on the permissive allowlist (MIT, ISC, Apache-2.0, BSD, 0BSD, BlueOak, CC0, Unlicense). Development tooling is not shipped and is not checked |
+| `generate-brain-schema.ts` | Not a check. It regenerates the brain's JSON Schemas in `packages/core/brain/schema/` after a schema change; a test fails if they are out of date |
 | `check-commit-msg.mjs` | A commit subject that is empty, not capitalized, longer than 72 characters, or ends with a period (run by `.githooks/commit-msg`) |
 | `install-hooks.mjs` | Not a check. It points git at `.githooks/` when you run `npm install` |
 

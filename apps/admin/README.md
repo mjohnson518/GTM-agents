@@ -6,4 +6,4 @@ The dashboard talks to the Worker over an authenticated WebSocket RPC that denie
 
 ## Status
 
-This app is a scaffold. A minimal shell that shows deployment health comes first. The full views (GTM cockpit, pipeline, inbound, agents, chat, activity, learnings, settings) arrive with the dashboard milestone.
+A minimal shell that shows deployment health exists today. `npm run build --workspace @gtm-agents/admin` builds it into `apps/worker/public/admin`, and Wrangler runs that build before every deploy. The full views (GTM cockpit, pipeline, inbound, agents, chat, activity, learnings, settings) are planned in [docs/ROADMAP.md](../../docs/ROADMAP.md).

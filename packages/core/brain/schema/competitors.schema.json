@@ -1,0 +1,33 @@
+{
+  "title": "GTM-agents brain item: competitors",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "positioning": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "differentiators": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "when_we_lose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "name",
+    "positioning",
+    "differentiators"
+  ],
+  "additionalProperties": false
+}
