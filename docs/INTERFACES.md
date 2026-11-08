@@ -319,6 +319,11 @@ export interface EmailProvider {
   parseWebhook(request: Request): Promise<EmailEvent[]>;
   /** Optional: delivery state for reconciliation. */
   getDelivery?(providerMessageId: string): Promise<{ state: "queued" | "delivered" | "bounced" | "complained" | "unknown"; at?: string }>;
+  /**
+   * Optional: the RFC 5322 Message-ID the provider gave a sent message, or null when it has none.
+   * Follow-ups thread under it; core stores it on the send ledger, so it is asked once per send.
+   */
+  getMessageId?(providerMessageId: string): Promise<string | null>;
 }
 ```
 
@@ -338,13 +343,30 @@ export interface InboundMessage {
   receivedAt: string;
   inReplyTo?: string;
   references?: string[];
-  headers: Record<string, string>;     // Auto-Submitted, Precedence, List-Id and friends, for structural triage
-  isFromUs: boolean;
+  headers: Record<string, string>;     // lowercase keys: auto-submitted, precedence, list-id, message-id...; untrusted
+  isFromUs: boolean;                   // a sent copy, a draft, or mail from the mailbox's own address
+  isDraft?: boolean;                   // an unsent draft; left out when the adapter cannot tell
+  deliveryReport?: string;             // a bounce's machine-readable parts, so core can read the failed recipient
+}
+
+export interface InboxListArgs {
+  since?: string;                      // used when there is no cursor or it expired
+  cursor?: string;
+  limit: number;
+  known?: (ids: readonly string[]) => Promise<ReadonlySet<string>>;   // lets the adapter skip mail core already holds
+}
+
+export interface InboxPage extends Page<InboundMessage> {
+  more?: boolean;                      // more messages wait past `limit`
+  reset?: boolean;                     // the cursor had expired and the listing fell back to `since`
 }
 
 export interface InboxProvider {
   readonly name: string;
-  listNew(args: { since?: string; cursor?: string; limit: number }): Promise<Page<InboundMessage>>;
+  /** Each is true unless set false; an inbound-only adapter sets all three false and core skips them. */
+  readonly capabilities?: Partial<Record<"threads" | "drafts" | "send", boolean>>;
+  listNew(args: InboxListArgs): Promise<InboxPage>;
+  draftExists?(draftId: string): Promise<boolean>;
   getThread(threadId: string): Promise<InboundMessage[]>;
   createDraft(draft: { threadId?: string; to: string; subject: string; text: string; inReplyTo?: string; references?: string[] }): Promise<{ draftId: string }>;
   updateDraft(draftId: string, text: string): Promise<void>;
@@ -543,7 +565,8 @@ runEmailVerifierContract(create, fixtures)        // _contract/email-verifier.ts
 runEmailProviderContract(create, fixtures)        // _contract/email-provider.ts; a signed and a tampered webhook
 runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
 runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
-// Runners for InboxProvider and the other ports arrive with the adapters that need them.
+runInboxProviderContract(create, fixtures)        // _contract/inbox-provider.ts; capability-limited adapters declare what they cannot do
+// Runners for the other ports arrive with the adapters that need them.
 ```
 
 Each adapter's `contract.test.ts` calls the runner with a recorded-response `fetch`. Contract tests are hermetic and run in `npm test`. Live tests, which use real keys, sit behind `ADAPTER_LIVE=1` and never run in CI.
@@ -554,8 +577,8 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 |---|---|---|
 | `email-resend` | EmailProvider | Batch send, Svix-style webhook, tags for correlation. Available |
 | `email-gmail` | EmailProvider (non-cold sends from the warm mailbox) | Shares Google auth with the other Google adapters |
-| `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured |
-| `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending |
+| `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured. Available |
+| `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending. Available |
 | `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests. Available |
 | `data-exa` | DiscoverySource | `search` is available; `research` and `watch` (websets and monitors) are planned |
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Many providers behind one gateway; the allowlist and daily cap are core config |

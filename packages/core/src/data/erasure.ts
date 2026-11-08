@@ -1,14 +1,17 @@
 // GTM-agents: erasure. One call removes a person's personal data and leaves a tombstone.
 //
 // A person is a mailbox: erasing jane@acme.example also erases jane+news@acme.example, and the
-// reverse. eraseContact finds every contact stored under the mailbox, then runs one D1 batch, so it
-// is all or nothing:
+// reverse. eraseContact finds every contact stored under the mailbox, erases their inbound mail
+// (bodies before rows, repeatable), then runs one D1 batch for everything else, all or nothing:
 //   1. writes the tombstone (exact and mailbox hashes) that keeps the person from being re-added
 //      or emailed;
 //   2. deletes rows that hold one of their addresses without a contact link, matching case,
 //      surrounding spaces and the "Name <address>" form: candidates and their evidence, drafts and
-//      deferred sends, inbound mail they sent, referrals naming them, operator chat messages that
-//      mention them, cached verification results;
+//      deferred sends, referrals naming them, operator chat messages that mention them, cached
+//      verification results. Before that batch, inbound mail they sent or that names them (in its
+//      subject, preview or headers, or as a failed recipient of a delivery report) is deleted,
+//      each body from blob storage before its row (the bucket option is required when bodies
+//      exist);
 //   3. deletes the contact rows. Foreign keys then delete per-contact state (tags, scores, drafts,
 //      inbound mail, meetings, feedback and so on) and clear contact_id on the measurement ledgers.
 // eraseByHash does the same when only the address hash is known (the product's user.deleted
@@ -27,11 +30,51 @@ interface ErasureOptions {
   source: ErasureSource;
   now?: Date;
   productUserId?: string;
+  /**
+   * Blob storage holding inbound bodies (the BUCKET binding). The bodies of the inbound mail being
+   * erased are deleted before their rows; a deletion that fails throws, so the erasure can simply
+   * be run again. Required when the person has inbound mail with a stored body.
+   */
+  bucket?: Pick<R2Bucket, "delete"> | null;
 }
 
 // Matches a free-text address column against the JSON list of addresses in ?1.
 const addressIn = (column: string) =>
   `(lower(trim(${column})) IN (SELECT value FROM json_each(?1)) OR EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(${column}), '<' || value || '>') > 0))`;
+
+// Inbound mail about the person: mail they sent (by address, address hash or contact), delivery
+// reports about them (by failed-recipient hash), and mail whose subject, preview or headers name
+// one of their addresses. ?1 is the JSON list of addresses, ?2 of contact ids, ?3 of address hashes.
+const inboundAbout = `SELECT id, body_key FROM inbound_emails WHERE ${addressIn("sender_email")}
+  OR contact_id IN (SELECT value FROM json_each(?2))
+  OR sender_sha256 IN (SELECT value FROM json_each(?3))
+  OR sender_mailbox_sha256 IN (SELECT value FROM json_each(?3))
+  OR EXISTS (SELECT 1 FROM json_each(inbound_emails.failed_recipients) f WHERE f.value IN (SELECT value FROM json_each(?3)))
+  OR EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(coalesce(subject, '') || ' ' || coalesce(body_preview, '') || ' ' || coalesce(headers, '')), value) > 0)
+  LIMIT 500`;
+
+// R2 deletes at most 1,000 keys per call.
+const BLOB_DELETE_CHUNK = 1000;
+const MAX_INBOUND_PASSES = 20;
+
+/**
+ * Delete the inbound rows matching `select` (which returns id and body_key), bodies first. Each
+ * pass selects once, deletes exactly those blobs, then exactly those rows, so a row that arrives
+ * mid-pass is never deleted without its blob; passes repeat until nothing matches. Throws on a
+ * storage error before any row of that pass is deleted, and refuses to delete rows that have a
+ * body when no bucket was given, rather than orphan the body.
+ */
+async function eraseInbound(db: D1Database, bucket: Pick<R2Bucket, "delete"> | null | undefined, select: string, binds: unknown[]): Promise<void> {
+  for (let pass = 0; pass < MAX_INBOUND_PASSES; pass++) {
+    const { results } = await db.prepare(select).bind(...binds).all<{ id: string; body_key: string | null }>();
+    if (results.length === 0) return;
+    const keys = results.map((r) => r.body_key).filter((k): k is string => typeof k === "string" && k.length > 0);
+    if (keys.length > 0 && !bucket) throw new TypeError("this person has inbound mail with stored bodies; pass the BUCKET binding as options.bucket so they are erased too");
+    for (let i = 0; i < keys.length; i += BLOB_DELETE_CHUNK) await bucket?.delete(keys.slice(i, i + BLOB_DELETE_CHUNK));
+    await db.prepare("DELETE FROM inbound_emails WHERE id IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(results.map((r) => r.id))).run();
+  }
+  throw new Error("inbound mail kept arriving while it was being erased; run the erasure again");
+}
 
 /** Erase everything held about the mailbox of `email`. Throws on invalid input or a database error. */
 export async function eraseContact(db: D1Database, email: string, options: ErasureOptions): Promise<ErasureResult> {
@@ -52,6 +95,10 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
        ON CONFLICT(email_sha256) DO UPDATE SET mailbox_sha256 = COALESCE(erasure_tombstones.mailbox_sha256, excluded.mailbox_sha256)`,
     );
   const hashes = await Promise.all(contacts.map(async (c) => [await addressHash(c.email), c.email] as const));
+  const addressHashes = JSON.stringify([...new Set([fields.email_sha256, fields.mailbox_sha256, ...hashes.map(([h]) => h)])]);
+  // Inbound mail first, bodies before rows: a storage failure throws before the person's other
+  // rows are touched, so the erasure can simply run again.
+  await eraseInbound(db, options.bucket, inboundAbout, [addresses, ids, addressHashes]);
   await db.batch([
     tombstone.bind(fields.email_sha256, fields.mailbox_sha256, options.productUserId ?? null, options.source, now),
     ...hashes.map(([hash]) => tombstone.bind(hash, fields.mailbox_sha256, options.productUserId ?? null, options.source, now)),
@@ -59,7 +106,6 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     db.prepare(`DELETE FROM candidates WHERE id IN (${candidates})`).bind(addresses, ids),
     db.prepare(`DELETE FROM drafts WHERE ${addressIn("recipient_email")}`).bind(addresses),
     db.prepare(`DELETE FROM deferred_sends WHERE ${addressIn("recipient_email")}`).bind(addresses),
-    db.prepare(`DELETE FROM inbound_emails WHERE ${addressIn("sender_email")}`).bind(addresses),
     db.prepare(`DELETE FROM referrals WHERE ${addressIn("referee_email")}`).bind(addresses),
     // Operator chat history can quote an address; drop any message that mentions one of them.
     db.prepare("DELETE FROM chat_messages WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(content), value) > 0)").bind(addresses),
@@ -78,6 +124,8 @@ export async function eraseByHash(db: D1Database, emailSha256: string, options: 
   const contact = await db.prepare("SELECT email FROM contacts WHERE email_sha256 = ?1").bind(emailSha256).first<{ email: string }>();
   if (contact) return eraseContact(db, contact.email, options);
   const now = (options.now ?? new Date()).toISOString();
+  // Mail they sent and delivery reports about them are found by the hash too.
+  await eraseInbound(db, options.bucket, inboundAbout, ["[]", "[]", JSON.stringify([emailSha256])]);
   await db
     .prepare("INSERT OR IGNORE INTO erasure_tombstones (email_sha256, product_user_id, source, erased_at, created_at) VALUES (?1, ?2, ?3, ?4, ?4)")
     .bind(emailSha256, options.productUserId ?? null, options.source, now)

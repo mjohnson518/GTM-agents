@@ -48,7 +48,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/
 docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -69,7 +69,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 8. **Flags default off.** Every new capability ships behind a flag that stays off until the operator turns it on, and `gtm doctor` lists every flag and its state.
 9. **Bounded and reversible.** Every job has a per-run ceiling (rows, spend, time) and leaves a run row. Anything that writes outside the database is either idempotent or claimed in the effects ledger first.
 10. **The database is the truth.** Blob storage, KV and the vector index are caches or archives that can be rebuilt from it.
-11. **Email is plain text,** with a postal footer, `List-Unsubscribe` headers and threading headers. No tracking pixels, no click tracking.
+11. **Email is plain text,** with `List-Unsubscribe` and threading headers on every message, and a postal footer on cold and sequence mail. A reply to someone who wrote in carries the headers but no visible footer, so it reads like a normal reply. No tracking pixels, no click tracking.
 12. **No em dashes or en dashes anywhere:** not in code comments, docs, generated copy or templates. Use commas, periods, colons or parentheses. `scripts/check-house-rules.mjs` enforces this.
 
 ## Hygiene
@@ -153,6 +153,9 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How sourcing, enrichment and promotion work | [docs/SOURCING.md](docs/SOURCING.md) |
 | How the quality gate and the cold batch work | [docs/OUTREACH.md](docs/OUTREACH.md) |
 | How the send path, unsubscribe and the bounce monitor work | [docs/SENDING.md](docs/SENDING.md) |
+| How follow-ups are swept, threaded and released | [docs/SEQUENCES.md](docs/SEQUENCES.md) |
+| How a mailbox is connected and inbound mail is classified | [docs/INBOX.md](docs/INBOX.md) |
+| How replies are triaged, drafted, approved and sent | [docs/REPLIES.md](docs/REPLIES.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |
 | What goes in `brain/` and `templates/`, and how is it validated | [docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md) |
 | Why was a structural choice made | [docs/DECISIONS.md](docs/DECISIONS.md) |

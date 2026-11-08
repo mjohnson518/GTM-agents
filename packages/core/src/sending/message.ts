@@ -2,9 +2,13 @@
 // headers, threading headers and the correlation tags.
 //
 //   - From is the cold sender on the isolated sending domain (sending.from) and Reply-To the real
-//     mailbox (sending.replyTo), so every reply lands in one inbox.
+//     mailbox (sending.replyTo), so every reply lands in one inbox. A reply sent through the warm
+//     mailbox goes from that mailbox itself (sending.replyTo) and needs no Reply-To.
 //   - The body is plain text. The footer is appended here, never by a caller: the postal address
 //     from gtm.config.ts and a line saying how to stop (reply "unsubscribe", or open the link).
+//     A reply to someone who wrote in (path "reply") carries no visible footer, so it reads like a
+//     normal reply; it keeps the List-Unsubscribe headers. Cold, sequence and lifecycle mail always
+//     carry the footer.
 //   - List-Unsubscribe carries the signed one-click link and a mailto to the reply-to mailbox, and
 //     List-Unsubscribe-Post marks the link as one-click (RFC 8058).
 //   - In-Reply-To and References are added when threading. Ids that do not look like message ids
@@ -72,19 +76,27 @@ export interface MessageParts {
   sendId: string;
   link: string;
   sending: Pick<GtmConfig["sending"], "from" | "replyTo" | "postalAddress">;
+  /** "mailbox" for a reply sent through the warm mailbox; the email provider otherwise. */
+  channel?: "provider" | "mailbox";
+}
+
+/** True when the message carries the visible footer: everything except a reply to someone who wrote in. */
+export function carriesFooter(item: Pick<OutreachItem, "path">): boolean {
+  return item.path !== "reply";
 }
 
 /** The outbound message for one item. */
 export function buildOutboundMessage(parts: MessageParts): OutboundMessage {
   const { item, sending } = parts;
   const name = item.toName?.trim();
+  const mailbox = parts.channel === "mailbox";
   return {
     effectKey: item.idempotencyKey,
-    from: { email: sending.from.email, ...(sending.from.name ? { name: sending.from.name } : {}) },
+    from: { email: mailbox ? sending.replyTo : sending.from.email, ...(sending.from.name ? { name: sending.from.name } : {}) },
     to: { email: parts.to, ...(name && name.length <= 80 && !UNSAFE_NAME.test(name) ? { name } : {}) },
-    replyTo: sending.replyTo,
+    ...(mailbox ? {} : { replyTo: sending.replyTo }),
     subject: item.subject,
-    text: withFooter(item.body, plainTextFooter(sending, parts.link)),
+    text: carriesFooter(item) ? withFooter(item.body, plainTextFooter(sending, parts.link)) : item.body.replace(/\s+$/, ""),
     headers: messageHeaders(parts.link, sending.replyTo, item),
     tags: messageTags(item, parts.sendId),
   };

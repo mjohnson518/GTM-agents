@@ -66,8 +66,18 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "verification:backfill_daily", kind: "number", default: "50", description: "Addresses verified by the nightly backfill." },
 
   // Replies, sequences and convert.
+  { key: "inbox:enabled", kind: "boolean", default: "false", description: "Inbox intake (docs/INBOX.md): the poll, sweep and watch renewal jobs, the push webhook's poll and Email Routing intake. Off, or unreadable, nothing is recorded or acted on: the push webhook verifies and acknowledges only, and routed mail is forwarded when a forward address is set, otherwise rejected." },
+  { key: "inbox:cursor:<provider>", kind: "json", default: null, description: "State: a mailbox's poll cursor, {cursor, at}. A rebuildable cache: unset or unreadable, the poll lists the last day instead." },
+  { key: "inbox:push_last", kind: "string", default: null, description: "State: when the last push-triggered poll started, so a burst of pushes runs one poll." },
   { key: "signal_response:auto_send", kind: "boolean", default: "false", description: "The signal fast lane." },
   { key: "inbound:auto_send_tier", kind: "boolean", default: "false", description: "The reply auto-send tier." },
+  { key: "replies:triage_enabled", kind: "boolean", default: "false", description: "Reply triage (docs/REPLIES.md): the triage model reads new human mail, and routing applies each intent's side effects (opt-out, deal stage, decline hold, referrals, objections, warmth, ledger credit, sequence stop). Off, or unreadable, nothing is triaged." },
+  { key: "replies:drafting_enabled", kind: "boolean", default: "false", description: "Draft replies with the writer model after triage and ask the operator to approve each one. Nothing is sent by drafting." },
+  { key: "replies:send_enabled", kind: "boolean", default: "false", description: "Send approved reply drafts from the warm mailbox, after freshness checks and every send gate (the replies_send job and /reply_send). Delivery also needs delivery:enabled." },
+  { key: "replies:mirror_enabled", kind: "boolean", default: "false", description: "Mirror reply drafts into the mailbox as real drafts on their thread, and reconcile what the operator sent. Skipped when the mailbox cannot create drafts." },
+  { key: "replies:reminders_enabled", kind: "boolean", default: "false", description: "The reply-owed clock: reminders at 15 minutes, 2 hours and 4 hours, then each morning, until a reply is answered; quiet threads surfaced once. No model calls." },
+  { key: "sequences:reply_intake", kind: "string", default: "poll", description: "How replies reach the database, so the follow-up reply check knows it is not blind. poll (default): a step goes out only when inbox:enabled is on and the latest inbox poll completed in the last 10 minutes. routed: Cloudflare Email Routing only, where mail is recorded as it arrives; inbox:enabled alone is enough. Any other value, or a read error, holds every step." },
+  { key: "sequences:enabled", kind: "boolean", default: "false", description: "Master switch for the cold sequence's follow-up steps (docs/SEQUENCES.md): the follow-up sweep, the stale-sequence check and the sequence-release command. Off, or unreadable, no follow-up is drafted or sent; replies still stop sequences." },
   { key: "followup:manual_channel_enabled", kind: "boolean", default: "false", description: "Ask the operator for a manual LinkedIn or X touch before the last step. Nothing is posted automatically." },
   { key: "followup:multithread_enabled", kind: "boolean", default: "false", description: "Write to a colleague after silence." },
   { key: "followup:reengage_enabled", kind: "boolean", default: "false", description: "Re-engage on a new signal." },

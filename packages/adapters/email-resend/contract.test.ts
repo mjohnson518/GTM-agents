@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { testContext } from "../_contract/context.ts";
 import { runEmailProviderContract, type ContractEvent, type SentMessage } from "../_contract/email-provider.ts";
 import { json, recordedFetch, type RecordedRoute } from "../_contract/fetch.ts";
-import { BATCH_LIMIT, DEFAULT_USD_PER_EMAIL, classifyStatus, createAdapter, formatAddress, isHardBounce, mapWebhookEvent, vendorTags } from "./index.ts";
+import { BATCH_LIMIT, DEFAULT_USD_PER_EMAIL, classifyStatus, createAdapter, formatAddress, isHardBounce, mapWebhookEvent, normalizeMessageId, vendorTags } from "./index.ts";
 import manifest from "./manifest.json";
 
 const API_KEY = "test-resend-api-key";
@@ -22,6 +22,19 @@ const acceptBatch: RecordedRoute = {
     const body = await request.json<unknown[]>();
     return json({ data: body.map(() => ({ id: `msg-${String((nextId += 1)).padStart(4, "0")}` })) });
   },
+};
+
+// A recorded email lookup: one known, sent email with its Message-ID, and "not found" for anything else.
+const KNOWN_EMAIL_ID = "msg-step1-0001";
+const KNOWN_MESSAGE_ID = "<step1-0001@email.outreach.acme.example>";
+const UNKNOWN_EMAIL_ID = "msg-unknown-0002";
+const lookupEmail: RecordedRoute = {
+  method: "GET",
+  url: new RegExp(`^${API.replace(/\./g, "\\.")}/emails/[A-Za-z0-9-]+$`),
+  respond: (request) =>
+    request.url.endsWith(KNOWN_EMAIL_ID)
+      ? json({ object: "email", id: KNOWN_EMAIL_ID, to: ["riley@prospect.example"], subject: "Flaky builds", last_event: "delivered", message_id: KNOWN_MESSAGE_ID, created_at: "2026-11-04T11:00:00.000Z" })
+      : json({ statusCode: 404, name: "not_found", message: "Email not found" }, { status: 404 }),
 };
 
 function context(routes: RecordedRoute[] = [acceptBatch], secrets: Record<string, string> = SECRETS, options: Record<string, unknown> = {}) {
@@ -82,6 +95,7 @@ runEmailProviderContract((ctx) => createAdapter(ctx), {
   },
   idempotencyKey: (request) => request.headers.get("idempotency-key"),
   webhook: (event, options) => svixRequest(JSON.stringify(payloadFor(event)), options),
+  messageIds: () => ({ ...context([lookupEmail]), known: { providerMessageId: KNOWN_EMAIL_ID, messageId: KNOWN_MESSAGE_ID }, unknownProviderMessageId: UNKNOWN_EMAIL_ID }),
 });
 
 describe("email-resend", () => {
@@ -178,6 +192,40 @@ describe("email-resend", () => {
     const { ctx } = context([acceptBatch], { RESEND_API_KEY: API_KEY, RESEND_WEBHOOK_SECRET: "test-not-base64!!" });
     const request = await svixRequest(JSON.stringify(payloadFor({ kind: "delivered", providerMessageId: "msg-9", to: "riley.7@prospect.example", tags: {} })));
     await expect(createAdapter(ctx).parseWebhook(request)).rejects.toMatchObject({ code: "unavailable" });
+  });
+
+  it("reads the Message-ID from the email lookup with the bearer key", async () => {
+    const { ctx, calls } = context([lookupEmail]);
+    expect(await createAdapter(ctx).getMessageId?.(KNOWN_EMAIL_ID)).toBe(KNOWN_MESSAGE_ID);
+    expect(calls[0]?.url).toBe(`${API}/emails/${KNOWN_EMAIL_ID}`);
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.headers.get("authorization")).toBe(`Bearer ${API_KEY}`);
+  });
+
+  it("reports an answer with no usable Message-ID as null, and a failed lookup as a coded error", async () => {
+    const noId = context([{ method: "GET", url: `${API}/emails/${KNOWN_EMAIL_ID}`, respond: json({ object: "email", id: KNOWN_EMAIL_ID, message_id: "not a message id" }) }]);
+    expect(await createAdapter(noId.ctx).getMessageId?.(KNOWN_EMAIL_ID)).toBeNull();
+    const limited = context([{ method: "GET", url: `${API}/emails/${KNOWN_EMAIL_ID}`, respond: json({ name: "rate_limit_exceeded" }, { status: 429 }) }]);
+    await expect(createAdapter(limited.ctx).getMessageId?.(KNOWN_EMAIL_ID)).rejects.toMatchObject({ code: "rate_limited", retryable: true });
+    const dropped = context([
+      {
+        method: "GET",
+        url: `${API}/emails/${KNOWN_EMAIL_ID}`,
+        respond: () => {
+          throw new TypeError("network connection lost");
+        },
+      },
+    ]);
+    await expect(createAdapter(dropped.ctx).getMessageId?.(KNOWN_EMAIL_ID)).rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("normalizes Message-IDs to angle brackets and rejects anything else", () => {
+    expect(normalizeMessageId("abc@mail.acme.example")).toBe("<abc@mail.acme.example>");
+    expect(normalizeMessageId(" <abc@mail.acme.example> ")).toBe("<abc@mail.acme.example>");
+    expect(normalizeMessageId("no-at-sign")).toBeNull();
+    expect(normalizeMessageId("<a b@mail.acme.example>")).toBeNull();
+    expect(normalizeMessageId("<abc@mail.acme.example>\r\nBcc: x@evil.example")).toBeNull();
+    expect(normalizeMessageId(42)).toBeNull();
   });
 
   it("uses the configured price per email", async () => {

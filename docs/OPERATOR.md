@@ -140,7 +140,19 @@ Delete the key to turn it off again. `gtm doctor` lists the flag with every othe
 | `/status` | The session's taint, how many messages it holds, drafts waiting for approval, today's chat spend, the strategist model |
 | `/help` (or `/start`) | What the agent can do and how sessions, taint and approvals work |
 
-Commands never reach the model. `/clean@YourBot` forms work in groups. Anything that is not a command is a task for the hub agent.
+Replies and follow-ups add their own commands, documented with them:
+
+| Command | What it does |
+|---|---|
+| `/replies` | Replies waiting on you, oldest first ([REPLIES.md](REPLIES.md)) |
+| `/reply_done <id>`, `/reply_ignore <id>` | Mark a reply answered by hand, or as needing no answer |
+| `/reply_send <draft id>`, `/reply_draft <id>` | Send an approved reply now, or show its draft again for approval |
+| `batch-release-<id>-<code>` | Release the day's cold batch ([OUTREACH.md](OUTREACH.md)) |
+| `sequence-release-<id>-<code>` | Release the follow-ups a sweep put up ([SEQUENCES.md](SEQUENCES.md)) |
+| `sequence-resume-<contact id>` | Resume a contact's paused sequence |
+| `channel-done-<id> [linkedin\|x]`, `channel-skip-<id>` | Record or skip the optional manual touch before the last step |
+
+Commands never reach the model, and each runs once per message even if the channel redelivers it. `/clean@YourBot` forms work in groups. Anything that is not a command is a task for the hub agent.
 
 ## What the agent can do
 

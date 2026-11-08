@@ -48,14 +48,16 @@ describe("delivery events", () => {
     expect((await db.prepare("SELECT sends, delivered FROM domain_delivery WHERE domain = ?1").bind(domain).first())).toEqual({ sends: 1, delivered: 1 });
   });
 
-  it("suppresses a hard bounce, opts the contact out, records it and pages", async () => {
+  it("suppresses a hard bounce, marks the address undeliverable without opting the person out, records it and pages", async () => {
     const contact = await insertContact(db);
     const sent = await sendOne(contact);
     const operator = recordingOperator();
     const event: EmailEvent = { type: "bounced", providerMessageId: sent.providerMessageId, tags: sent.tags, to: contact.email, at: NOW.toISOString(), hard: true, reason: "Permanent/General" };
     expect(await processEmailEvents(eventsDeps(sent.provider.name, operator), [event])).toMatchObject({ processed: 1, retry: false });
     expect((await checkSuppression(db, [contact.email])).blocked[0]?.reason).toBe("bounce");
-    expect((await db.prepare("SELECT warmth FROM contacts WHERE id = ?1").bind(contact.id).first<{ warmth: string }>())?.warmth).toBe("opted_out");
+    // A bad address is not an unsubscribe: warmth is untouched, and the address is undeliverable.
+    expect(await db.prepare("SELECT warmth, verification_status FROM contacts WHERE id = ?1").bind(contact.id).first()).toEqual({ warmth: "contacted", verification_status: "undeliverable" });
+    expect((await db.prepare("SELECT status FROM email_verifications WHERE email_sha256 = (SELECT email_sha256 FROM contacts WHERE id = ?1)").bind(contact.id).first<{ status: string }>())?.status).toBe("undeliverable");
     expect((await db.prepare("SELECT bounced_at FROM outreach_sends WHERE id = ?1").bind(sent.sendId).first<{ bounced_at: string }>())?.bounced_at).toBe(NOW.toISOString());
     expect((await db.prepare("SELECT hard_bounces FROM domain_delivery WHERE domain = ?1").bind(contact.email.split("@")[1]).first<{ hard_bounces: number }>())?.hard_bounces).toBe(1);
     expect((await db.prepare("SELECT metadata FROM funnel_events WHERE contact_id = ?1 AND event_type = 'outreach_bounced'").bind(contact.id).first<{ metadata: string }>())?.metadata).toContain('"hard":true');

@@ -68,9 +68,21 @@ describe("the schema", () => {
     expect(existing.has("memory_fts")).toBe(true);
   });
 
+  it("indexes the send ledger by both the provider's id and the Message-ID", async () => {
+    const { results } = await env.DB.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'outreach_sends'").all<{ name: string; sql: string | null }>();
+    const indexed = (column: string) => results.some((r) => new RegExp(`\\(${column}\\)`).test(r.sql ?? ""));
+    expect(indexed("provider_message_id")).toBe(true);
+    expect(indexed("message_id")).toBe(true);
+  });
+
   it("can apply every migration again without error", async () => {
+    // ADD COLUMN cannot be written idempotently in SQLite, so the contract marks each one with a
+    // "-- once:" comment and relies on migration tracking to run it a single time. Everything else
+    // must survive a second run.
     for (const migration of env.TEST_MIGRATIONS) {
-      await env.DB.batch(migration.queries.map((q) => env.DB.prepare(q)));
+      const withoutComments = (q: string) => q.replace(/^(\s*--[^\n]*\n)+/, "");
+      const repeatable = migration.queries.filter((q) => !/^\s*ALTER\s+TABLE\s+\S+\s+ADD\s+COLUMN\b/i.test(withoutComments(q)));
+      if (repeatable.length > 0) await env.DB.batch(repeatable.map((q) => env.DB.prepare(q)));
     }
   });
 

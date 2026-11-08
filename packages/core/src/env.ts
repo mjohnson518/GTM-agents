@@ -38,4 +38,14 @@ export interface Env {
   PRODUCT_APP_URL?: string;
   PRODUCT_WEBHOOK_SECRET?: string;
   PRODUCT_READ_SECRET?: string;
+
+  /** The shared secret the mailbox push subscription carries to POST /api/webhooks/mail (docs/INBOX.md). */
+  MAIL_PUSH_SECRET?: string;
+  /** The Google OAuth client the Google adapters authenticate with. */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** The refresh token for the warm mailbox (inbox-gmail), granted with the Gmail scopes. */
+  GMAIL_REFRESH_TOKEN?: string;
+  /** The Pub/Sub topic Gmail push notifications publish to: projects/<project>/topics/<topic>. */
+  GMAIL_PUBSUB_TOPIC?: string;
 }

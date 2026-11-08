@@ -123,6 +123,12 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `deferred_send_items` (0015): the items waiting in the deferred queue, with a deduplication key that is released when an item leaves the queue.
 - `approval_manifests` (0016): the manifest each manual cold batch is released against.
 
+### Inbox, replies and sequences (0017 to 0019)
+
+- `inbound_emails` gains (0017) `account_key`, `message_id`, the triage `headers` (JSON), `sender_sha256` and `sender_mailbox_sha256`, `failed_recipients` (hashes read from a delivery report) and `processed_at` (set once the deterministic consequences ran). Bodies live in blob storage under `body_key`; erasure deletes them with the rows, and matches the sender hashes, failed recipients and headers.
+- `inbound_emails.triage` (JSON) and `drafts.action_class` (0018): the model triage result for a message, and the autonomy class a reply draft falls under (`reply_send`, `reply_question` or `reply_demo_link`).
+- `outreach_sends.message_id` and `approval_manifests.kind` (0019): the RFC 5322 Message-ID the provider gave a sent email, which follow-ups thread under, and whether a manifest releases a cold batch or sequence steps. Sequence steps use idempotency keys of the form `seq:<campaign>:<contact>:<step>`. A paused sequence stays active with `sequence_paused_at` set until it is resumed.
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

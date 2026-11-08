@@ -47,6 +47,9 @@ The runtime skeleton exists:
 - sourcing and enrichment: `@gtm-agents/core/sourcing` (the discovery cycle and `createSourcingJobs`), `/enrichment` (the email waterfall, verification and evidence) and `/scoring` (the title classifier, prescore and fit) ([docs/SOURCING.md](../../docs/SOURCING.md));
 - outreach: `@gtm-agents/core/quality` (the content lint and the quality gate), `/outreach` (allocation, composing, the daily cold batch, readiness, manifests and release, `createOutreachJobs`), and migration 0016 for approval manifests ([docs/OUTREACH.md](../../docs/OUTREACH.md));
 - delivery, in `@gtm-agents/core/sending`: the provider boundary (`createOutreachSender`), unsubscribe, delivery webhooks, send windows and the deferred queue, caps, the circuit breaker, the ramp, the bounce monitor and liveness (`createDeliveryJobs`), and migration 0015 ([docs/SENDING.md](../../docs/SENDING.md));
+- inbox, in `@gtm-agents/core/inbox`: intake, structural classification, the poll, sweep and watch jobs (`createInboxJobs`), the push route and the `email()` entry point, and migration 0017 ([docs/INBOX.md](../../docs/INBOX.md));
+- replies, in `@gtm-agents/core/replies` and `/metrics` (the one definition of a positive reply): triage, routing, the meeting qualifier, drafting, approved sends through the warm mailbox, reminders and mirroring (`createReplyJobs`), and migration 0018 ([docs/REPLIES.md](../../docs/REPLIES.md));
+- sequences, in `@gtm-agents/core/sequences`: the sequence state writes, the follow-up sweep, threading, release and resume (`createSequenceJobs`), and migration 0019 ([docs/SEQUENCES.md](../../docs/SEQUENCES.md));
 - `@gtm-agents/core/adapters`: `createAdapterContext`, which builds the context an adapter runs with.
 
 The pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned, and [docs/SECURITY-MODEL.md](../../docs/SECURITY-MODEL.md) describes the security model.

@@ -21,7 +21,11 @@
 //     a provider-side suppression is reported as a hard bounce; opens and clicks are passed on as
 //     such and core ignores them. A bounce is soft only when the vendor says so (Temporary,
 //     Transient or Soft); a missing or other type counts as hard;
-//   - every send result carries its cost, from the manifest's price per email.
+//   - every send result carries its cost, from the manifest's price per email;
+//   - getMessageId reads one sent email (GET /emails/{id}) for its message_id, the RFC 5322
+//     Message-ID the vendor actually sent it with. The vendor replaces a Message-ID set by the
+//     sender, so this is how core threads follow-ups under the first email. A 404 or an answer
+//     with no usable Message-ID is null; any other failure throws an AdapterError with its code.
 //
 // Secrets: RESEND_API_KEY (sending), RESEND_WEBHOOK_SECRET (verifying webhooks).
 // Options (adapters.email-resend.options):
@@ -42,6 +46,9 @@ export const WEBHOOK_TOLERANCE_SECONDS = 300;
 export const WEBHOOK_MAX_BYTES = 100 * 1024;
 
 const TAG = /^[A-Za-z0-9_-]{1,256}$/;
+/** The vendor's own email ids are UUIDs; anything else is never put in a lookup URL. */
+const EMAIL_ID = /^[A-Za-z0-9-]{1,64}$/;
+const MESSAGE_ID = /^<?([^\s<>@"]{1,200}@[^\s<>@"]{1,200})>?$/;
 const SOFT_BOUNCES: ReadonlySet<string> = new Set(["temporary", "transient", "soft"]);
 const encoder = new TextEncoder();
 
@@ -110,6 +117,13 @@ async function errorName(response: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+/** An RFC 5322 Message-ID in angle brackets, or null when the value is not a plausible one. */
+export function normalizeMessageId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const match = MESSAGE_ID.exec(value.trim());
+  return match ? `<${match[1]}>` : null;
 }
 
 /** True unless the vendor says the bounce was temporary. A missing type counts as hard. */
@@ -279,6 +293,25 @@ export function createAdapter(ctx: AdapterContext): EmailProvider {
       const at = isRecord(body) ? str(body.created_at) : undefined;
       const state = last === "delivered" ? "delivered" : last === "bounced" ? "bounced" : last === "complained" ? "complained" : last === "sent" || last === "queued" || last === "scheduled" ? "queued" : "unknown";
       return { state, ...(at ? { at } : {}) };
+    },
+
+    async getMessageId(providerMessageId) {
+      if (!EMAIL_ID.test(providerMessageId)) return null;
+      const key = ctx.optionalSecret(API_KEY_NAME);
+      if (!key) throw new AdapterError(`${API_KEY_NAME} is not set, so the Message-ID cannot be looked up`, "auth", false);
+      let response: Response;
+      try {
+        response = await ctx.fetch(`${options.baseUrl}/emails/${encodeURIComponent(providerMessageId)}`, { headers: { authorization: `Bearer ${key}` } });
+      } catch (error) {
+        throw new AdapterError("the email lookup failed before an answer arrived", "timeout", true, { cause: error });
+      }
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        const { code, retryable } = classifyStatus(response.status, await errorName(response));
+        throw new AdapterError(`email lookup failed with HTTP ${response.status}`, code, retryable);
+      }
+      const body = await response.json<unknown>().catch(() => null);
+      return normalizeMessageId(isRecord(body) ? body.message_id : undefined);
     },
   };
 }

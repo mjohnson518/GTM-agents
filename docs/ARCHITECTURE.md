@@ -175,12 +175,18 @@ Every send passes these checks inside the send function itself, so no caller can
 
 Then the path:
 - chunks to the provider's batch limit;
-- appends the plain-text postal footer;
+- appends the plain-text postal footer to cold and sequence mail (a reply to someone who wrote in carries the headers but no visible footer);
 - adds `List-Unsubscribe` and threading headers;
 - tags the message for webhook correlation;
 - records the send in the ledger.
 
-[SENDING.md](SENDING.md) covers the provider, the footer and unsubscribe, windows, the ramp and the bounce monitor; [OUTREACH.md](OUTREACH.md) covers the quality gate and the daily cold batch.
+The same send function serves two providers. Cold first touches and sequence follow-ups go through the email provider; approved replies go through the warm mailbox (an InboxProvider), on the thread the person wrote on. A reply is refused rather than sent through the cold provider when the mailbox is configured, and cold mail never goes through the mailbox. Halt, suppression, lint, verification, the approval digest and the effects-ledger claim apply on both.
+
+[SENDING.md](SENDING.md) covers the provider, the footer and unsubscribe, windows, the ramp and the bounce monitor; [OUTREACH.md](OUTREACH.md) covers the quality gate and the daily cold batch; [SEQUENCES.md](SEQUENCES.md) covers follow-ups.
+
+## Replies and follow-ups
+
+Inbound mail arrives two ways: a mailbox the Worker polls every minute and is woken by push (Gmail), or Cloudflare Email Routing delivering to the Worker's `email()` entry point. Intake records each message once, classifies it structurally without a model (bounce, auto reply, out of office, unsubscribe, reply, new inquiry) and applies the deterministic consequences at once: a reply stops every sequence at the account, an unsubscribe suppresses the sender, an out-of-office reply holds the next step, a delivery report for an address we sent to suppresses it. Model triage, routing, the meeting qualifier and drafting run afterwards in their own jobs, and every reply draft waits for a person's approval. The follow-up sweep sends sequence steps threaded under the first email, re-checking for replies from anyone at the account right before each send. [INBOX.md](INBOX.md), [REPLIES.md](REPLIES.md) and [SEQUENCES.md](SEQUENCES.md) cover each part.
 
 Email is plain text, with no tracking pixels or click tracking, so replies are the metric. Cold mail goes from an isolated subdomain through the email provider. Replies and lifecycle mail go from the real mailbox. `Reply-To` on cold mail points at that mailbox, so every reply lands in one inbox.
 
@@ -191,7 +197,7 @@ Email is plain text, with no tracking pixels or click tracking, so replies are t
 | `GET /health` | None |
 | `GET /api/v1/runs/:id` | Bearer token |
 | `POST /api/webhooks/operator` | Operator channel secret, plus the chat allowlist |
-| `POST /api/webhooks/mail` | Mailbox push shared secret |
+| `POST /api/webhooks/mail` | Mailbox push shared secret, compared in constant time |
 | `POST /api/webhooks/email` | Email provider signature |
 | `POST /api/webhooks/product` | HMAC (see [EVENT-CONTRACT.md](EVENT-CONTRACT.md)) |
 | `POST /api/webhooks/billing` | Billing provider signature |
@@ -202,7 +208,7 @@ Email is plain text, with no tracking pixels or click tracking, so replies are t
 | `/admin/*` | Static assets; put them behind your access layer |
 | `/ws` | Token in the `connect` call |
 
-Every webhook verifies its signature before returning 200, and returns 503 when its secret is not configured. Request bodies are limited to 100 KB, whether or not the request carries a `Content-Length` header.
+Every webhook verifies its signature before returning 200, and returns 503 when its secret is not configured. Besides `fetch`, `scheduled` and `queue`, the Worker exports `email()` for mail that Cloudflare Email Routing delivers. Request bodies are limited to 100 KB, whether or not the request carries a `Content-Length` header.
 
 ## Configuration, brain and templates
 

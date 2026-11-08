@@ -16,12 +16,18 @@
     "./llm-gateway": "./llm-gateway/index.ts",
     "./llm-gateway/manifest.json": "./llm-gateway/manifest.json",
     "./email-resend": "./email-resend/index.ts",
-    "./email-resend/manifest.json": "./email-resend/manifest.json"
+    "./email-resend/manifest.json": "./email-resend/manifest.json",
+    "./_google-auth": "./_google-auth/index.ts",
+    "./inbox-gmail": "./inbox-gmail/index.ts",
+    "./inbox-gmail/manifest.json": "./inbox-gmail/manifest.json",
+    "./email-cloudflare": "./email-cloudflare/index.ts",
+    "./email-cloudflare/manifest.json": "./email-cloudflare/manifest.json"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@gtm-agents/core": "0.0.0"
+    "@gtm-agents/core": "0.0.0",
+    "postal-mime": "4.1.4"
   }
 }

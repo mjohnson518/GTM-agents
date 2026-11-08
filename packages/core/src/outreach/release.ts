@@ -3,7 +3,8 @@
 //
 // In order, and nothing is sent unless every step for a draft passes:
 //   1. the cold batch must be switched on (cold_batch:enabled); an unreadable flag refuses;
-//   2. the manifest must exist. Without one, nothing is released;
+//   2. the manifest must exist and be a cold batch's (a follow-up manifest is released only with
+//      its own sequence-release command). Without one, nothing is released;
 //   3. the code must match the manifest's. It confirms intent and is not a secret, which is why:
 //   4. every draft is re-checked (revalidateDrafts: still open and at most 14 days old, still cold,
 //      not opted out, held out or suppressed, no mail from the contact since drafting, no newer send,
@@ -22,21 +23,41 @@ import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import type { SendOutreach } from "../sending/types.ts";
 import { OUTREACH_FLAGS, OUTREACH_LIMITS, readOn, readWholeNumber } from "./flags.ts";
 import { readinessLine, readinessWithSalvage } from "./readiness.ts";
-import { RELEASE_PREFIX, readManifest } from "./manifest.ts";
+import { RELEASE_PREFIX, readManifest, type Manifest, type ManifestKind } from "./manifest.ts";
 import { currentDigest, handOff, handoffLine, loadDrafts, recordAutonomyEvent, revalidateDrafts, type HandoffItem, type HandoffReport } from "./send.ts";
-
-const RELEASE_PATTERN = new RegExp(`^/?${RELEASE_PREFIX}-([a-z0-9]{4,40})-([0-9a-f]{6})$`, "i");
 
 export interface ReleaseCommand {
   manifestId: string;
   code: string;
 }
 
-/** The release command in a message, or null. Accepts an optional leading slash. */
-export function parseReleaseCommand(text: string): ReleaseCommand | null {
-  const match = RELEASE_PATTERN.exec(text.trim());
+const releasePattern = (prefix: string) => new RegExp(`^/?${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-([a-z0-9]{4,40})-([0-9a-f]{6})$`, "i");
+const PATTERNS = new Map<string, RegExp>();
+
+/**
+ * The release command in a message, or null. Accepts an optional leading slash. `prefix` picks the
+ * command: `batch-release` (the default) for a cold batch, `sequence-release` for follow-ups.
+ */
+export function parseReleaseCommand(text: string, prefix: string = RELEASE_PREFIX): ReleaseCommand | null {
+  let pattern = PATTERNS.get(prefix);
+  if (!pattern) {
+    pattern = releasePattern(prefix);
+    PATTERNS.set(prefix, pattern);
+  }
+  const match = pattern.exec(text.trim());
   if (!match) return null;
   return { manifestId: (match[1] ?? "").toLowerCase(), code: (match[2] ?? "").toLowerCase() };
+}
+
+/**
+ * The manifest a release command names, checked: it exists, is of `kind`, and its code matches.
+ * Returns the manifest, or the refusal to send back. Throws on a database error.
+ */
+export async function manifestForRelease(db: D1Database, command: ReleaseCommand, kind: ManifestKind, label: string): Promise<{ ok: true; manifest: Manifest } | { ok: false; text: string }> {
+  const manifest = await readManifest(db, command.manifestId);
+  if (!manifest || manifest.kind !== kind) return { ok: false, text: `There is no approval manifest for ${label} ${command.manifestId}, so nothing was released.` };
+  if (manifest.code !== command.code) return { ok: false, text: `That code does not match ${label} ${manifest.id}. Nothing was released. Copy the command from the message it came in.` };
+  return { ok: true, manifest };
 }
 
 export interface ReleaseDeps {
@@ -71,9 +92,9 @@ export async function releaseBatch(deps: ReleaseDeps, command: ReleaseCommand): 
   if (!(await readOn(deps.flags, OUTREACH_FLAGS.enabled))) {
     return refusal(`The cold batch is switched off (${OUTREACH_FLAGS.enabled}), so nothing was released.`);
   }
-  const manifest = await readManifest(deps.db, command.manifestId);
-  if (!manifest) return refusal(`There is no approval manifest for batch ${command.manifestId}, so nothing was released.`);
-  if (manifest.code !== command.code) return refusal(`That code does not match batch ${manifest.id}. Nothing was released. Copy the command from the batch message.`);
+  const named = await manifestForRelease(deps.db, command, "cold_batch", "batch");
+  if (!named.ok) return refusal(named.text);
+  const manifest = named.manifest;
 
   const brain = await loadSourcingBrain(deps.kv);
   if (!deps.kv || brain.degraded) return refusal(`The brain could not be read whole, so its never list cannot be applied. Nothing was released from batch ${manifest.id}.`);

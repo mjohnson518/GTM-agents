@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { isMain, repoRoot } from "./lib/files.mjs";
 
-export const ALLOWED = ["MIT", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "BlueOak-1.0.0", "CC0-1.0", "Unlicense"];
+export const ALLOWED = ["MIT", "MIT-0", "ISC", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "BlueOak-1.0.0", "CC0-1.0", "Unlicense"];
 
 /**
  * Whether an SPDX expression is acceptable: for OR, one allowed alternative is enough; for AND,

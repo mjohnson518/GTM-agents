@@ -79,7 +79,7 @@ The webhook verifies the signature (an HMAC over the message id, timestamp and b
 | Event | What happens |
 |---|---|
 | Delivered | The send ledger's `delivered_at`, the recipient domain's delivered count, the campaign row |
-| Hard bounce (or a bounce with no type) | The address is suppressed (`bounce`), the contact's warmth becomes `opted_out` and its sequences stop; the ledger's `bounced_at`, the domain's hard bounce count, the outreach log; a page (at most five a day) |
+| Hard bounce (or a bounce with no type) | The address is suppressed (`bounce`) and marked `undeliverable` on the contact and in the verification cache, and its sequences stop. Warmth is left alone, because a bad address is not an opt-out; the ledger's `bounced_at`, the domain's hard bounce count, the outreach log; a page (at most five a day) |
 | Soft bounce | A funnel event only |
 | Complaint | The address is suppressed (`complaint`) even when no send matches, the contact opts out; the ledger's `complained_at`, the domain's complaint count; a page |
 | Failed | Logged |

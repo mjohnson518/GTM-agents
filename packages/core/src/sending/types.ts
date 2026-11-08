@@ -34,6 +34,11 @@ export interface OutreachItem {
    * recomputes the draft's digest and refuses a mismatch.
    */
   approvedDigest?: string;
+  /**
+   * For a reply through the warm mailbox: the mailbox thread it answers. The send function checks
+   * that the contact wrote in on that thread before sending on it.
+   */
+  threadId?: string;
 }
 
 /** Why an item waits for later instead of going now. */

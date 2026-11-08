@@ -38,10 +38,21 @@
 // time-out, an unknown error, a thrown call) the claim is kept, the contact's last_contacted_at is
 // set (it may have received the message; warmth stays as it was) and the item fails without retry, because sending it again
 // could send it twice.
+//
+// The warm mailbox (deps.mailbox, an InboxProvider): when one is configured, every reply (path
+// "reply") goes out through it, on the thread it answers, and never through the email provider;
+// cold, sequence and lifecycle mail never goes through it. A mailbox reply passes the same checks
+// (halt, suppression, content lint, verification, the approved digest, which it must carry, and the
+// exactly-once claim). It is not counted against the sending domain's daily cap or the circuit
+// breaker, which belong to the email provider, it is never written to the deferred queue (a held
+// reply is reported as deferred and the caller tries again), and a claimed reply whose contact did
+// not write in on that thread is refused rather than sent as cold mail. Without a mailbox, replies
+// go through the email provider as before. Replies carry the unsubscribe and threading headers but
+// no visible footer, so they read like a normal reply (message.ts).
 import { recordCost } from "../budget/cost-ledger.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
-import type { EmailProvider, OutboundMessage, SendOutcome } from "../ports/email.ts";
+import type { EmailProvider, InboxProvider, OutboundMessage, SendOutcome } from "../ports/email.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import type { AdapterErrorCode } from "../ports/types.ts";
 import { lintOutbound } from "../quality/lint.ts";
@@ -82,6 +93,12 @@ export interface OutreachSenderDeps {
   /** `sequences` is optional: with it, a cold first touch schedules its follow-up wherever it is sent. */
   config: Pick<GtmConfig, "company" | "sending"> & Partial<Pick<GtmConfig, "sequences">>;
   provider: EmailProvider | undefined;
+  /**
+   * The warm mailbox. With it, replies go out through the mailbox on their thread and never through
+   * `provider`; without it, replies go through `provider`. Cold, sequence and lifecycle mail always
+   * use `provider`.
+   */
+  mailbox?: InboxProvider;
   /** The UNSUBSCRIBE_SIGNING_KEY secret. */
   unsubscribeSigningKey: string | undefined;
   /** AGENT_BASE_URL: the deployment's public https origin, for unsubscribe links. */
@@ -140,6 +157,8 @@ interface Work {
   item: OutreachItem;
   key: string;
   path: SendPath;
+  /** A reply going out through the warm mailbox. */
+  warm: boolean;
   to?: string;
   contact?: ContactRow;
   timezone?: string;
@@ -172,6 +191,8 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
       const zones = new Map<number, string>();
       // Items whose path was re-resolved, so the deferred queue keeps the path that was checked.
       const resolved = new Map<number, OutreachItem>();
+      // Replies going out through the warm mailbox, which the deferred queue never takes.
+      const warmIndexes = new Set<number>();
       const keyOf = (i: number) => {
         const raw = items[i]?.idempotencyKey;
         return typeof raw === "string" ? raw : "";
@@ -224,7 +245,7 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         if (typeof item.contactId !== "string" || item.contactId.length === 0) return block(target, "invalid", "an item needs a contact id.");
         if (typeof item.to !== "string" || typeof item.subject !== "string" || typeof item.body !== "string") return block(target, "invalid", "an item needs a recipient, a subject and a body.");
         if (hasLineBreak(item.subject)) return block(target, "invalid", "the subject holds a line break.");
-        const optionalStrings = [item.campaignId, item.draftId, item.templateId, item.experimentId, item.experimentArm, item.toName, item.approvedDigest, item.inReplyTo];
+        const optionalStrings = [item.campaignId, item.draftId, item.templateId, item.experimentId, item.experimentArm, item.toName, item.approvedDigest, item.inReplyTo, item.threadId];
         if (optionalStrings.some((v) => v !== undefined && typeof v !== "string")) return block(target, "invalid", "an optional id holds something other than text.");
         if (item.sequenceStep !== undefined && !Number.isInteger(item.sequenceStep)) return block(target, "invalid", "the sequence step is not a whole number.");
         if (item.references !== undefined && (!Array.isArray(item.references) || item.references.some((r) => typeof r !== "string"))) return block(target, "invalid", "the references are not a list of message ids.");
@@ -232,7 +253,7 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         if (item.draftId !== undefined && item.approvedDigest === undefined) return block(target, "approval_mismatch", "an item that names a draft must carry the draft's approved digest.");
         // An unknown path is treated as cold, the strictest.
         const path: SendPath = (SEND_PATHS as readonly string[]).includes(String(item.path)) ? (item.path as SendPath) : "cold";
-        work.push({ index, item: { ...(item as OutreachItem), path }, key, path });
+        work.push({ index, item: { ...(item as OutreachItem), path }, key, path, warm: false });
       });
 
       // The master switch, then what a compliant message needs.
@@ -242,18 +263,22 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
       }
       const origin = publicOrigin(deps.baseUrl);
       const provider = deps.provider;
+      const mailbox = deps.mailbox;
+      // A reply needs the warm mailbox when one is configured; everything else needs the email provider.
+      const viaMailbox = (w: Work) => w.path === "reply" && mailbox !== undefined;
       if (work.length > 0) {
-        const missing = [
-          ...(provider ? [] : ["an email provider"]),
+        const shared = [
           ...(isUsableSigningKey(deps.unsubscribeSigningKey) ? [] : ["UNSUBSCRIBE_SIGNING_KEY (at least 32 characters)"]),
           ...(origin ? [] : ["AGENT_BASE_URL (an https origin)"]),
         ];
-        if (missing.length > 0) {
-          for (const w of work) fail(w, true, `[SEND BLOCKED:not_configured] no message can carry a working unsubscribe link without ${missing.join(", ")}; nothing was sent.`);
-          work = [];
-        }
+        work = work.filter((w) => {
+          const missing = [...(provider || viaMailbox(w) ? [] : ["an email provider"]), ...shared];
+          if (missing.length === 0) return true;
+          fail(w, true, `[SEND BLOCKED:not_configured] no message can carry a working unsubscribe link without ${missing.join(", ")}; nothing was sent.`);
+          return false;
+        });
       }
-      if (!provider || !origin) return finish();
+      if (!origin || work.length === 0) return finish();
 
       // Messages already sent under the same key. The claim before sending is the real guard; this
       // look only keeps an already-sent item from being deferred or refused instead of reported.
@@ -270,10 +295,35 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         }
       }
 
+      // A reply through the warm mailbox is never downgraded: it must name the thread it answers,
+      // and the contact must have written in on that thread. Otherwise it is refused, and an
+      // unreadable check holds it, so a reply meant for the mailbox never leaves through the email
+      // provider, and never starts a new thread without a footer.
+      const warmClaims = work.filter(viaMailbox);
+      for (const w of warmClaims) {
+        if (!w.item.threadId) {
+          block(w, "invalid", "a reply from the mailbox needs the thread it answers.");
+          continue;
+        }
+        try {
+          const row = await db
+            .prepare("SELECT 1 AS hit FROM inbound_emails WHERE contact_id = ?1 AND provider_thread_id = ?2 LIMIT 1")
+            .bind(w.item.contactId, w.item.threadId)
+            .first<{ hit: number }>();
+          if (row) {
+            w.warm = true;
+            warmIndexes.add(w.index);
+          } else block(w, "invalid", "a reply from the mailbox needs an inbound email from the contact, on the thread it answers.");
+        } catch {
+          fail(w, true, "[SEND BLOCKED:invalid] the inbound mail could not be read to confirm this is a reply; nothing was sent.");
+        }
+      }
+      work = work.filter((w) => outcomes[w.index] === undefined);
+
       // The path is never taken on trust: a reply needs an inbound email from the contact, and
       // lifecycle mail a lifecycle record for the contact. Anything else, or an unreadable check,
       // is treated as cold, the strictest path.
-      const claimed = work.filter((w) => w.path === "reply" || w.path === "lifecycle");
+      const claimed = work.filter((w) => (w.path === "reply" && !w.warm) || w.path === "lifecycle");
       if (claimed.length > 0) {
         let repliers = new Set<string>();
         let customers = new Set<string>();
@@ -367,7 +417,12 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         });
       }
 
-      // 5: approvals bound to content.
+      // 5: approvals bound to content. A reply from the mailbox goes out only on its approved draft.
+      work = work.filter((w) => {
+        if (!w.warm || (w.item.draftId !== undefined && w.item.approvedDigest !== undefined)) return true;
+        block(w, "approval_mismatch", "a reply from the mailbox goes out only on its approved draft.");
+        return false;
+      });
       const needApproval = work.filter((w) => w.item.approvedDigest !== undefined);
       if (needApproval.length > 0) {
         let drafts: Map<string, DraftRow> | null;
@@ -409,13 +464,14 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         return false;
       });
 
-      // 7: the per-domain daily cap and the per-account cap.
+      // 7: the per-domain daily cap and the per-account cap. Mailbox replies do not go through the
+      // sending domain, so neither cap counts or holds them.
       if (work.length > 0) {
         for (const w of work) w.account = capAccount(w.contact?.account_key, w.to as string);
         let sentToday: number;
         let perAccount: Map<string, { count: number; oldest: string }>;
         try {
-          sentToday = await sentTodayCount(db, provider.name, now);
+          sentToday = provider && work.some((w) => !w.warm) ? await sentTodayCount(db, provider.name, now) : 0;
           perAccount = await accountSendsSince(
             db,
             work.filter((w) => PAUSABLE.has(w.path)).map((w) => w.account as CapAccount),
@@ -431,6 +487,7 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         let planned = 0;
         const plannedPerAccount = new Map<string, number>();
         work = work.filter((w) => {
+          if (w.warm) return true;
           if (sentToday + planned >= domainCap) {
             defer(w, "domain_cap", nextUtcMidnight(now));
             return false;
@@ -451,24 +508,81 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         });
       }
 
-      // 8: the circuit breaker, then the provider in chunks.
+      // 8: the circuit breaker, then the provider in chunks. The breaker belongs to the email
+      // provider; mailbox replies go out one by one after it.
+      const warmWork = work.filter((w) => w.warm);
+      work = work.filter((w) => !w.warm);
       if (work.length > 0 && (await readBreaker(deps.kv, now)).open) {
         for (const w of work) defer(w, "circuit_open", nextUtcMidnight(now));
         work = [];
       }
-      const chunkSize = Math.max(1, Math.min(options.batchSize, provider.batchLimit ?? options.batchSize));
-      const chunks = inChunks(work, chunkSize);
-      for (let c = 0; c < chunks.length; c++) {
-        const chunk = chunks[c] as Work[];
-        if (c > 0 && options.chunkIntervalMs > 0) await sleep(options.chunkIntervalMs);
-        if ((await readBreaker(deps.kv, now)).open) {
-          for (const w of chunk) defer(w, "circuit_open", nextUtcMidnight(now));
-          continue;
+      if (work.length > 0 && provider) {
+        const chunkSize = Math.max(1, Math.min(options.batchSize, provider.batchLimit ?? options.batchSize));
+        const chunks = inChunks(work, chunkSize);
+        for (let c = 0; c < chunks.length; c++) {
+          const chunk = chunks[c] as Work[];
+          if (c > 0 && options.chunkIntervalMs > 0) await sleep(options.chunkIntervalMs);
+          if ((await readBreaker(deps.kv, now)).open) {
+            for (const w of chunk) defer(w, "circuit_open", nextUtcMidnight(now));
+            continue;
+          }
+          await sendChunk(chunk);
         }
-        await sendChunk(chunk);
       }
+      if (mailbox) for (const w of warmWork) await sendWarm(mailbox, w);
 
       return finish();
+
+      // One reply through the warm mailbox, on its thread. The same exactly-once claim as the
+      // provider path; the provider's breaker and cost ledger are not touched.
+      async function sendWarm(box: InboxProvider, w: Work): Promise<void> {
+        let claimedNow: boolean;
+        try {
+          [claimedNow = false] = await claimSends(db, [w.key], now);
+        } catch {
+          fail(w, true, "the effects ledger could not be written, so nothing was sent.");
+          return;
+        }
+        if (!claimedNow) {
+          outcomes[w.index] = { idempotencyKey: keyOf(w.index), status: "duplicate" };
+          return;
+        }
+        let sendId: string;
+        let message: OutboundMessage;
+        try {
+          sendId = crypto.randomUUID();
+          const token = await signUnsubscribeToken(w.to as string, deps.unsubscribeSigningKey);
+          message = buildOutboundMessage({ item: w.item, to: w.to as string, sendId, link: unsubscribeUrl(origin as string, token), sending: deps.config.sending, channel: "mailbox" });
+        } catch (error) {
+          await releaseSend(db, w.key);
+          fail(w, false, `the message could not be built: ${sanitizeErrorMessage(error)}`);
+          return;
+        }
+        let outcome: SendOutcome;
+        try {
+          outcome = await box.send({ ...message, ...(w.item.threadId ? { threadId: w.item.threadId } : {}) });
+        } catch (error) {
+          fail(w, false, `the mailbox send failed and may have sent the message, so it is not retried automatically: ${sanitizeErrorMessage(error)}`);
+          await markMaybeSent([w]);
+          return;
+        }
+        if (outcome?.ok === true && typeof outcome.providerMessageId === "string" && outcome.providerMessageId.length > 0) {
+          await bookkeep(box.name, [{ w, sendId, providerMessageId: outcome.providerMessageId }]);
+          return;
+        }
+        const code: AdapterErrorCode = outcome && outcome.ok === false ? outcome.code : "unknown";
+        const detail = outcome && outcome.ok === false && outcome.detail ? `: ${sanitizeErrorMessage(outcome.detail)}` : "";
+        if (outcome && NOT_ACCEPTED_RETRY.has(code)) {
+          await releaseSend(db, w.key);
+          defer(w, "provider_unavailable", new Date(now.getTime() + HOUR_MS));
+        } else if (outcome && NOT_ACCEPTED_FINAL.has(code)) {
+          await releaseSend(db, w.key);
+          fail(w, false, `[SEND BLOCKED:provider_rejected] the mailbox refused it (${code})${detail}.`);
+        } else {
+          fail(w, false, `the mailbox's answer (${outcome ? code : "no outcome"}) leaves it unclear whether it was sent, so it is not retried automatically${detail}.`);
+          await markMaybeSent([w]);
+        }
+      }
 
       async function sendChunk(chunk: Work[]): Promise<void> {
         const p = provider as EmailProvider;
@@ -714,9 +828,11 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
       }
 
       async function persistDeferrals(): Promise<void> {
+        // A mailbox reply is never queued: the deferred replay sends through the email provider,
+        // and a held reply is retried by its caller instead.
         const deferred = outcomes
           .map((o, index) => ({ o, index }))
-          .filter((d): d is { o: Extract<OutreachOutcome, { status: "deferred" }>; index: number } => d.o?.status === "deferred");
+          .filter((d): d is { o: Extract<OutreachOutcome, { status: "deferred" }>; index: number } => d.o?.status === "deferred" && !warmIndexes.has(d.index));
         if (deferred.length === 0) return;
         const groups = await Promise.all(deferred.map(({ o, index }) => deferStatements(db, resolved.get(index) ?? (items[index] as OutreachItem), o, now, zones.get(index) ?? null)));
         const written = await runGroups(db, groups);

@@ -8,6 +8,15 @@
 // One command does not start with "/": `batch-release-<id>-<code>` releases a cold batch that waits
 // for the operator (outreach/release.ts). It never reaches the model either; the chat consumer routes
 // it to runReleaseCommand before anything else.
+//
+// Sequence commands (sequences/commands.ts) do not start with "/" either, and never reach the model:
+// `sequence-release-<id>-<code>` sends follow-ups a sweep put up for release,
+// `sequence-resume-<contact id>` resumes a paused sequence, and `channel-done-<id> [linkedin|x]` and
+// `channel-skip-<id>` answer a manual touch. The chat consumer routes them to runSequenceCommand.
+//
+// Reply commands (replies/commands.ts) start with "/" and never reach the model: /replies lists what
+// is owed, /reply_done and /reply_ignore settle a message, /reply_send sends an approved reply, and
+// /reply_draft shows a pending reply draft again. The chat consumer routes them to runReplyCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -20,6 +29,11 @@ import type { SendOutreach } from "../sending/types.ts";
 import { startOfUtcDay } from "../shared/kv.ts";
 
 export { parseReleaseCommand } from "../outreach/release.ts";
+// Sequences: the follow-up release, resume and manual-touch commands.
+export { parseSequenceCommand, runSequenceCommand, type SequenceCommand, type SequenceCommandDeps } from "../sequences/commands.ts";
+// Replies: list and settle owed replies, and send approved ones.
+export { REPLY_COMMAND_NAMES, REPLY_HELP_LINES, isReplyCommand, runReplyCommand, type ReplyCommandDeps } from "../replies/commands.ts";
+import { REPLY_HELP_LINES } from "../replies/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -40,10 +54,14 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     "/status  session taint, drafts waiting for approval, today's chat spend",
     "/help  this message",
     "batch-release-<id>-<code>  send a cold batch that waits for you (the batch message carries the exact command)",
+    "sequence-release-<id>-<code>  send follow-ups that wait for you (the follow-up message carries the exact command)",
+    "sequence-resume-<contact id>  resume a contact's paused follow-up sequence",
+    "channel-done-<id> [linkedin|x] / channel-skip-<id>  answer a manual touch before the last follow-up",
+    ...REPLY_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",
-    "Drafts come back as approval requests. Approving marks a draft approved; nothing is sent by the tap. The only thing this chat sends is a cold batch you release with its batch-release command, and every draft in it is checked again first.",
+    "Drafts come back as approval requests. Approving marks a draft approved; nothing is sent by the tap. The only things this chat sends are a cold batch or follow-ups you release with their release commands, and every draft in them is checked again first. Reply drafts are the exception: an approved reply goes out from your mailbox (when replies:send_enabled is on), after checking the thread still waits for it.",
     "",
     "Sessions and taint: once a session has read a web page, it cannot create drafts, because the page could carry instructions. You get the research back. To draft from it, send /clean and then give me the facts you want me to use.",
   ].join("\n");

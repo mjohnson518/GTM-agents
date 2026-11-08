@@ -1,0 +1,15 @@
+{
+  "name": "email-cloudflare",
+  "version": "0.1.0",
+  "ports": ["InboxProvider"],
+  "capabilities": ["inbound"],
+  "requiredSecrets": [],
+  "optionalSecrets": [],
+  "flags": ["inbox:enabled"],
+  "tools": {},
+  "costs": {
+    "receive": { "usd": 0, "per": "message routed to the Worker (counts against Workers requests)" }
+  },
+  "limits": {},
+  "contract": "./contract.test.ts"
+}

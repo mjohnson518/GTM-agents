@@ -16,8 +16,9 @@
 // Then, per event type:
 //   - delivered: the ledger's delivered_at, the recipient domain's delivered count, the campaign
 //     row;
-//   - bounced, hard (or with no bounce type): the address is suppressed (bounce) and the contact
-//     opted out with its sequences stopped; then the ledger's bounced_at, the domain's hard bounce
+//   - bounced, hard (or with no bounce type): the address is suppressed (bounce) and marked
+//     undeliverable, and its sequences stop (warmth is left alone: a bad address is not an opt-out);
+//     then the ledger's bounced_at, the domain's hard bounce
 //     count, the outreach log and a page (at most five a day; the bounce monitor watches the rate).
 //     Every bounce, hard or soft, records a funnel event;
 //   - complained: the address is suppressed (complaint) whether or not a send matches, the contact

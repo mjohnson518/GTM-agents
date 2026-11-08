@@ -185,6 +185,8 @@ Send it back in the operator chat (a leading `/` is accepted). It never reaches 
 
 The reply names what was sent, deferred, blocked or refused, and why. Sending the same command twice hands nothing over twice: each draft's idempotency key is claimed in the effects ledger before it goes, and the claim is released only when the send function reports a retryable failure (so the command can be sent again to retry). If the send function fails ambiguously, the claim stays and the draft is not sent again.
 
+Follow-up steps are governed by the same autonomy class: at its default level each sweep's due steps wait for their own release command, `sequence-release-<id>-<code>`, which is separate from this one and cannot release a cold batch ([SEQUENCES.md](SEQUENCES.md)).
+
 Held drafts are not part of a manifest. They stay `pending_approval` (counted by `/status`) as a record of what the gate stopped and why, and expire after 14 days. No path sends a held cold draft today: approving one through the operator channel marks it approved, but only a manifest release hands cold drafts to the send function. Fix the cause (a template variable, a claim, the brain) and the contact is drafted again by a later batch once the draft expires.
 
 ## Holdout

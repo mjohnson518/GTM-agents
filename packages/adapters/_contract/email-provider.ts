@@ -16,7 +16,11 @@
 //   - parseWebhook maps delivered, hard bounce, soft bounce, a bounce with no type (hard),
 //     complaint, open and click events, and rejects a tampered body, a stale or future timestamp
 //     and an unsigned request with a non-retryable auth error before parsing anything. With its
-//     webhook secret unset it refuses with a code other than auth, which core answers with 503.
+//     webhook secret unset it refuses with a code other than auth, which core answers with 503;
+//   - getMessageId, when the adapter implements it (it is optional, and fixtures for it are then
+//     required): a known email's Message-ID comes back in angle brackets, an unknown email is null,
+//     a malformed id is null without a request, and with its API key unset it rejects with an
+//     AdapterError without making a request. Follow-ups thread under the first email by this id.
 import { AdapterError, manifestSchema, type AdapterContext, type AdapterErrorCode, type EmailEvent, type EmailProvider, type OutboundMessage } from "@gtm-agents/core/ports";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,7 +57,14 @@ export interface EmailProviderFixtures {
   idempotencyKey(request: Request): string | null;
   /** A webhook request for `event`, signed `ageSeconds` ago (default 0), tampered after signing, or unsigned. */
   webhook(event: ContractEvent, options?: { ageSeconds?: number; tamper?: boolean; unsigned?: boolean }): Promise<Request>;
+  /**
+   * Required when the adapter implements getMessageId: a context whose recorded fetch knows one sent
+   * email's Message-ID (`known`) and answers "not found" for `unknownProviderMessageId`.
+   */
+  messageIds?(): { ctx: AdapterContext; calls: Request[]; known: { providerMessageId: string; messageId: string }; unknownProviderMessageId: string };
 }
+
+const MESSAGE_ID_SHAPE = /^<[^\s<>@"]+@[^\s<>@"]+>$/;
 
 const message = (n: number, extra: Partial<OutboundMessage> = {}): OutboundMessage => ({
   effectKey: `2026-11-04:contact-${n}`,
@@ -77,7 +88,7 @@ async function rejection(promise: Promise<unknown>): Promise<{ code: unknown; re
     const e = error as { code?: unknown; retryable?: unknown };
     return { code: e.code, retryable: e.retryable, adapterError: error instanceof AdapterError };
   }
-  throw new Error("expected the webhook to be rejected");
+  throw new Error("expected the call to be rejected");
 }
 
 export function runEmailProviderContract(create: (ctx: AdapterContext) => EmailProvider, fixtures: EmailProviderFixtures): void {
@@ -223,6 +234,31 @@ export function runEmailProviderContract(create: (ctx: AdapterContext) => EmailP
       const outcome = await rejection(create(ctx).parseWebhook(await fixtures.webhook({ kind: "delivered", ...base })));
       expect(outcome.adapterError).toBe(true);
       expect(outcome.code).not.toBe("auth");
+    });
+
+    it("looks up a sent email's Message-ID, when it implements getMessageId", async () => {
+      const probe = create(fixtures.context().ctx);
+      if (!probe.getMessageId) return;
+      expect(typeof fixtures.messageIds, "an adapter that implements getMessageId must provide messageIds fixtures").toBe("function");
+      const setup = fixtures.messageIds?.();
+      if (!setup) return;
+      const provider = create(setup.ctx);
+      const found = await provider.getMessageId?.(setup.known.providerMessageId);
+      expect(found).toBe(setup.known.messageId);
+      expect(found).toMatch(MESSAGE_ID_SHAPE);
+      expect(await provider.getMessageId?.(setup.unknownProviderMessageId)).toBeNull();
+      const before = setup.calls.length;
+      expect(await provider.getMessageId?.("not/an id?")).toBeNull();
+      expect(setup.calls).toHaveLength(before);
+    });
+
+    it("rejects a Message-ID lookup without a request while its API key is unset", async () => {
+      const { ctx, calls } = fixtures.unconfigured();
+      const provider = create(ctx);
+      if (!provider.getMessageId) return;
+      const outcome = await rejection(provider.getMessageId(fixtures.messageIds?.().known.providerMessageId ?? "msg-0001"));
+      expect(outcome.adapterError).toBe(true);
+      expect(calls).toHaveLength(0);
     });
   });
 }

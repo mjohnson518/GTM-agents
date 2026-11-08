@@ -39,6 +39,8 @@ export default defineConfig({
     "data-exa": { options: {} },
     "data-hunter": { options: {} },
     "email-resend": { options: {} },
+    "inbox-gmail": { options: {} },
+    "email-cloudflare": { options: {} },
   },
 
   // Model id per role. Core asks for roles; only this file names models.

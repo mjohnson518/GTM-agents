@@ -6,14 +6,17 @@
 //      runs first and a database error propagates: the caller answers so the request is retried
 //      (the unsubscribe page asks the person to try again; a provider webhook gets a 500);
 //   2. then, as bookkeeping, each write caught and reported:
-//      - every contact stored under the same mailbox moves to warmth opted_out (forward-only,
-//        compare-and-set, through advanceWarmth);
-//      - their sequences stop: campaign_contacts rows go inactive and are marked opted_out (bounced
-//        for a bounce), and running sequence runs are cancelled;
+//      - an opt-out or a complaint moves every contact stored under the same mailbox to warmth
+//        opted_out (forward-only, compare-and-set, through advanceWarmth). A hard bounce is not an
+//        opt-out: their warmth stays where it was, and the address is marked undeliverable on the
+//        contacts and in the verification cache instead;
+//      - their sequences stop (stopSequences): campaign_contacts rows go inactive and are marked
+//        opted_out (bounced for a bounce), and running sequence runs are cancelled;
 //      - queued deferred sends to them are cancelled.
 // It is idempotent: suppression keeps its first reason, warmth stays opted_out, and the updates
 // only touch rows still active.
 import { advanceWarmth } from "../data/contacts.ts";
+import { stopSequences } from "../sequences/state.ts";
 import { addSuppression, addressHash, mailboxOf, normalizeAddress, type SuppressionReason } from "./suppression.ts";
 
 export type OptOutReason = Extract<SuppressionReason, "opt_out" | "complaint" | "bounce">;
@@ -61,32 +64,25 @@ export async function optOutAddress(db: D1Database, rawAddress: string, options:
     contactIds = results.map((r) => r.id);
   });
 
-  for (const id of contactIds) await attempt("warmth", () => advanceWarmth(db, id, "opted_out", new Date(now)));
-
   const ids = JSON.stringify(contactIds);
-  const status = options.reason === "bounce" ? "bounced" : "opted_out";
+  if (options.reason === "bounce") {
+    await attempt("verification", () =>
+      db.batch([
+        db
+          .prepare(
+            `INSERT INTO email_verifications (email_sha256, status, provider, verified_at, created_at) VALUES (?1, 'undeliverable', 'hard_bounce', ?2, ?2)
+             ON CONFLICT (email_sha256) DO UPDATE SET status = 'undeliverable', provider = 'hard_bounce', verified_at = excluded.verified_at`,
+          )
+          .bind(exact, now),
+        db.prepare("UPDATE contacts SET verification_status = 'undeliverable', updated_at = ?2 WHERE id IN (SELECT value FROM json_each(?1))").bind(ids, now),
+      ]),
+    );
+  } else {
+    for (const id of contactIds) await attempt("warmth", () => advanceWarmth(db, id, "opted_out", new Date(now)));
+  }
+
   if (contactIds.length > 0) {
-    await attempt("campaign_contacts", () =>
-      db
-        .prepare(
-          `UPDATE campaign_contacts
-              SET sequence_active = 0, next_send_at = NULL,
-                  sequence_paused_at = COALESCE(sequence_paused_at, ?2), sequence_pause_reason = COALESCE(sequence_pause_reason, ?3),
-                  status = CASE WHEN status IN ('pending', 'sent', 'skipped') THEN ?4 ELSE status END, updated_at = ?2
-            WHERE contact_id IN (SELECT value FROM json_each(?1))`,
-        )
-        .bind(ids, now, options.reason, status)
-        .run(),
-    );
-    await attempt("sequence_runs", () =>
-      db
-        .prepare(
-          `UPDATE outreach_sequence_runs SET status = 'cancelled', exit_reason = ?3, completed_at = ?2, last_event_at = ?2
-            WHERE contact_id IN (SELECT value FROM json_each(?1)) AND status IN ('running', 'awaiting_decision')`,
-        )
-        .bind(ids, now, options.reason)
-        .run(),
-    );
+    await attempt("sequences", () => stopSequences(db, { contactIds }, { reason: options.reason, status: options.reason === "bounce" ? "bounced" : "opted_out", now: new Date(now) }));
   }
   await attempt("deferred_sends", () =>
     db

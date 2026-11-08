@@ -65,7 +65,7 @@ describe("delivery, end to end", () => {
     const bounceResponse = await post(await fakeEmailWebhook([{ type: "bounced", providerMessageId: bounced.providerMessageId, tags: tagsOf(1), to: second.email, at, hard: true }], { secret: WEBHOOK_SECRET, at: NOW }));
     expect(bounceResponse.status).toBe(200);
     expect((await checkSuppression(db, [second.email])).blocked).toEqual([{ recipient: second.email, reason: "bounce" }]);
-    expect((await db.prepare("SELECT warmth FROM contacts WHERE id = ?1").bind(second.id).first<{ warmth: string }>())?.warmth).toBe("opted_out");
+    expect(await db.prepare("SELECT warmth, verification_status FROM contacts WHERE id = ?1").bind(second.id).first()).toEqual({ warmth: "contacted", verification_status: "undeliverable" });
     expect((await db.prepare("SELECT hard_bounces FROM domain_delivery WHERE domain = ?1").bind(second.email.split("@")[1]).first<{ hard_bounces: number }>())?.hard_bounces).toBe(1);
 
     // The next send to the bounced address is refused at the boundary.

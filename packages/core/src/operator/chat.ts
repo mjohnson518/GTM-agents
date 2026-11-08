@@ -5,6 +5,10 @@
 // or the flag may have changed while the message waited), then:
 //   - `batch-release-<id>-<code>` releases a waiting cold batch through the send function, once
 //     per message, without the model;
+//   - a sequence command (`sequence-release-<id>-<code>`, `sequence-resume-<contact id>`,
+//     `channel-done-<id>`, `channel-skip-<id>`) runs once per message, without the model;
+//   - a reply command (/replies, /reply_done, /reply_ignore, /reply_send, /reply_draft) runs once
+//     per message, without the model;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -22,8 +26,18 @@ import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator } from "./access.ts";
 import { requestDraftApproval } from "./approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
+// Sequences: follow-up release, resume and manual-touch commands, and the send function for steps.
+import type { EmailProvider } from "../ports/email.ts";
+import { senderDepsFromEnv } from "../sending/jobs.ts";
+import { parseSequenceCommand, runSequenceCommand } from "../sequences/commands.ts";
+import { createSequenceSender } from "../sequences/sender.ts";
+// Replies: the reply commands, and the warm mailbox approved replies go out through.
+import type { InboxProvider } from "../ports/email.ts";
+import { isReplyCommand, runReplyCommand } from "../replies/commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
+export const REPLY_COMMAND_EFFECT = "operator_reply_command";
+export const SEQUENCE_COMMAND_EFFECT = "operator_sequence_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -33,6 +47,17 @@ export interface OperatorAgentOptions<E extends Env = Env> {
   model?: (env: E) => ModelGateway | undefined;
   /** The send function a released cold batch goes through. Without it, releases are refused. */
   sendOutreach?: (env: E) => SendOutreach | undefined;
+  /**
+   * The email provider released follow-up steps go out through (with every check the send function
+   * runs; a step that must wait stays due for the sweep), and that looks up Message-IDs for
+   * threading. Without it, sequence releases are refused.
+   */
+  email?: (env: E) => EmailProvider | undefined;
+  /**
+   * The warm mailbox the reply commands read threads from and send approved replies through
+   * (docs/REPLIES.md). Without it, /reply_send refuses and replies are answered from the mail client.
+   */
+  inbox?: (env: E) => InboxProvider | undefined;
   maxRounds?: number;
   maxTokens?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
@@ -127,7 +152,71 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       await reply(text);
       return;
     }
+    // Sequences: follow-up release, resume and manual-touch commands, once per message.
+    const sequenceCommand = parseSequenceCommand(message.text);
+    if (sequenceCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, SEQUENCE_COMMAND_EFFECT))) {
+        log.warn("redelivered sequence command was not run again", { updateId: message.updateId });
+        return;
+      }
+      const provider = (() => {
+        try {
+          return options.email?.(env);
+        } catch {
+          return undefined;
+        }
+      })();
+      const send = provider ? createSequenceSender(senderDepsFromEnv(env, { config: options.config, provider, operator: channel, ...(options.now ? { now: options.now } : {}) })) : undefined;
+      let text: string;
+      try {
+        text = await runSequenceCommand(
+          { db: env.DB, flags, kv: env.KV, config: options.config, send, provider, userId: message.userId, ...(options.now ? { now: options.now } : {}) },
+          sequenceCommand,
+        );
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing more was sent; send the same command again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
     const command = parseCommand(message.text);
+    // Replies: list and settle owed replies, and send approved ones, once per message.
+    if (command && isReplyCommand(command.name)) {
+      if (!(await claimEffect(env.DB, message.updateId, REPLY_COMMAND_EFFECT))) {
+        log.warn("redelivered reply command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let inbox: InboxProvider | undefined;
+      try {
+        inbox = options.inbox?.(env);
+      } catch {
+        inbox = undefined;
+      }
+      let text: string;
+      try {
+        text = await runReplyCommand(
+          {
+            db: env.DB,
+            kv: env.KV,
+            shown: env.KV,
+            flags,
+            config: options.config,
+            operator: channel,
+            ...(inbox ? { inbox } : {}),
+            unsubscribeSigningKey: env.UNSUBSCRIBE_SIGNING_KEY,
+            baseUrl: env.AGENT_BASE_URL,
+            ...(options.now ? { now: options.now } : {}),
+            log,
+          },
+          command,
+          { chatId: message.chatId, userId: message.userId },
+        );
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
     if (command) {
       let text: string;
       try {

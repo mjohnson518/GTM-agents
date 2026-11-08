@@ -9,7 +9,10 @@
 //     the `operator` and `model` factories are given and the operator:agent_enabled flag is on;
 //   - POST /api/webhooks/email, the email provider's delivery events (answers 503 until the `email`
 //     factory is given), and GET and POST /u/:token, the one-click unsubscribe link (GET confirms,
-//     POST opts out). docs/SENDING.md covers both.
+//     POST opts out). docs/SENDING.md covers both;
+//   - POST /api/webhooks/mail, the mailbox's push wake-up (shared secret first; answers 503 until
+//     MAIL_PUSH_SECRET and the `inbox` factory are set), and the email() entry point for mail that
+//     Cloudflare Email Routing delivers, when `inboundEmail` is given. docs/INBOX.md covers both.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
@@ -17,9 +20,11 @@ import type { Env } from "./env.ts";
 import { bearerAuth } from "./http/auth.ts";
 import { runScheduledJobs, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
 import { createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
+import { createInboundEmailHandler, type InboundEmailHandler, type InboundEmailOptions } from "./inbox/email-handler.ts";
+import { MAIL_WEBHOOK_PATH, createInboxPushWebhook } from "./inbox/webhook.ts";
 import { createChatConsumer, isChatMessage } from "./operator/chat.ts";
 import { OPERATOR_WEBHOOK_PATH, createOperatorWebhook } from "./operator/webhook.ts";
-import type { EmailProvider } from "./ports/email.ts";
+import type { EmailProvider, InboxProvider } from "./ports/email.ts";
 import type { ModelGateway } from "./ports/model.ts";
 import type { OperatorChannel } from "./ports/operator.ts";
 import type { SendOutreach } from "./sending/types.ts";
@@ -80,6 +85,17 @@ export interface CreateWorkerOptions<E extends Env = Env> {
    * usually createOutreachSender(senderDepsFromEnv(...)). Without it, releases are refused.
    */
   sendOutreach?: (env: E) => SendOutreach | undefined;
+  /**
+   * The warm mailbox: the push webhook at /api/webhooks/mail polls it when woken. Return undefined
+   * (or throw) when it is not configured; the route then answers 503. The inbox jobs take the same
+   * factory (see createInboxJobs).
+   */
+  inbox?: (env: E) => InboxProvider | undefined;
+  /**
+   * Mail delivered by Cloudflare Email Routing: with this set, the Worker exports an email()
+   * handler that records each message through the same intake as polled mail (docs/INBOX.md).
+   */
+  inboundEmail?: InboundEmailOptions<E>;
   /** Limits and wiring for the operator chat agent. */
   agent?: OperatorAgentWorkerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
@@ -155,6 +171,10 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     operator: (env: E) => options.operator?.(env),
     ...(options.model ? { model: options.model } : {}),
     ...(options.sendOutreach ? { sendOutreach: options.sendOutreach } : {}),
+    // The release commands send through these: follow-up steps through the email provider, approved
+    // replies through the warm mailbox. Without them those commands refuse rather than send.
+    ...(options.email ? { email: options.email } : {}),
+    ...(options.inbox ? { inbox: options.inbox } : {}),
     ...(options.agent?.maxRounds !== undefined ? { maxRounds: options.agent.maxRounds } : {}),
     ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
@@ -169,6 +189,15 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
   const unsubscribe = createUnsubscribeHandlers<E>({ config, ...(options.operator ? { operator: options.operator } : {}), logger: deliveryLog });
   app.get(UNSUBSCRIBE_ROUTE, (c) => unsubscribe.get(c));
   app.post(UNSUBSCRIBE_ROUTE, (c) => unsubscribe.post(c));
+
+  // Inbox: the mailbox's push wake-up (shared secret checked before anything else) and, when
+  // configured, the email() entry point for mail Email Routing delivers.
+  const inboxLog = consoleLogger({ service: "gtm-agents", scope: "inbox" });
+  app.post(MAIL_WEBHOOK_PATH, createInboxPushWebhook<E>({ config, ...(options.inbox ? { inbox: options.inbox } : {}), ...(options.operator ? { operator: options.operator } : {}), logger: inboxLog }));
+  const emailHandler: InboundEmailHandler<E> | undefined = options.inboundEmail
+    ? createInboundEmailHandler<E>(config, { ...(options.operator ? { operator: options.operator } : {}), logger: inboxLog, ...options.inboundEmail })
+    : undefined;
+
   const chatQueues = [options.agent?.chatQueue ?? DEFAULT_CHAT_QUEUE].flat();
   const chatConsumer = createChatConsumer<E>(agentOptions);
   const queueConsumers: Record<string, QueueConsumer<E>> = {
@@ -200,6 +229,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     app,
     registry,
     fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+    ...(emailHandler ? { email: (message, env, ctx) => emailHandler(message, env, ctx) } : {}),
     scheduled: (controller, env, ctx) => {
       const run = runScheduledJobs(registry, controller.cron, makeContext(env, new Date(controller.scheduledTime)), runner, (settled) => ctx.waitUntil(settled))
         .then((outcomes) => {

@@ -1,0 +1,21 @@
+{
+  "name": "inbox-gmail",
+  "version": "0.1.0",
+  "ports": ["InboxProvider"],
+  "capabilities": ["list", "threads", "drafts", "send", "watch"],
+  "requiredSecrets": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
+  "optionalSecrets": ["GMAIL_PUBSUB_TOPIC", "MAIL_PUSH_SECRET"],
+  "flags": ["inbox:enabled"],
+  "tools": {
+    "gmail_thread_read": { "taint": "full", "gate": "never", "rateCategory": "mail" },
+    "gmail_draft_write": { "taint": "none", "gate": "full", "rateCategory": "mail" },
+    "gmail_reply_send": { "taint": "none", "gate": "metadata", "rateCategory": "mail" }
+  },
+  "costs": {
+    "read": { "usd": 0, "per": "API request (Gmail API quota units, no per-call price)" },
+    "send": { "usd": 0, "per": "email sent from the mailbox" }
+  },
+  "limits": { "perSecond": 5 },
+  "webhook": { "path": "/api/webhooks/mail", "signature": "shared-secret" },
+  "contract": "./contract.test.ts"
+}
