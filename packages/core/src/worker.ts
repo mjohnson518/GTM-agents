@@ -6,6 +6,9 @@ import type { GtmConfig } from "./config/schema.ts";
 import type { Env } from "./env.ts";
 import { runScheduledJobs, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
 import { createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
+import type { OperatorChannel } from "./ports/operator.ts";
+import { createCronHealthJob } from "./runtime/cron-health.ts";
+import { createJobRunner } from "./runtime/job-runner.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
 
@@ -19,8 +22,15 @@ export interface CreateWorkerOptions<E extends Env = Env> {
   queueConsumers?: Record<string, QueueConsumer<E>>;
   /** Extra routes, mounted after the built-in ones. */
   routes?: (app: AppType<E>) => void;
-  /** Replaces the default job runner. */
+  /**
+   * Replaces the default job runner, the fault-tolerant runner (halt, flags and budget checks, run
+   * rows, failure pages).
+   */
   runner?: JobRunner<E>;
+  /** The operator channel for failure and cron health pages. */
+  operator?: (env: E) => OperatorChannel | undefined;
+  /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
+  cronHealth?: { schedule: string; graceMs?: number };
   /** Called with each scheduled run's outcomes, for observability. */
   onScheduled?: (cron: string, outcomes: JobOutcome[]) => void;
 }
@@ -51,7 +61,20 @@ export function kvFlagReader(kv: KVNamespace | undefined): FlagReader {
 }
 
 export function createWorker<E extends Env = Env>(config: GtmConfig, options: CreateWorkerOptions<E> = {}): GtmWorker<E> {
-  const registry = createJobRegistry<E>(options.jobs ?? []);
+  const runner: JobRunner<E> = options.runner ?? createJobRunner<E>(options.operator ? { operator: options.operator } : {});
+  const jobs: Array<JobDefinition<E> | RegisteredJob<E>> = [...(options.jobs ?? [])];
+  if (options.cronHealth) {
+    jobs.push(
+      createCronHealthJob<E>({
+        schedule: options.cronHealth.schedule,
+        registry: () => registry,
+        runner,
+        ...(options.operator ? { operator: options.operator } : {}),
+        ...(options.cronHealth.graceMs !== undefined ? { graceMs: options.cronHealth.graceMs } : {}),
+      }),
+    );
+  }
+  const registry = createJobRegistry<E>(jobs);
   const log = consoleLogger({ service: "gtm-agents" });
   const app: AppType<E> = new Hono<{ Bindings: E }>();
 
@@ -95,7 +118,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     registry,
     fetch: (request, env, ctx) => app.fetch(request, env, ctx),
     scheduled: (controller, env, ctx) => {
-      const run = runScheduledJobs(registry, controller.cron, makeContext(env, new Date(controller.scheduledTime)), options.runner)
+      const run = runScheduledJobs(registry, controller.cron, makeContext(env, new Date(controller.scheduledTime)), runner, (settled) => ctx.waitUntil(settled))
         .then((outcomes) => {
           if (outcomes.length === 0) log.warn("no jobs registered for this cron trigger", { cron: controller.cron });
           options.onScheduled?.(controller.cron, outcomes);

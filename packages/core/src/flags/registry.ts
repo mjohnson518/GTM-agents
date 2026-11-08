@@ -18,7 +18,8 @@ export interface FlagDefinition {
 export const FLAGS: readonly FlagDefinition[] = [
   // System controls. Both fail closed: an unreadable value counts as halted or paused.
   { key: "system:halt", kind: "json", default: null, description: "Stops every scheduled job and every send, replies included. Unset means running; any value, or a read error, means halted. Only the operator sets or clears it." },
-  { key: "outreach:cold-pause", kind: "json", default: null, description: "The cold outreach kill switch: {reason, source, since, severity}. Unset means running; a read error counts as paused (critical). Only a person lifts a critical pause." },
+  { key: "outreach:cold-pause:critical", kind: "json", default: null, description: "A critical cold outreach pause: {reason, source, since}. Unset means no critical pause; a read error counts as paused. Only the operator sets or lifts it." },
+  { key: "outreach:cold-pause", kind: "json", default: null, description: "A warning-level cold outreach pause: {reason, source, since}, which automation may set and lift. Unset means running; a read error counts as a critical pause." },
 
   // Cold batch.
   { key: "cold_batch:enabled", kind: "boolean", default: "false", description: "Master switch for the daily cold batch." },

@@ -1,6 +1,8 @@
 # Security model
 
-This page is for two readers: contributors adding a tool, an adapter or a module, who need to classify what they add; and deployers judging what the system protects against. The code lives in `packages/core/src/security/` and `packages/core/src/runtime/dispatcher.ts`. The tests that prove it live in `tests/security/`.
+This page is for two readers: contributors adding a tool, an adapter or a module, who need to classify what they add; and deployers judging what the system protects against. The code lives in `packages/core/src/security/`, `packages/core/src/runtime/`, `packages/core/src/sending/`, `packages/core/src/budget/` and `packages/core/src/events/`. The tests that prove it live in `tests/security/`.
+
+The first half of this page covers untrusted text: taint, tool classes, the dispatcher, the fence, egress, delegation and approvals. The second half covers the controls that bound what the system does even when nothing is tainted: the effects ledger, the halt and kill switch, suppression, budgets, rate limits and the job runner. The rule behind all of them: **gates fail closed, bookkeeping fails open.**
 
 ## The threat
 
@@ -169,6 +171,101 @@ Markers are read escalate-only, so text that forges or strips a marker can only 
 
 **Human-only tools.** `toolInputDigest` hashes the tool name and its exact input, with object keys sorted. An approval for one input does not cover any other input or any other tool, and a human-only tool is still refused in a tainted session.
 
+## The effects ledger
+
+Work can run more than once for the same event: a queue retry, a backstop sweep, a job rerun, or a handler that failed halfway. Every side effect outside the database (an email, a page, a webhook call) is claimed first:
+
+```ts
+import { claimEffect, runOnce } from "@gtm-agents/core/events";
+
+// A send: claim it, and keep the claim even if the provider call fails ambiguously.
+if (await claimEffect(env.DB, eventId, "reply_email")) await send(reply, { idempotencyKey: eventId });
+
+// Work that is safe to repeat: the claim is released if it throws, so a later run retries.
+await runOnce(env.DB, eventId, "crm_sync", () => syncToCrm(record));
+```
+
+Do not wrap a send in `runOnce`. A send can fail after the provider accepted it (a time-out, a dropped response), and releasing the claim would send again. Where the provider supports an idempotency key, pass the event id.
+
+`claimEffect` returns true for exactly one caller per (event id, effect) pair, including under concurrency, because the claim is a primary-key insert in D1. An empty event id or effect name throws rather than deduplicating nothing. A claim is a gate, so a database error propagates and the effect does not happen. `releaseEffect` undoes a claim whose effect did not happen; it is bookkeeping and never throws.
+
+## Halt, kill switch and the send gates
+
+**The system halt** (`system:halt` in KV) stops every scheduled job and every send, replies included. Only an absent key means running: any value, an unparseable value, a KV error or a missing KV binding means halted. Only the operator sets or clears it; no agent tool writes it.
+
+**The cold outreach kill switch** (`outreach:cold-pause`) stops cold outreach: the cold batch and sequence follow-ups to people who have not replied. Replies and lifecycle mail keep flowing. A pause has a severity, and each severity has its own key:
+- a `critical` pause (`outreach:cold-pause:critical`) is lifted only by an explicit operator call, `resumeColdOutreach(kv, { liftCritical: true })`. Agent tools and automation call it without `liftCritical`, and are refused while a critical pause stands;
+- a `warning` pause (`outreach:cold-pause`) may be set and lifted by automation, such as a bounce monitor after clean days.
+
+Automation never writes or deletes the critical key, so a stale or racing KV read in an automated path cannot lower or lift a critical pause. A record that cannot be read, a KV error or a missing binding counts as a critical pause.
+
+**`checkSendGates`** must be called inside every send function, so no caller can skip it. In order: the halt (every path), the kill switch (the `cold` and `sequence` paths; an unknown path counts as cold), then suppression for every recipient. A refusal is a message starting with `[SEND BLOCKED:<reason>]`. On success it returns the normalized recipient addresses, and the send function sends to exactly those, never to the raw strings it was given. The rest of the send path (content lint, verification policy, send window, per-domain and per-account caps, the provider circuit breaker) runs after these ([ARCHITECTURE.md](ARCHITECTURE.md#the-send-path)).
+
+## Suppression
+
+The suppression list holds addresses the system never emails: opt-outs, bounces, complaints, erasures, and manual or do-not-contact entries. Entries are keyed by the SHA-256 of the normalized address, and the plaintext address is optional, so an erasure can keep someone suppressed without keeping their address.
+
+- Addresses are normalized to lowercase, and display-name forms (`"Jane Doe" <jane@prospect.example>`) are reduced to the address. A display name may not hold line breaks, control characters or address syntax (`@ , ; < >`) outside one quoted string. Anything that is not exactly one plain ASCII address is **blocked**, not guessed at.
+- Subaddresses count as one mailbox: suppressing `jane+news@` also blocks `jane@` and `jane+other@`, and the reverse. Provider-specific rules, such as ignoring dots, are not applied. An entry made from a hash alone (an erasure) cannot be expanded this way, so erasure flows should pass the address with `storeAddress: false`.
+- The check fails closed: a database error blocks every recipient in the batch.
+- Adding is idempotent and keeps the first reason. There is no remove function: taking someone off a do-not-contact list is a decision for a person, made in the database.
+
+## Budgets and the cost ledger
+
+Every paid call writes one row to `cost_events` with `recordCost`, in micro-cents (10,000 per cent) so that fractions of a cent are not recorded as free. Model calls are priced from `models.pricing` in `gtm.config.ts`, with cache writes and reads at their own multipliers. Every row carries the job, run and chat turn it belongs to. Recording is bookkeeping: it never throws and never blocks the call.
+
+The budget gate reads limits from flags (the `budget:*` and `chat:turn_max_cents` rows in `gtm doctor`'s flag table) and spend from the ledger:
+
+| Limit | Default | Enforced |
+|---|---|---|
+| Global daily and monthly (`budget:daily_limit_cents`, `budget:monthly_limit_cents`) | $20, $500 | In `hard` mode (`budget:enforcement`); `soft` mode only reports `nearLimit` |
+| Per-job daily cap (`budget:job:<job>:daily_cents`, and a job's `ceilings.maxSpendCents`) | none | Always, whatever the mode. The lower of the two applies |
+| Per-run ceiling (`budget:run_ceiling_cents`) | $10 | Tools stop at the ceiling. Past 1.25 times it, `checkRunCeiling` reports `abort`, and the agent loop ends the run |
+| Per-turn chat ceiling (`chat:turn_max_cents`) | $0.50 | Always. Counts delegated runs, whose rows carry the turn's id |
+
+The gate fails closed. A limit that cannot be read or does not parse, or a ledger that cannot be read, blocks. A limit of `0` forbids spend. Caps stop new spend once reached; a single call can still take spend past a cap.
+
+In the dispatcher, `budgetCheck` refuses every tool once the turn or run ceiling is reached, and refuses paid tools once the job cap or a hard global limit is reached. A tool counts as paid when it reaches a third party (it has a `rateCategory`), runs another agent (`delegates`), or was never declared. The job runner checks the budget before starting a job that declares `ceilings.maxSpendCents` or has a `budget:job:<job>:daily_cents` cap.
+
+A model with no valid price in `models.pricing` cannot be priced: `tokenCostMicroCents` throws, so the call is refused rather than run as if free.
+
+## Rate limits
+
+Tools that declare a `rateCategory` are counted per category in a fixed KV window by `rateLimitCheck`. The defaults:
+
+| Category | Limit | Category | Limit |
+|---|---|---|---|
+| `api` | 100 a minute | `search` | 20 an hour |
+| `chat` | 30 a minute | `git_write` | 20 an hour |
+| `web` | 40 an hour | `sandbox` | 10 an hour |
+| `enrichment` | 30 an hour | `code_mode` | 30 an hour |
+| `mail` | 50 an hour | `esp` | 30 an hour |
+| `billing` | 20 an hour | | |
+
+Rate limits are best-effort. KV is eventually consistent and the count is not atomic, so concurrent calls can overshoot. They stop runaway loops and keep within providers' limits; exact spend control is the budget gate's job. They are bookkeeping, so they fail open: if KV fails, the call is allowed and the result is marked degraded. A category with no configured limit is not limited.
+
+## Scheduled jobs
+
+`createJobRunner`, the default runner of `createWorker`, wraps every scheduled job:
+
+1. **Gates.** It checks the halt, the job's flag and, for a job with a spend cap (`ceilings.maxSpendCents` or `budget:job:<job>:daily_cents`), the budget. Each fails closed. A held job is not run and leaves a `skipped` run row that says why. A hold caused by state that could not be read says "unreadable".
+2. **Run row.** It writes a `running` row to `execution_runs`, runs the job within its duration ceiling, and finishes the row as `completed` or `failed`. If the first write failed, the finishing write inserts the row, so a run that happened is never unrecorded. A failed row stores the error after `sanitizeErrorMessage`, with a class: `config`, `transient` or `unknown`.
+3. **Pages.** A failure pages the operator at most once per job per UTC day. It escalates at most once per job per day when the error looks like configuration, the job has failed three times that day, or it has failed on each of the last three calendar days.
+   - Each page is claimed in the effects ledger. It is released if sending fails or takes longer than 10 seconds, so a later failure can retry; a late delivery can then mean a second page, which is preferred to none.
+   - If the database is down, a KV marker stands in, so an outage still pages once a day. The marker also counts once the database is back, so recovery does not page twice.
+
+Bookkeeping never changes the outcome: a run row or page that cannot be written is logged and dropped, and a successful job stays successful. The scheduled loop moves on to the next job once a job's ceiling has passed, but the Worker stays alive until the runner has finished its run row and page.
+
+**Cron health** (`createWorker(config, { cronHealth: { schedule } })`) checks every job registered as `critical`. It works out when the job last should have fired, allowing for its duration ceiling plus 15 minutes, and reports the job as:
+- `ok` when a run completed, or one started recently and is still running;
+- `skipped` when the job was held on purpose;
+- `failed`, with the stored error, including a hold caused by state that could not be read;
+- `abandoned` when a run is still marked running past its ceiling and the grace period;
+- `missed` when there is no run row at all;
+- `unknown` when the run rows cannot be read.
+
+It pages first: each unhealthy job and status at most once a day, with the same KV fallback as failure pages. Then it reruns jobs marked `rerunnable` through the job runner, so the halt, their flag and the budget still apply. Each expected fire is rerun at most once, and a rerun that could outlast the check's own two-minute ceiling is left for the next check. A critical job whose ceiling is close to two minutes or longer is therefore paged but never rerun automatically. Pages go out one at a time, each allowed up to 10 seconds, so an unreachable operator channel can use up the check's time before reruns start.
+
 ## The security contract
 
 `runSecurityContract` (exported from `@gtm-agents/core/testing`) drives every registered tool through the real dispatcher with stub handlers. It checks that:
@@ -198,6 +295,8 @@ it("keeps the security contract", async () => {
 - **Classes are written by people.** A tool that is classified too loosely is a hole. That is why changes to `packages/core/src/security/`, the tool registry and the dispatcher are reviewed by someone who did not write them ([CLAUDE.md](../CLAUDE.md#review-rules)).
 - **Approvals are not single-use.** A digest stays valid for as long as the content matches it. Paths that must not repeat an action claim it in the effects ledger as well.
 - **A clean session can still write bad copy.** The taint model stops untrusted text from driving actions. It does not judge the quality of a draft. That is the job of the quality gate and of human approval, until autonomy is earned.
-- **The rest of the safety spine** (the effects ledger, budgets and rate limits, the halt flag and kill switch, and suppression) is summarized in [ARCHITECTURE.md](ARCHITECTURE.md#the-safety-spine).
+- **Rate limits are approximate.** They are counted in KV without atomic increments. Budgets, read from the database, are the exact control.
+- **The failure streak counts calendar days.** A job that does not run every day (a weekday or weekly job) never builds a three-day streak; its repeated failures escalate through the three-a-day rule or its configuration class instead.
+- **Suppression does not yet read contact records.** It checks the suppression list. Contacts marked `opted_out` must also be added to the list until the data layer joins them into the check.
 
 To report a weakness in any of this, follow [SECURITY.md](../SECURITY.md).

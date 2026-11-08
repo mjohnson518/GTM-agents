@@ -24,11 +24,17 @@ export interface FlagReader {
   get(key: string): Promise<string | null>;
 }
 
+export type JobTrigger = "cron" | "rerun" | "manual";
+
 export interface JobContext<E = unknown> {
   env: E;
   config: GtmConfig;
   job: string;
   now: Date;
+  /** Why the job is running. Defaults to "cron". */
+  trigger?: JobTrigger;
+  /** The run row's id, set by the job runner. Cost rows recorded by the job carry it. */
+  runId?: string;
   /** Aborted when the job exceeds its duration ceiling. */
   signal: AbortSignal;
   ceilings: JobCeilings;
@@ -69,7 +75,9 @@ export function defineJob<E = unknown>(definition: JobDefinition<E>): Registered
   const c = definition.ceilings;
   if (!(Number.isFinite(c.maxDurationMs) && c.maxDurationMs > 0)) throw new Error(`job ${definition.name}: ceilings.maxDurationMs must be a positive number`);
   if (c.maxRows !== undefined && !(Number.isInteger(c.maxRows) && c.maxRows > 0)) throw new Error(`job ${definition.name}: ceilings.maxRows must be a positive integer`);
-  if (c.maxSpendCents !== undefined && !(c.maxSpendCents >= 0)) throw new Error(`job ${definition.name}: ceilings.maxSpendCents must be zero or more`);
+  if (c.maxSpendCents !== undefined && !(Number.isInteger(c.maxSpendCents) && c.maxSpendCents >= 0)) {
+    throw new Error(`job ${definition.name}: ceilings.maxSpendCents must be a whole number of cents, zero or more`);
+  }
   return Object.freeze({ ...definition, schedule: cron.expression, cron });
 }
 

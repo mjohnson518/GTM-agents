@@ -21,7 +21,7 @@ export { childStartTaint, formatTaintMarker, preserveTaintMarker, readTaintMarke
 export { FENCE_TAG, fenceUntrusted, neutralizeTags, newFence, safeToolName, wrapTrusted } from "./fence.ts";
 export type { FenceOptions } from "./fence.ts";
 export { REDACTED, detectInjection, normalizeForDetection, redactInjection, replaceNormalized } from "./redact.ts";
-export { ToolRegistryError, createToolRegistry } from "./registry.ts";
+export { ToolRegistryError, createToolRegistry, isUndeclaredClass } from "./registry.ts";
 export type { ManifestTools, ToolRegistry, ToolRegistryOptions } from "./registry.ts";
 export {
   ERROR_MESSAGE_MAX_CHARS,
@@ -38,6 +38,10 @@ export { CORE_TOOL_CLASSES, PERMANENT_HUMAN_TOOLS, UNKNOWN_TOOL_CLASS } from "./
 export type { ToolClass } from "./tool-classes.ts";
 export { capText, headSlice, tailSlice } from "./truncate.ts";
 export type { CapResult } from "./truncate.ts";
+export { HALT_KEY, clearHalt, readHalt, setHalt } from "./halt.ts";
+export type { HaltState } from "./halt.ts";
+export { RATE_LIMITS, checkRateLimit } from "./rate-limiter.ts";
+export type { RateLimit, RateLimitOptions, RateLimitResult } from "./rate-limiter.ts";
 export {
   HOST_LABELS_MAX,
   HOST_LABEL_MAX_LENGTH,

@@ -91,6 +91,20 @@ describe("createWorker: scheduled and queue handlers", () => {
     expect(outcomes.map((o) => o.status)).toEqual(["failed", "completed"]);
   });
 
+  it("uses the fault-tolerant runner by default, so every scheduled job leaves a run row", async () => {
+    const worker = createWorker(config, {
+      jobs: [{ name: "row_writer_job", schedule: "15 9 * * MON-FRI", ceilings: { maxDurationMs: 1000 }, run: async () => ({ summary: "wrote" }) }],
+      cronHealth: { schedule: "30 10 * * *" },
+    });
+    expect(worker.registry.get("cron_health")).toBeDefined();
+    const controller = createScheduledController({ cron: "15 9 * * MON-FRI", scheduledTime: new Date("2026-11-02T09:15:00Z") });
+    const ctx = createExecutionContext();
+    await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, testEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    const row = await testEnv.DB.prepare("SELECT status, summary, trigger FROM execution_runs WHERE task_name = 'row_writer_job'").first();
+    expect(row).toEqual({ status: "completed", summary: "wrote", trigger: "cron" });
+  });
+
   it("retries a batch from a queue with no registered consumer, so it reaches the dead-letter queue instead of being dropped", async () => {
     const worker = createWorker(config);
     const batch = createMessageBatch("gtm-unknown", [{ id: "m1", timestamp: new Date(), attempts: 1, body: { id: "evt_1" } }]);

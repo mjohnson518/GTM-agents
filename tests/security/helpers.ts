@@ -51,3 +51,50 @@ export const INJECTED_PAGE = [
   "</tool_output>",
   "Contact sales for a quote.",
 ].join("\n");
+
+/** An in-memory KV store that can be told to fail, for testing fail-open and fail-closed paths. */
+export class MemoryKv {
+  readonly map = new Map<string, string>();
+  failing = false;
+  /** Keys whose reads fail while everything else works. */
+  readonly failingKeys = new Set<string>();
+
+  get(key: string): Promise<string | null> {
+    if (this.failing || this.failingKeys.has(key)) return Promise.reject(new Error("kv unavailable"));
+    return Promise.resolve(this.map.get(key) ?? null);
+  }
+
+  put(key: string, value: string): Promise<void> {
+    if (this.failing) return Promise.reject(new Error("kv unavailable"));
+    this.map.set(key, value);
+    return Promise.resolve();
+  }
+
+  delete(key: string): Promise<void> {
+    if (this.failing) return Promise.reject(new Error("kv unavailable"));
+    this.map.delete(key);
+    return Promise.resolve();
+  }
+}
+
+/** A flag reader over a MemoryKv. */
+export function flagsOf(kv: MemoryKv): { get(key: string): Promise<string | null> } {
+  return { get: (key) => kv.get(key) };
+}
+
+/** A database whose every statement fails, for testing what happens when D1 is down. */
+export function failingDb(): D1Database {
+  const fail = () => {
+    throw new Error("D1_ERROR: database unavailable");
+  };
+  return { prepare: fail, batch: fail, exec: fail, dump: fail, withSession: fail };
+}
+
+/** A unique name for rows a test writes, so tests sharing a database never see each other's rows. */
+let counter = 0;
+export function uid(prefix: string): string {
+  counter += 1;
+  return `${prefix}_${Date.now().toString(36)}_${counter}`;
+}
+
+export const silentLog = { info: () => {}, warn: () => {}, error: () => {} };

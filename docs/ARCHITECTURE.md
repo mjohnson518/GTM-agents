@@ -111,11 +111,12 @@ defineJob({
 - `gtm setup` generates the Worker's cron triggers from the distinct schedules in the registry. The scheduled handler is a loop over the jobs whose schedule matches, not a switch statement.
 - Schedules use named days. On Cloudflare, numeric day-of-week `1` is Sunday, so `MON-FRI` is the only unambiguous form. The registry rejects numeric days.
 - Every job runs inside a fault-tolerant runner:
-  - It writes a run row (running, then completed, failed or skipped).
-  - It respects the halt flag and the job's ceilings.
-  - It pages the operator at most once per job per UTC day, and escalates repeated failures.
+  - It writes a run row (running, then completed, failed or skipped), including for jobs it holds because the system is halted, the job's flag is off or its budget is spent.
+  - It enforces the job's duration ceiling, and checks the budget before a job that declares `maxSpendCents`.
+  - It pages the operator at most once per job per UTC day, and escalates configuration errors and repeated failures at most once a day.
   - One job's failure never stops the next.
-- A cron health check runs twice a day. It confirms that every critical job completed after its last expected time, and it re-runs the jobs that are safe to re-run.
+- A cron health check runs twice a day. It confirms that every critical job completed after its last expected time, and it reruns, at most once, the jobs that are safe to rerun.
+- [SECURITY-MODEL.md](SECURITY-MODEL.md#scheduled-jobs) has the details.
 - Model calls never run in a per-minute job.
 
 ## Agents and model roles

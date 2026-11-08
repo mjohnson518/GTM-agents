@@ -1,6 +1,7 @@
 // GTM-agents: the scheduled-handler loop. Jobs whose schedule matches the firing cron run one
 // after another; a failure in one job never stops the next. The runner is pluggable so the
 // fault-tolerant runner (run rows, operator paging, halt checks) can replace the default.
+import { HALT_KEY } from "../security/halt.ts";
 import type { JobContext, JobRegistry, RegisteredJob } from "./registry.ts";
 
 export interface JobOutcome {
@@ -17,7 +18,12 @@ export type ContextFactory<E = unknown> = (job: RegisteredJob<E>, signal: AbortS
 
 const ON_VALUES = new Set(["true", "on", "1", "yes"]);
 
-export const HALT_FLAG = "system:halt";
+/** True for the values that turn a boolean flag on: true, on, 1, yes (any case). */
+export function isFlagOn(value: string | null): boolean {
+  return value !== null && ON_VALUES.has(value.trim().toLowerCase());
+}
+
+export const HALT_FLAG = HALT_KEY;
 
 /**
  * The default runner: respects the halt flag, checks the job's flag, enforces the duration
@@ -28,7 +34,7 @@ export async function defaultRunner<E>(job: RegisteredJob<E>, ctx: JobContext<E>
   const started = Date.now();
   let halted: boolean;
   try {
-    halted = (await ctx.flags.get(HALT_FLAG)) !== null;
+    halted = (await ctx.flags.get(HALT_KEY)) !== null;
   } catch {
     halted = true;
   }
@@ -44,7 +50,7 @@ export async function defaultRunner<E>(job: RegisteredJob<E>, ctx: JobContext<E>
       ctx.log.warn("job skipped: its flag could not be read", { job: job.name, flag: job.flag });
       return { job: job.name, status: "skipped", durationMs: Date.now() - started, summary: "flag unreadable" };
     }
-    if (!value || !ON_VALUES.has(value.toLowerCase())) {
+    if (!isFlagOn(value)) {
       return { job: job.name, status: "skipped", durationMs: Date.now() - started, summary: "flag off" };
     }
   }
@@ -59,7 +65,8 @@ export async function defaultRunner<E>(job: RegisteredJob<E>, ctx: JobContext<E>
   }
 }
 
-function withTimeout<T>(work: Promise<T>, signal: AbortSignal, ms: number, name: string): Promise<T> {
+/** Resolve with `work`, or reject when `signal` aborts (the job's duration ceiling). */
+export function withTimeout<T>(work: Promise<T>, signal: AbortSignal, ms: number, name: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(new Error(`job ${name} exceeded its ${ms} ms ceiling`));
     if (signal.aborted) return onAbort();
@@ -81,6 +88,42 @@ function withTimeout<T>(work: Promise<T>, signal: AbortSignal, ms: number, name:
 const RUNNER_GRACE_MS = 1_000;
 
 /**
+ * Run one job with its ceiling enforced by the loop itself: the job's signal aborts at the ceiling,
+ * and if the runner still has not settled shortly after, the job is recorded as failed so it
+ * cannot block the jobs after it. Always resolves.
+ */
+export async function runOneJob<E>(
+  job: RegisteredJob<E>,
+  makeContext: ContextFactory<E>,
+  runner: JobRunner<E> = defaultRunner,
+  /** Receives the runner's own promise, so a caller can keep the Worker alive until it settles. */
+  track?: (settled: Promise<unknown>) => void,
+): Promise<JobOutcome> {
+  const started = Date.now();
+  const controller = new AbortController();
+  const abortTimer = setTimeout(() => controller.abort(), job.ceilings.maxDurationMs);
+  let giveUpTimer: ReturnType<typeof setTimeout> | undefined;
+  const giveUp = new Promise<JobOutcome>((resolve) => {
+    giveUpTimer = setTimeout(
+      () => resolve({ job: job.name, status: "failed", durationMs: Date.now() - started, error: `job ${job.name} did not finish within its ${job.ceilings.maxDurationMs} ms ceiling` }),
+      job.ceilings.maxDurationMs + RUNNER_GRACE_MS,
+    );
+  });
+  try {
+    const run = Promise.resolve().then(() => runner(job, makeContext(job, controller.signal)));
+    // The loop may stop waiting before the runner finishes its bookkeeping (a slow failure page).
+    // Tracking the runner lets the Worker keep running until it settles.
+    track?.(run.catch(() => undefined));
+    return await Promise.race([run, giveUp]);
+  } catch (err) {
+    return { job: job.name, status: "failed", durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
+  } finally {
+    clearTimeout(abortTimer);
+    if (giveUpTimer !== undefined) clearTimeout(giveUpTimer);
+  }
+}
+
+/**
  * Run every job registered for `cron`, sequentially. Always resolves; never throws. The loop
  * enforces each job's ceiling itself, so a runner (or a flag read) that never settles cannot
  * block the jobs after it.
@@ -90,28 +133,9 @@ export async function runScheduledJobs<E>(
   cron: string,
   makeContext: ContextFactory<E>,
   runner: JobRunner<E> = defaultRunner,
+  track?: (settled: Promise<unknown>) => void,
 ): Promise<JobOutcome[]> {
   const outcomes: JobOutcome[] = [];
-  for (const job of registry.forCron(cron)) {
-    const started = Date.now();
-    const controller = new AbortController();
-    const abortTimer = setTimeout(() => controller.abort(), job.ceilings.maxDurationMs);
-    let giveUpTimer: ReturnType<typeof setTimeout> | undefined;
-    const giveUp = new Promise<JobOutcome>((resolve) => {
-      giveUpTimer = setTimeout(
-        () => resolve({ job: job.name, status: "failed", durationMs: Date.now() - started, error: `job ${job.name} did not finish within its ${job.ceilings.maxDurationMs} ms ceiling` }),
-        job.ceilings.maxDurationMs + RUNNER_GRACE_MS,
-      );
-    });
-    try {
-      const run = Promise.resolve().then(() => runner(job, makeContext(job, controller.signal)));
-      outcomes.push(await Promise.race([run, giveUp]));
-    } catch (err) {
-      outcomes.push({ job: job.name, status: "failed", durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
-    } finally {
-      clearTimeout(abortTimer);
-      if (giveUpTimer !== undefined) clearTimeout(giveUpTimer);
-    }
-  }
+  for (const job of registry.forCron(cron)) outcomes.push(await runOneJob(job, makeContext, runner, track));
   return outcomes;
 }

@@ -14,7 +14,16 @@ import { safeToolName } from "./fence.ts";
 import { isRefusedAt, type TaintLevel } from "./taint.ts";
 import type { ToolClass } from "./tool-classes.ts";
 
-export type BlockCode = "tainted" | "human_only" | "egress" | "unsafe_url" | "check_failed" | "unavailable" | "invalid_input";
+export type BlockCode =
+  | "tainted"
+  | "human_only"
+  | "egress"
+  | "unsafe_url"
+  | "rate_limited"
+  | "over_budget"
+  | "check_failed"
+  | "unavailable"
+  | "invalid_input";
 
 export interface Refusal {
   allowed: false;

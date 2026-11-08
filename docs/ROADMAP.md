@@ -20,9 +20,11 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the worker template, which bundles from placeholders, and the admin shell;
 - the `gtm` CLI with `init`, `doctor` and `brain validate`;
 - `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it;
-- the first part of the safety spine: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run ([SECURITY-MODEL.md](SECURITY-MODEL.md)).
+- the safety spine ([SECURITY-MODEL.md](SECURITY-MODEL.md)):
+  - for untrusted text: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run;
+  - for everything else: the effects ledger, the fault-tolerant job runner with run rows, failure pages and cron health, rate limits, the budget gate and cost ledger, the system halt and cold outreach kill switch, the suppression list and the send gates.
 
-The runtime does not run any GTM work yet: no jobs, adapters or agents are registered.
+The runtime does not run any GTM work yet: no jobs, adapters or agents are registered. Milestone 1 continues with the baseline data model.
 
 ## Milestones
 

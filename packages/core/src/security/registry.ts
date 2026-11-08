@@ -15,6 +15,11 @@ const TOOL_NAME = /^[a-z][a-z0-9_]*$/;
 
 const UNKNOWN_PERMANENT_HUMAN_CLASS: ToolClass = Object.freeze({ ...UNKNOWN_TOOL_CLASS, humanOnly: true });
 
+/** True for the class the registry returns for a name nobody declared. */
+export function isUndeclaredClass(cls: ToolClass): boolean {
+  return cls === UNKNOWN_TOOL_CLASS || cls === UNKNOWN_PERMANENT_HUMAN_CLASS;
+}
+
 export class ToolRegistryError extends Error {
   constructor(message: string) {
     super(message);

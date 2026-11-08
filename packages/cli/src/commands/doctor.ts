@@ -152,9 +152,10 @@ async function runChecks(dir: string, env: string | undefined, remote: boolean, 
   // Halt flag and kill switch.
   if (remote) {
     checks.push(await remoteFlagCheck(dir, env, "system:halt", "halt flag", "the system is halted; every job and send is stopped", deps.runner));
+    checks.push(await remoteFlagCheck(dir, env, "outreach:cold-pause:critical", "kill switch (critical)", "cold outreach is paused by the operator", deps.runner));
     checks.push(await remoteFlagCheck(dir, env, "outreach:cold-pause", "kill switch", "cold outreach is paused", deps.runner));
   } else {
-    checks.push({ status: "INFO", name: "halt and kill switch", detail: "system:halt and outreach:cold-pause live in KV; unset means running; pass --remote to read them" });
+    checks.push({ status: "INFO", name: "halt and kill switch", detail: "system:halt, outreach:cold-pause:critical and outreach:cold-pause live in KV; unset means running; pass --remote to read them" });
   }
   return checks;
 }

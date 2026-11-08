@@ -115,7 +115,7 @@ Every record an adapter returns is raw data to core. Core sanitizes strings, ass
 | `tools.<name>.gate` | The lowest session taint at which the tool is refused: `never` for read-only tools, then `metadata`, `structured` or `full`. Omitted means `metadata`, so the tool is refused as soon as anything untrusted has been read. A threshold can only block more as taint rises, so gates never loosen |
 | `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. Every URL is checked against internal and reserved addresses. At full taint, core refuses URLs that carry data out (an email address, an encoded blob, a long query string, an oversized hostname) and any input that carries an email address or an encoded blob. An egress tool must declare a `rateCategory` |
 | `tools.<name>.humanOnly` | The action gate refuses the call unless it carries an approval whose digest matches the exact input |
-| `tools.<name>.rateCategory` | The rate-limit bucket the call counts against |
+| `tools.<name>.rateCategory` | The rate-limit bucket the call counts against. It also marks the tool as a paid third-party call, which the budget gate checks before it runs |
 | `costs` | The price table the budget layer reads |
 | `limits` | What the send path chunks and throttles to |
 | `webhook` | The route core mounts for the adapter's inbound webhook, and its signature scheme |

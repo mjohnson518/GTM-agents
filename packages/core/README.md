@@ -35,7 +35,13 @@ The runtime skeleton exists:
 - the flag registry and autonomy levels;
 - the brain (parse, validate, lock, slice assembly, runtime loader) and templates (validate, render);
 - the baseline migration;
-- the first part of the safety spine (`@gtm-agents/core/security`, `@gtm-agents/core/runtime`): the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint and approval digests;
-- the security contract for adapters and modules (`@gtm-agents/core/testing`).
+- the safety spine:
+  - `@gtm-agents/core/security`: the taint model and action gate, the tool registry, sanitize and fence, URL and egress checks, delegation taint, approval digests, the system halt and rate limits;
+  - `@gtm-agents/core/runtime`: the tool dispatcher with its rate-limit and budget checks, the fault-tolerant job runner and the cron health check;
+  - `@gtm-agents/core/events`: the effects ledger;
+  - `@gtm-agents/core/budget`: the cost ledger and the budget gate;
+  - `@gtm-agents/core/sending`: the cold outreach kill switch, the suppression list and the send gates;
+- the security contract for adapters and modules (`@gtm-agents/core/testing`);
+- migrations for the effects ledger, run rows, the cost ledger and the suppression list.
 
-The rest of the safety spine and the pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned, and [docs/SECURITY-MODEL.md](../../docs/SECURITY-MODEL.md) describes the security model.
+The data model and the pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned, and [docs/SECURITY-MODEL.md](../../docs/SECURITY-MODEL.md) describes the security model.
