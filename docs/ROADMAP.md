@@ -8,7 +8,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 |---|---|
 | 0. Foundation | Done |
 | 0b. First agent | Planned |
-| 1. Safety spine and data layer | In progress |
+| 1. Safety spine and data layer | Done |
 | 2 to 14 | Planned |
 
 **What exists today:**
@@ -22,9 +22,10 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it;
 - the safety spine ([SECURITY-MODEL.md](SECURITY-MODEL.md)):
   - for untrusted text: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run;
-  - for everything else: the effects ledger, the fault-tolerant job runner with run rows, failure pages and cron health, rate limits, the budget gate and cost ledger, the system halt and cold outreach kill switch, the suppression list and the send gates.
+  - for everything else: the effects ledger, the fault-tolerant job runner with run rows, failure pages and cron health, rate limits, the budget gate and cost ledger, the system halt and cold outreach kill switch, the suppression list and the send gates;
+- the data model ([DATA-MODEL.md](DATA-MODEL.md)): about a hundred tables across the CRM, pipeline, outreach, experiments, discovery, events, agent operations and the ship loop, with the helpers that keep warmth forward-only and deal stages valid.
 
-The runtime does not run any GTM work yet: no jobs, adapters or agents are registered. Milestone 1 continues with the baseline data model.
+The runtime does not run any GTM work yet: no jobs, adapters or agents are registered. Milestones 0b and 2 come next.
 
 ## Milestones
 

@@ -1,4 +1,5 @@
 // GTM-agents: suppression is keyed by address hash, blocks unparseable addresses, and fails closed.
+import { contactEmailFields, eraseContact } from "@gtm-agents/core/data";
 import { addSuppression, addressHash, checkSendGates, checkSuppression, normalizeAddress } from "@gtm-agents/core/sending";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
@@ -59,6 +60,61 @@ describe("the suppression list", () => {
     const plain = uid("plain");
     await addSuppression(env.DB, { email: `${plain}@prospect.example`, reason: "bounce" });
     expect((await checkSuppression(env.DB, [`${plain}+tag@prospect.example`])).blocked).toEqual([{ recipient: `${plain}+tag@prospect.example`, reason: "bounce" }]);
+  });
+
+  it("blocks a contact marked opted_out even without a list entry, in every subaddress", async () => {
+    const base = uid("optedout");
+    const fields = await contactEmailFields(`${base}+work@prospect.example`);
+    if (!fields) throw new Error("fixture address did not normalize");
+    await env.DB.prepare("INSERT INTO contacts (id, email, email_sha256, mailbox_sha256, warmth) VALUES (?1, ?2, ?3, ?4, 'opted_out')")
+      .bind(uid("contact"), fields.email, fields.email_sha256, fields.mailbox_sha256)
+      .run();
+    for (const variant of [`${base}+work@prospect.example`, `${base}@prospect.example`, `${base}+other@prospect.example`]) {
+      expect((await checkSuppression(env.DB, [variant])).blocked, variant).toEqual([{ recipient: variant, reason: "opt_out" }]);
+    }
+  });
+
+  async function insertContact(address: string, warmth = "cold"): Promise<string> {
+    const fields = await contactEmailFields(address);
+    if (!fields) throw new Error("fixture address did not normalize");
+    const id = uid("contact");
+    await env.DB.prepare("INSERT INTO contacts (id, email, email_sha256, mailbox_sha256, warmth) VALUES (?1, ?2, ?3, ?4, ?5)")
+      .bind(id, fields.email, fields.email_sha256, fields.mailbox_sha256, warmth)
+      .run();
+    return id;
+  }
+
+  it("does not block a contact who has not opted out", async () => {
+    const fine = address(uid("cold"));
+    await insertContact(fine, "engaged");
+    expect(await checkSuppression(env.DB, [fine])).toMatchObject({ ok: true, blocked: [] });
+  });
+
+  it("blocks a contact whose lifecycle state is opted_out or deleted", async () => {
+    for (const state of ["opted_out", "deleted"]) {
+      const base = uid(`lifecycle_${state}`);
+      const id = await insertContact(`${base}+x@prospect.example`, "contacted");
+      await env.DB.prepare("INSERT INTO contact_lifecycle (contact_id, state) VALUES (?1, ?2)").bind(id, state).run();
+      for (const variant of [`${base}+x@prospect.example`, `${base}@prospect.example`]) {
+        expect((await checkSuppression(env.DB, [variant])).ok, `${state} ${variant}`).toBe(false);
+      }
+    }
+  });
+
+  it("blocks every subaddress of a person erased by address", async () => {
+    const base = uid("erased_sub");
+    await eraseContact(env.DB, `${base}+app@prospect.example`, { source: "product" });
+    for (const variant of [`${base}+app@prospect.example`, `${base}@prospect.example`, `${base}+other@prospect.example`]) {
+      expect((await checkSuppression(env.DB, [variant])).blocked, variant).toEqual([{ recipient: variant, reason: "erasure" }]);
+    }
+  });
+
+  it("blocks anyone with an erasure tombstone", async () => {
+    const erased = address(uid("tombstoned"));
+    await env.DB.prepare("INSERT INTO erasure_tombstones (email_sha256, source, erased_at) VALUES (?1, 'product', '2026-11-04T00:00:00.000Z')")
+      .bind(await addressHash(normalizeAddress(erased) ?? ""))
+      .run();
+    expect((await checkSuppression(env.DB, [erased])).blocked).toEqual([{ recipient: erased, reason: "erasure" }]);
   });
 
   it("keeps an erased person suppressed without keeping their address", async () => {

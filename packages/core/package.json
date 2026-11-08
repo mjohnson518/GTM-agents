@@ -20,6 +20,7 @@
     "./events": "./src/events/index.ts",
     "./sending": "./src/sending/index.ts",
     "./budget": "./src/budget/index.ts",
+    "./data": "./src/data/index.ts",
     "./durable-objects": "./src/durable-objects/index.ts",
     "./brain/schema/*": "./brain/schema/*",
     "./migrations/*": "./migrations/*"

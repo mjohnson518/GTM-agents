@@ -4,6 +4,10 @@
 // an erasure can keep someone suppressed without keeping their address. Reasons: opt_out, bounce,
 // complaint, erasure, manual, do_not_contact.
 //
+// The check also blocks contacts whose warmth is opted_out or whose lifecycle state is opted_out or
+// deleted, and anyone with an erasure tombstone, so an opt-out recorded on the contact alone is
+// still honored.
+//
 // It is a compliance control, so the check fails closed:
 //   - a database error blocks every recipient in the batch;
 //   - a recipient that is not exactly one address is blocked rather than guessed at. A display name
@@ -140,12 +144,26 @@ export async function checkSuppression(db: D1Database, recipients: readonly stri
     for (let i = 0; i < hashes.length; i += CHUNK) {
       const chunk = hashes.slice(i, i + CHUNK);
       const placeholders = chunk.map((_, k) => `?${k + 1}`).join(", ");
+      // Three sources block: the list itself; contacts that opted out (by warmth or lifecycle
+      // state), matched on either of their hashes; and erasure tombstones. Each row carries up to
+      // two hashes, and any recipient holding either is blocked. D1 limits compound SELECTs, so the
+      // union stays at three terms, reusing the numbered parameters.
       const { results } = await db
-        .prepare(`SELECT email_sha256, reason FROM suppression WHERE email_sha256 IN (${placeholders})`)
+        .prepare(
+          `SELECT email_sha256 AS a, NULL AS b, reason FROM suppression WHERE email_sha256 IN (${placeholders})
+           UNION ALL
+           SELECT c.email_sha256, c.mailbox_sha256, 'opt_out' FROM contacts c LEFT JOIN contact_lifecycle l ON l.contact_id = c.id
+            WHERE (c.warmth = 'opted_out' OR l.state IN ('opted_out', 'deleted'))
+              AND (c.email_sha256 IN (${placeholders}) OR c.mailbox_sha256 IN (${placeholders}))
+           UNION ALL
+           SELECT email_sha256, mailbox_sha256, 'erasure' FROM erasure_tombstones
+            WHERE email_sha256 IN (${placeholders}) OR mailbox_sha256 IN (${placeholders})`,
+        )
         .bind(...chunk)
-        .all<{ email_sha256: string; reason: SuppressionReason }>();
+        .all<{ a: string; b: string | null; reason: SuppressionReason }>();
       for (const row of results) {
-        for (const recipient of byHash.get(row.email_sha256) ?? []) {
+        const matched = [...(byHash.get(row.a) ?? []), ...(row.b ? (byHash.get(row.b) ?? []) : [])];
+        for (const recipient of matched) {
           if (!blocked.some((b) => b.recipient === recipient)) blocked.push({ recipient, reason: row.reason });
         }
       }

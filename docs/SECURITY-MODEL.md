@@ -207,6 +207,7 @@ The suppression list holds addresses the system never emails: opt-outs, bounces,
 
 - Addresses are normalized to lowercase, and display-name forms (`"Jane Doe" <jane@prospect.example>`) are reduced to the address. A display name may not hold line breaks, control characters or address syntax (`@ , ; < >`) outside one quoted string. Anything that is not exactly one plain ASCII address is **blocked**, not guessed at.
 - Subaddresses count as one mailbox: suppressing `jane+news@` also blocks `jane@` and `jane+other@`, and the reverse. Provider-specific rules, such as ignoring dots, are not applied. An entry made from a hash alone (an erasure) cannot be expanded this way, so erasure flows should pass the address with `storeAddress: false`.
+- Contacts that opted out, by warmth or by lifecycle state (`opted_out` or `deleted`), are blocked too, matched by exact or mailbox hash. So is anyone with an erasure tombstone. An opt-out recorded only on the contact is still honored, and a database trigger keeps an opted-out contact opted out. A tombstone written from a hash alone blocks only the exact address.
 - The check fails closed: a database error blocks every recipient in the batch.
 - Adding is idempotent and keeps the first reason. There is no remove function: taking someone off a do-not-contact list is a decision for a person, made in the database.
 
@@ -297,6 +298,5 @@ it("keeps the security contract", async () => {
 - **A clean session can still write bad copy.** The taint model stops untrusted text from driving actions. It does not judge the quality of a draft. That is the job of the quality gate and of human approval, until autonomy is earned.
 - **Rate limits are approximate.** They are counted in KV without atomic increments. Budgets, read from the database, are the exact control.
 - **The failure streak counts calendar days.** A job that does not run every day (a weekday or weekly job) never builds a three-day streak; its repeated failures escalate through the three-a-day rule or its configuration class instead.
-- **Suppression does not yet read contact records.** It checks the suppression list. Contacts marked `opted_out` must also be added to the list until the data layer joins them into the check.
 
 To report a weakness in any of this, follow [SECURITY.md](../SECURITY.md).

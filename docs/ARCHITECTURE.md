@@ -72,7 +72,7 @@ Optional modules add their own bindings, for example a container and a Workflow 
 
 ## Storage roles
 
-- **The database is the truth.** Agents query state; they do not remember it.
+- **The database is the truth.** Agents query state; they do not remember it. [DATA-MODEL.md](DATA-MODEL.md) describes the tables.
 - KV, R2 and the vector index are caches or archives that can be rebuilt from D1.
 - **The account key** is the lowercased registrable domain without `www.`, and everything account-level joins on it. Personal mail domains and shared hosts are never accounts.
 - **Fields that only some deployments need** (a buyer's budget band, an account's stage, a niche attribute) go in the `attributes` JSON column of contacts and accounts, never in new columns.

@@ -55,7 +55,7 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "followup:multithread_enabled", kind: "boolean", default: "false", description: "Write to a colleague after silence." },
   { key: "followup:reengage_enabled", kind: "boolean", default: "false", description: "Re-engage on a new signal." },
   { key: "convert:calendar_enabled", kind: "boolean", default: "false", description: "Calendar sync." },
-  { key: "convert:booking_redirect_enabled", kind: "boolean", default: "false", description: "Tracked booking links." },
+  { key: "convert:booking_redirect_enabled", kind: "boolean", default: "false", description: "Serve booking links through the deployment, so the booking URL can change without editing templates. Records nothing per contact; bookings are detected by calendar sync." },
   { key: "convert:pov_enabled", kind: "boolean", default: "false", description: "Proof-of-value requests." },
 
   // Operations.
