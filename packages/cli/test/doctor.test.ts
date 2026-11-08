@@ -60,13 +60,16 @@ describe("gtm doctor", () => {
     expect(text).toMatch(/FAIL\s+kill switch\s+could not read outreach:cold-pause/);
   });
 
-  it("with --remote, passes when secrets are set and both flags are unset", async () => {
+  it("with --remote, passes when core and adapter secrets are set and the kill-switch flags are unset", async () => {
     const runner: CommandRunner = async (_cmd, args) => {
-      if (args.includes("secret")) return { code: 0, stdout: JSON.stringify([{ name: "GATEWAY_TOKEN" }, { name: "UNSUBSCRIBE_SIGNING_KEY" }]), stderr: "" };
+      if (args.includes("secret")) {
+        const names = ["GATEWAY_TOKEN", "UNSUBSCRIBE_SIGNING_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "ANTHROPIC_API_KEY", "EXA_API_KEY", "HUNTER_API_KEY"];
+        return { code: 0, stdout: JSON.stringify(names.map((name) => ({ name }))), stderr: "" };
+      }
       return { code: 0, stdout: "Value not found", stderr: "" };
     };
     const io = captureIo();
     expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(0);
-    expect(io.text()).toMatch(/PASS\s+secrets\s+all 2 required secrets are set/);
+    expect(io.text()).toMatch(/PASS\s+secrets\s+all 7 required secrets are set/);
   });
 });

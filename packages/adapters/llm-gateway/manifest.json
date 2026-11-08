@@ -1,0 +1,12 @@
+{
+  "name": "llm-gateway",
+  "version": "0.1.0",
+  "ports": ["ModelGateway"],
+  "capabilities": ["complete", "tools", "json_schema"],
+  "requiredSecrets": ["ANTHROPIC_API_KEY"],
+  "optionalSecrets": ["AI_GATEWAY_TOKEN"],
+  "flags": [],
+  "tools": {},
+  "costs": {},
+  "contract": "./contract.test.ts"
+}

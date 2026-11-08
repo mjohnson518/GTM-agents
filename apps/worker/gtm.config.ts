@@ -33,7 +33,12 @@ export default defineConfig({
   },
 
   // Adapters to enable, by name, with non-secret options. See packages/adapters.
-  adapters: {},
+  adapters: {
+    "operator-telegram": { options: {} },
+    "llm-gateway": { options: {} },
+    "data-exa": { options: {} },
+    "data-hunter": { options: {} },
+  },
 
   // Model id per role. Core asks for roles; only this file names models.
   models: {
@@ -44,6 +49,13 @@ export default defineConfig({
       judge: "claude-sonnet-5-5",
       triage: "claude-haiku-5-5",
       classifier: "claude-haiku-5-5",
+    },
+    // US cents per million tokens. A model without a price is never called, because its cost could
+    // not be recorded. Replace these with your provider's current prices.
+    pricing: {
+      "claude-opus-5-5": { inputCentsPerMTok: 400, outputCentsPerMTok: 2000 },
+      "claude-sonnet-5-5": { inputCentsPerMTok: 200, outputCentsPerMTok: 1000 },
+      "claude-haiku-5-5": { inputCentsPerMTok: 10, outputCentsPerMTok: 50 },
     },
   },
 

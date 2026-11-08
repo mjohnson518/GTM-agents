@@ -115,6 +115,16 @@ describe("createWorker: scheduled and queue handlers", () => {
     expect(result.ackAll).toBe(false);
   });
 
+  it("handles chat messages that arrive on a queue not listed in agent.chatQueue, instead of retrying them away", async () => {
+    const worker = createWorker(config);
+    const body = { updateId: "u-renamed-1", chatId: "chat-1", userId: "user-1", messageId: "m-1", sessionKey: "chat-1", text: "/help" };
+    const batch = createMessageBatch("acme-renamed-chat", [{ id: "m1", timestamp: new Date(), attempts: 1, body }]);
+    const ctx = createExecutionContext();
+    await (worker.queue as (b: MessageBatch, e: Env, c: ExecutionContext) => Promise<void>)(batch, testEnv, ctx);
+    const result = await getQueueResult(batch, ctx);
+    expect(result.retryBatch.retry).toBe(false);
+  });
+
   it("hands a batch to the consumer registered for its queue", async () => {
     const seen: unknown[] = [];
     const worker = createWorker(config, {

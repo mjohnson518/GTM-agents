@@ -1,4 +1,4 @@
-// GTM-agents: requests cannot reach internal addresses, and at full taint they cannot carry data out.
+// GTM-agents: requests cannot reach internal addresses, and once a session has read anything from outside, they cannot carry data out.
 import { executeToolCall } from "@gtm-agents/core/runtime";
 import { checkEgress, collectStrings, urlExfiltrationReason, validateUrl } from "@gtm-agents/core/security";
 import { describe, expect, it } from "vitest";
@@ -136,9 +136,19 @@ describe("data-carrying URLs", () => {
     }
   });
 
-  it("are allowed below full taint, where the session holds no raw untrusted text", async () => {
+  it("are refused once the session holds third-party records or snippets, not only raw pages", async () => {
     const fetch = spy("page");
     const result = await executeToolCall(deps({ web_fetch: fetch.handler }), session("metadata"), {
+      name: "web_fetch",
+      input: { url: "https://www.example.com/team?contact=jane.doe%40acme.example" },
+    });
+    expect(result).toMatchObject({ status: "blocked", code: "egress" });
+    expect(fetch.calls).toEqual([]);
+  });
+
+  it("are allowed in a clean session, which holds nothing from outside", async () => {
+    const fetch = spy("page");
+    const result = await executeToolCall(deps({ web_fetch: fetch.handler }), session("none"), {
       name: "web_fetch",
       input: { url: "https://www.example.com/team?contact=jane.doe%40acme.example" },
     });

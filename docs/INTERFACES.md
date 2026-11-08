@@ -113,7 +113,7 @@ Every record an adapter returns is raw data to core. Core sanitizes strings, ass
 |---|---|
 | `tools.<name>.taint` | The taint the tool's output gives the session: `none`, `metadata`, `structured` or `full`. Required |
 | `tools.<name>.gate` | The lowest session taint at which the tool is refused: `never` for read-only tools, then `metadata`, `structured` or `full`. Omitted means `metadata`, so the tool is refused as soon as anything untrusted has been read. A threshold can only block more as taint rises, so gates never loosen |
-| `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. Every URL is checked against internal and reserved addresses. At full taint, core refuses URLs that carry data out (an email address, an encoded blob, a long query string, an oversized hostname) and any input that carries an email address or an encoded blob. An egress tool must declare a `rateCategory` |
+| `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. Every URL is checked against internal and reserved addresses. Once the session has read anything from outside (metadata taint and up), core refuses URLs that carry data out (an email address, an encoded blob, a long query string, an oversized hostname) and any input that carries an email address or an encoded blob. An egress tool must declare a `rateCategory` |
 | `tools.<name>.humanOnly` | The action gate refuses the call unless it carries an approval whose digest matches the exact input |
 | `tools.<name>.rateCategory` | The rate-limit bucket the call counts against. It also marks the tool as a paid third-party call, which the budget gate checks before it runs |
 | `costs` | The price table the budget layer reads |
@@ -365,10 +365,12 @@ export interface OperatorMessage {
   buttons?: Array<Array<{ label: string; action: string; payload: string }>>;   // rows of buttons
   threadKey?: string;                  // groups related messages when the channel supports it
   silent?: boolean;
+  chatId?: string;                     // the chat to send to; the adapter's default chat when omitted
 }
 
 export interface ApprovalRequest {
   approvalId: string;
+  chatId?: string;
   kind: "send" | "sequence" | "learning" | "config" | "pr" | "custom";
   digest: string;                      // sha256 of the exact content being approved
   summary: string;
@@ -393,6 +395,8 @@ export interface OperatorChannel {
   registerWebhook(url: string): Promise<void>;
 }
 ```
+
+An approval button's callback payload is `<approvalId>.<the first 32 hex characters of the digest>`. Core re-reads the item, recomputes its digest and refuses the tap when they differ, so an approval never covers content the operator did not see. [OPERATOR.md](OPERATOR.md) covers setting up the channel.
 
 Authorization, meaning which chat and user ids may command the agent, belongs to core and comes from `gtm.config.ts`. The adapter only reports ids.
 
@@ -450,8 +454,15 @@ All model calls go through this port. Core asks for roles, not model ids. `gtm.c
 ```ts
 export type ModelRole = "strategist" | "worker" | "writer" | "judge" | "triage" | "classifier" | "coder" | "embedding";
 
+// Blocks core writes into messages during a tool loop; the adapter maps them to its vendor's shapes.
+export type ModelContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; toolCallId: string; content: string; isError?: boolean };
+
 export interface CompletionRequest {
   role: ModelRole;
+  model?: string;                         // the model id gtm.config.ts maps the role to; core prices by it
   system: string;
   messages: Array<{ role: "user" | "assistant"; content: string | Array<Record<string, unknown>> }>;
   tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
@@ -468,6 +479,7 @@ export interface CompletionResult {
   stopReason: "end" | "tool_use" | "max_tokens" | "other";
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
   model: string;
+  content?: Array<Record<string, unknown>>;  // the vendor's assistant turn, sent back unchanged to continue a tool loop
   cost?: Cost;
 }
 
@@ -512,7 +524,7 @@ Core registers each manifest `tools` entry as an agent tool with:
 
 - **its taint.** Results from `full` tools are sanitized, fenced and raise the session's taint. `metadata` tools return ids, counts and short snippets only.
 - **its gate.** The action gate refuses the call when the session's taint is at or above the threshold.
-- **its egress class**, which the data-carrying-URL and email-in-query checks apply at full taint.
+- **its egress class**, which the data-carrying-URL and email-in-query checks apply from metadata taint up.
 - **the `humanOnly` flag.** The action gate refuses the call without a matching approval digest.
 - **the cost table.** The budget gate checks before the call and records after it.
 - **the adapter's flag.** A tool whose adapter flag is off is not offered to the model at all.
@@ -521,16 +533,15 @@ The security contract runs over every registered tool, including adapter tools, 
 
 ## Contract tests
 
-`packages/adapters/_contract/` exports one runner per port:
+`packages/adapters/_contract/` holds one runner per port, plus `recordedFetch` (a fetch that answers only recorded routes and fails on anything else) and `testContext` (an AdapterContext for tests):
 
 ```ts
-runDiscoverySourceContract(create: (ctx: AdapterContext) => DiscoverySource, fixtures)
-runEmailProviderContract(create, fixtures)        // includes a signed and a tampered webhook
-runInboxProviderContract(create, fixtures)
-runOperatorChannelContract(create, fixtures)      // includes an approval callback with a stale digest
-runEmailVerifierContract(create, fixtures)        // every vendor code maps to one of four statuses
-runModelGatewayContract(create, fixtures)         // usage is populated, tool calls round-trip
-...
+runDiscoverySourceContract(create: (ctx: AdapterContext) => DiscoverySource, fixtures)   // _contract/discovery-source.ts
+runContactFinderContract(create, fixtures)        // _contract/contact-finder.ts; confidence runs 0 to 100
+runEmailVerifierContract(create, fixtures)        // _contract/email-verifier.ts; every vendor code maps to one of four statuses
+runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
+runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
+// Runners for EmailProvider, InboxProvider and the other ports arrive with the adapters that need them.
 ```
 
 Each adapter's `contract.test.ts` calls the runner with a recorded-response `fetch`. Contract tests are hermetic and run in `npm test`. Live tests, which use real keys, sit behind `ADAPTER_LIVE=1` and never run in CI.
@@ -543,14 +554,14 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 | `email-gmail` | EmailProvider (non-cold sends from the warm mailbox) | Shares Google auth with the other Google adapters |
 | `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured |
 | `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending |
-| `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests |
-| `data-exa` | DiscoverySource (search, research, watch) | Websets and monitors behind `watch` |
+| `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests. Available |
+| `data-exa` | DiscoverySource | `search` is available; `research` and `watch` (websets and monitors) are planned |
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Many providers behind one gateway; the allowlist and daily cap are core config |
-| `data-hunter` | ContactFinder, EmailVerifier | Finder and verifier |
+| `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
 | `data-xai` | SignalSource | Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Service account or OAuth |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature, 5-minute tolerance |
-| `llm-gateway` | ModelGateway | Anthropic, OpenAI and Workers AI behind one router; AI Gateway optional |
+| `llm-gateway` | ModelGateway | Anthropic is available; OpenAI and Workers AI are planned. AI Gateway optional |
 
 To request a new adapter, open an adapter request issue with:
 - the port or ports it implements;

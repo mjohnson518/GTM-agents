@@ -1,0 +1,17 @@
+{
+  "name": "data-hunter",
+  "version": "1.0.0",
+  "ports": ["ContactFinder", "EmailVerifier", "PeopleProvider"],
+  "capabilities": [],
+  "requiredSecrets": ["HUNTER_API_KEY"],
+  "optionalSecrets": [],
+  "flags": ["discovery:enabled"],
+  "tools": {},
+  "costs": {
+    "email_find": { "usd": 0.025, "credits": 1, "per": "address found" },
+    "email_verify": { "usd": 0.0125, "credits": 0.5, "per": "verification" },
+    "people_search": { "usd": 0.025, "credits": 1, "per": "ten addresses returned by a domain search" }
+  },
+  "limits": { "perSecond": 10 },
+  "contract": "./contract.test.ts"
+}

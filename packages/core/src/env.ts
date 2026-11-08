@@ -6,9 +6,13 @@ export interface EventMessage {
   id: string;
 }
 
+/** One operator message on CHAT_QUEUE. The webhook writes it after verifying and allowlisting the sender. */
 export interface ChatMessage {
+  /** The effects-ledger key the webhook claimed for this update. */
   updateId: string;
   chatId: string;
+  userId: string;
+  messageId?: string;
   sessionKey: string;
   text: string;
 }

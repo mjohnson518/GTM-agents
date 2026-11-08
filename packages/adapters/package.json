@@ -4,5 +4,22 @@
   "private": true,
   "description": "Vendor integrations for GTM-agents, one folder per adapter behind a port, exported as subpaths.",
   "license": "Apache-2.0",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./_contract/*": "./_contract/*",
+    "./data-exa": "./data-exa/index.ts",
+    "./data-exa/manifest.json": "./data-exa/manifest.json",
+    "./data-hunter": "./data-hunter/index.ts",
+    "./data-hunter/manifest.json": "./data-hunter/manifest.json",
+    "./operator-telegram": "./operator-telegram/index.ts",
+    "./operator-telegram/manifest.json": "./operator-telegram/manifest.json",
+    "./llm-gateway": "./llm-gateway/index.ts",
+    "./llm-gateway/manifest.json": "./llm-gateway/manifest.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gtm-agents/core": "0.0.0"
+  }
 }

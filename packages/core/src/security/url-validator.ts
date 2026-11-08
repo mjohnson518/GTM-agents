@@ -13,7 +13,8 @@
 // address is outside what a URL check can see. Fetch handlers request the normalized URL that
 // validateUrl returns, never the raw input, and validate every redirect hop.
 //
-// The egress checks apply at full taint, when the session holds raw untrusted text and an injected
+// The egress checks apply once a session has read anything from outside (metadata taint and up):
+// records and snippets are worth leaking, and raw untrusted text may carry an injected
 // instruction may try to carry data out through a request:
 //   - tools with egress "url" may not request a URL carrying an email address, an encoded blob, a
 //     query string over 120 characters, a hostname label over 40 characters or more than 6 labels;
@@ -232,7 +233,7 @@ export function findUrls(input: unknown): string[] | null {
 
 export type EgressCheck = { ok: true } | { ok: false; reason: string };
 
-/** At full taint: whether a tool with this egress may be called with `input`. */
+/** From metadata taint up: whether a tool with this egress may be called with `input`. */
 export function checkEgress(egress: "url" | "query", input: unknown): EgressCheck {
   const strings = collectStrings(input);
   if (!strings) return { ok: false, reason: "the input is too large or too deeply nested to check" };

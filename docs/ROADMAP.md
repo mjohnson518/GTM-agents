@@ -7,9 +7,10 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | Milestone | Status |
 |---|---|
 | 0. Foundation | Done |
-| 0b. First agent | Planned |
+| 0b. First agent | Done (behind `operator:agent_enabled`) |
 | 1. Safety spine and data layer | Done |
-| 2 to 14 | Planned |
+| 2. Sourcing and enrichment | Done (behind `discovery:enabled`) |
+| 3 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -23,9 +24,12 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the safety spine ([SECURITY-MODEL.md](SECURITY-MODEL.md)):
   - for untrusted text: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run;
   - for everything else: the effects ledger, the fault-tolerant job runner with run rows, failure pages and cron health, rate limits, the budget gate and cost ledger, the system halt and cold outreach kill switch, the suppression list and the send gates;
-- the data model ([DATA-MODEL.md](DATA-MODEL.md)): about a hundred tables across the CRM, pipeline, outreach, experiments, discovery, events, agent operations and the ship loop, with the helpers that keep warmth forward-only and deal stages valid.
+- the data model ([DATA-MODEL.md](DATA-MODEL.md)): about a hundred tables across the CRM, pipeline, outreach, experiments, discovery, events, agent operations and the ship loop, with the helpers that keep warmth forward-only and deal stages valid;
+- the first agent ([OPERATOR.md](OPERATOR.md)): a Telegram operator channel, a hub agent that runs a tool loop through the dispatcher with research, contact search and drafting tools, chat sessions whose taint persists until `/clean`, approvals bound to the draft's digest, and bearer auth on the API;
+- sourcing and enrichment ([SOURCING.md](SOURCING.md)): a weekday discovery cycle, the email finder and verifier waterfall with cached verification, per-field evidence and conflict holds, identity and duplicate rules, a deterministic person-fit gate, a nightly account prescore and an optional model fit score, and promotion of qualified candidates with verified work emails;
+- the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search) and `data-hunter` (finder, verifier, people), each with a hermetic contract test.
 
-The runtime does not run any GTM work yet: no jobs, adapters or agents are registered. Milestones 0b and 2 come next.
+Nothing runs until you turn it on: the agent and the discovery cycle are off by default, and neither has yet been run against live providers. Sending (milestone 3) comes next, so promoted contacts are not emailed yet.
 
 ## Milestones
 

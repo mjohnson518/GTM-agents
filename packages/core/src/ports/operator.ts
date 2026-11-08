@@ -10,10 +10,14 @@ export interface OperatorMessage {
   /** Groups related messages when the channel supports it. */
   threadKey?: string;
   silent?: boolean;
+  /** The chat to deliver to, as the channel reported it in an update. Omitted: the channel's default operator chat. */
+  chatId?: string;
 }
 
 export interface ApprovalRequest {
   approvalId: string;
+  /** The chat to deliver to. Omitted: the channel's default operator chat. */
+  chatId?: string;
   kind: "send" | "sequence" | "learning" | "config" | "pr" | "custom";
   /** sha256 of the exact content being approved. */
   digest: string;

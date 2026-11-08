@@ -1,0 +1,13 @@
+{
+  "name": "operator-telegram",
+  "version": "0.1.0",
+  "ports": ["OperatorChannel"],
+  "capabilities": ["approvals", "callbacks"],
+  "requiredSecrets": ["TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET"],
+  "optionalSecrets": [],
+  "flags": ["operator:agent_enabled"],
+  "tools": {},
+  "costs": {},
+  "webhook": { "path": "/api/webhooks/operator", "signature": "telegram-secret-token" },
+  "contract": "./contract.test.ts"
+}

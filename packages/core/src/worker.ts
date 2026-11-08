@@ -1,16 +1,44 @@
 // GTM-agents: createWorker(), which turns a deployment's config, jobs, queue consumers and routes
 // into the Worker's fetch, scheduled and queue handlers.
+//
+// Built in:
+//   - GET /health, and /admin/* served from the ASSETS binding;
+//   - bearer authentication on every /api/* route except /api/webhooks/*, which verify their own
+//     signatures (an unset GATEWAY_TOKEN answers 503: the gate fails closed);
+//   - POST /api/webhooks/operator and the chat queue consumer, which run the operator agent when
+//     the `operator` and `model` factories are given and the operator:agent_enabled flag is on.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
 import type { Env } from "./env.ts";
+import { bearerAuth } from "./http/auth.ts";
 import { runScheduledJobs, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
 import { createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
+import { createChatConsumer, isChatMessage } from "./operator/chat.ts";
+import { OPERATOR_WEBHOOK_PATH, createOperatorWebhook } from "./operator/webhook.ts";
+import type { ModelGateway } from "./ports/model.ts";
 import type { OperatorChannel } from "./ports/operator.ts";
 import { createCronHealthJob } from "./runtime/cron-health.ts";
 import { createJobRunner } from "./runtime/job-runner.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
+
+/** The chat queue's name when `agent.chatQueue` is not set, matching the template's default. */
+export const DEFAULT_CHAT_QUEUE = "gtm-chat";
+
+export interface OperatorAgentWorkerOptions {
+  /**
+   * The name of the queue bound as CHAT_QUEUE, as declared in wrangler.jsonc, or a list when each
+   * environment uses its own (production and staging). Defaults to "gtm-chat".
+   */
+  chatQueue?: string | readonly string[];
+  /** Model rounds per turn. Defaults to 8. */
+  maxRounds?: number;
+  /** Output tokens per model call. Defaults to 8192. */
+  maxTokens?: number;
+  /** The fetch web_fetch uses. Defaults to the global fetch. */
+  fetch?: typeof fetch;
+}
 
 export type AppType<E extends Env = Env> = Hono<{ Bindings: E }>;
 
@@ -27,8 +55,15 @@ export interface CreateWorkerOptions<E extends Env = Env> {
    * rows, failure pages).
    */
   runner?: JobRunner<E>;
-  /** The operator channel for failure and cron health pages. */
+  /**
+   * The operator channel: failure and cron health pages, the operator webhook and the chat agent's
+   * replies and approval requests. Return undefined (or throw) when it is not configured.
+   */
   operator?: (env: E) => OperatorChannel | undefined;
+  /** The model gateway the hub agent calls. Without it, chat commands work but tasks are declined. */
+  model?: (env: E) => ModelGateway | undefined;
+  /** Limits and wiring for the operator chat agent. */
+  agent?: OperatorAgentWorkerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
   cronHealth?: { schedule: string; graceMs?: number };
   /** Called with each scheduled run's outcomes, for observability. */
@@ -94,6 +129,27 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     return c.env.ASSETS.fetch(c.req.raw);
   });
 
+  // Every /api/* route needs the bearer token, except webhooks, which verify their own signatures.
+  app.use("/api/*", bearerAuth());
+
+  const agentOptions = {
+    config,
+    operator: (env: E) => options.operator?.(env),
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.agent?.maxRounds !== undefined ? { maxRounds: options.agent.maxRounds } : {}),
+    ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
+    ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
+    logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
+  };
+  app.post(OPERATOR_WEBHOOK_PATH, createOperatorWebhook<E>(agentOptions));
+  const chatQueues = [options.agent?.chatQueue ?? DEFAULT_CHAT_QUEUE].flat();
+  const chatConsumer = createChatConsumer<E>(agentOptions);
+  const queueConsumers: Record<string, QueueConsumer<E>> = {
+    ...Object.fromEntries(chatQueues.map((name) => [name, chatConsumer])),
+    // A consumer the deployment registers under the same name replaces the built-in one.
+    ...(options.queueConsumers ?? {}),
+  };
+
   options.routes?.(app);
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
@@ -127,7 +183,14 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
       ctx.waitUntil(run);
     },
     queue: async (batch, env, ctx) => {
-      const consumer = options.queueConsumers?.[batch.queue];
+      let consumer = Object.hasOwn(queueConsumers, batch.queue) ? queueConsumers[batch.queue] : undefined;
+      // A chat queue whose name differs from agent.chatQueue (a renamed queue in wrangler.jsonc)
+      // still reaches the chat consumer when every message is a chat message, rather than being
+      // retried until it is dropped.
+      if (!consumer && batch.messages.length > 0 && batch.messages.every((m) => isChatMessage(m.body))) {
+        log.warn("chat messages arrived on a queue not listed in agent.chatQueue; handling them as chat", { queue: batch.queue });
+        consumer = chatConsumer;
+      }
       if (!consumer) {
         // Retry rather than drop: after the queue's retry limit, messages move to its dead-letter queue.
         log.warn("no consumer registered for this queue; retrying the batch", { queue: batch.queue, messages: batch.messages.length });

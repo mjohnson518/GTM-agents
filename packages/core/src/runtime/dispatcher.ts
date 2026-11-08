@@ -6,7 +6,8 @@
 //   1. classify the tool from the registry (an undeclared name is full taint, gate metadata);
 //   2. the action gate: refuse when the session's taint has reached the tool's gate;
 //   3. the human-only check: refuse without an operator approval of this exact input;
-//   4. egress: every URL in an egress tool's input must pass validateUrl, and at full taint the
+//   4. egress: every URL in an egress tool's input must pass validateUrl, and once the session has
+//      read anything from outside (metadata taint and above) the
 //      input may not carry data out (an email address, an encoded blob, a long query string);
 //   5. the pre-call checks, where rate limits and budgets plug in; a check that throws refuses;
 //   6. run the handler (a name with no handler is not run);
@@ -96,9 +97,11 @@ function egressGate(name: string, input: Record<string, unknown>, cls: ToolClass
     const check = validateUrl(url);
     if (!check.ok) return blocked("unsafe_url", name, `${check.reason}.`);
   }
-  if (taint !== "full") return ALLOWED;
+  // Data carriage matters once the session holds anything worth leaking or anything that could
+  // carry an instruction: third-party snippets and records (metadata) as much as raw pages (full).
+  if (taint === "none") return ALLOWED;
   const egress = checkEgress(cls.egress, input);
-  return egress.ok ? ALLOWED : blocked("egress", name, `this session holds raw untrusted text and ${egress.reason}. Try again without that data.`);
+  return egress.ok ? ALLOWED : blocked("egress", name, `this session has read ${taint === "full" ? "raw untrusted text" : "third-party text"} and ${egress.reason}. Try again without that data.`);
 }
 
 export async function executeToolCall(deps: DispatcherDeps, session: ToolSession, call: ToolCall, options: CallOptions = {}): Promise<DispatchResult> {

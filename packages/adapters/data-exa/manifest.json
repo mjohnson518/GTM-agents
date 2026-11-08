@@ -1,0 +1,17 @@
+{
+  "name": "data-exa",
+  "version": "1.0.0",
+  "ports": ["DiscoverySource"],
+  "capabilities": [],
+  "requiredSecrets": ["EXA_API_KEY"],
+  "optionalSecrets": [],
+  "flags": ["discovery:enabled"],
+  "tools": {},
+  "costs": {
+    "search": { "usd": 0.005, "per": "request of up to 25 results" },
+    "search_large": { "usd": 0.025, "per": "request of 26 to 100 results" },
+    "highlights": { "usd": 0.001, "per": "result" }
+  },
+  "limits": { "perSecond": 5 },
+  "contract": "./contract.test.ts"
+}

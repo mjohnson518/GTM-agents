@@ -1,0 +1,12 @@
+// GTM-agents: the operator module's public surface: the operator webhook, the chat queue consumer,
+// commands, draft approvals and the allowlist. createWorker wires these up; docs/OPERATOR.md is the
+// deployer's guide.
+export { AGENT_DISABLED_TEXT, AGENT_FLAG, isAgentEnabled, isAllowedOperator } from "./access.ts";
+export { APPROVAL_DIGEST_CHARS, approvalPayload, parseApprovalPayload, payloadMatchesDigest } from "./approval-payload.ts";
+export { APPROVAL_SUMMARY, draftPreview, handleApprovalCallback, requestDraftApproval } from "./approvals.ts";
+export type { ApprovalDeps, ApprovalOutcome, ApprovalRequestResult } from "./approvals.ts";
+export { createChatConsumer, flagsFromKv, isChatMessage, processChatMessage, resolveChannel } from "./chat.ts";
+export type { OperatorAgentOptions } from "./chat.ts";
+export { helpText, parseCommand, runCommand } from "./commands.ts";
+export type { CommandDeps, ParsedCommand } from "./commands.ts";
+export { OPERATOR_UPDATE_EFFECT, OPERATOR_WEBHOOK_PATH, createOperatorWebhook, updateKey } from "./webhook.ts";

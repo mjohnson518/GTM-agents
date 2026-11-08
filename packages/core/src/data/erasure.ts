@@ -7,7 +7,8 @@
 //      or emailed;
 //   2. deletes rows that hold one of their addresses without a contact link, matching case,
 //      surrounding spaces and the "Name <address>" form: candidates and their evidence, drafts and
-//      deferred sends, inbound mail they sent, referrals naming them, cached verification results;
+//      deferred sends, inbound mail they sent, referrals naming them, operator chat messages that
+//      mention them, cached verification results;
 //   3. deletes the contact rows. Foreign keys then delete per-contact state (tags, scores, drafts,
 //      inbound mail, meetings, feedback and so on) and clear contact_id on the measurement ledgers.
 // eraseByHash does the same when only the address hash is known (the product's user.deleted
@@ -60,6 +61,8 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     db.prepare(`DELETE FROM deferred_sends WHERE ${addressIn("recipient_email")}`).bind(addresses),
     db.prepare(`DELETE FROM inbound_emails WHERE ${addressIn("sender_email")}`).bind(addresses),
     db.prepare(`DELETE FROM referrals WHERE ${addressIn("referee_email")}`).bind(addresses),
+    // Operator chat history can quote an address; drop any message that mentions one of them.
+    db.prepare("DELETE FROM chat_messages WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(content), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM email_verifications WHERE email_sha256 IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([fields.email_sha256, ...hashes.map(([h]) => h)])),
     db.prepare("DELETE FROM contacts WHERE id IN (SELECT value FROM json_each(?1))").bind(ids),
   ]);

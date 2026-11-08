@@ -6,7 +6,7 @@
 // Because a gate is a threshold, a tool refused at one taint level is refused at every higher one,
 // so gates never loosen as taint rises. Optional fields:
 //   egress        "url" if the tool fetches a URL it is given, "query" if it sends free text to a
-//                 search service; at full taint, inputs that carry data out are refused
+//                 search service; once anything untrusted has been read, inputs that carry data out are refused
 //   humanOnly     runs only with an operator approval bound to the digest of its exact input
 //   rateCategory  the rate-limit bucket the call counts against
 //   delegates     the tool runs another agent and reports that agent's final taint back

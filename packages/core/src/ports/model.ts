@@ -5,8 +5,20 @@ import type { Cost } from "./types.ts";
 export const MODEL_ROLES = ["strategist", "worker", "writer", "judge", "triage", "classifier", "coder", "embedding"] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 
+/**
+ * The content blocks core writes into `messages` when it runs a tool loop. An adapter maps them to
+ * its vendor's shapes. Assistant turns are sent back as `CompletionResult.content` when the adapter
+ * returned it, so vendor-specific blocks (such as reasoning blocks) survive the loop unchanged.
+ */
+export type ModelContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; toolCallId: string; content: string; isError?: boolean };
+
 export interface CompletionRequest {
   role: ModelRole;
+  /** The model id gtm.config.ts maps the role to. Adapters use it when set; core prices the call by it. */
+  model?: string;
   system: string;
   messages: Array<{ role: "user" | "assistant"; content: string | Array<Record<string, unknown>> }>;
   tools?: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
@@ -26,6 +38,11 @@ export interface CompletionResult {
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number };
   model: string;
   cost?: Cost;
+  /**
+   * The assistant turn as the vendor returned it. To continue a tool loop, send it back unchanged
+   * as the assistant message's content. Core treats it as opaque.
+   */
+  content?: Array<Record<string, unknown>>;
 }
 
 export interface ModelGateway {

@@ -42,6 +42,9 @@ The runtime skeleton exists:
   - `@gtm-agents/core/budget`: the cost ledger and the budget gate;
   - `@gtm-agents/core/sending`: the cold outreach kill switch, the suppression list and the send gates;
 - the security contract for adapters and modules (`@gtm-agents/core/testing`);
-- the data model: migrations 0006 to 0013 (CRM, pipeline, outreach, experiments, discovery, events, agent operations, ship loop), and `@gtm-agents/core/data` with the enums, account keys, forward-only warmth and deal transitions ([docs/DATA-MODEL.md](../../docs/DATA-MODEL.md)).
+- the data model: migrations 0006 to 0013 (CRM, pipeline, outreach, experiments, discovery, events, agent operations, ship loop), and `@gtm-agents/core/data` with the enums, account keys, forward-only warmth, deal transitions and erasure ([docs/DATA-MODEL.md](../../docs/DATA-MODEL.md));
+- the first agent: `@gtm-agents/core/agents` (the hub agent's tool loop and sessions), `/tools` (`web_fetch`, `contacts_search`, `drafts_create`), `/operator` (the webhook, the chat consumer, commands and approvals), `/http` (bearer auth), and migration 0014 for chat sessions ([docs/OPERATOR.md](../../docs/OPERATOR.md));
+- sourcing and enrichment: `@gtm-agents/core/sourcing` (the discovery cycle and `createSourcingJobs`), `/enrichment` (the email waterfall, verification and evidence) and `/scoring` (the title classifier, prescore and fit) ([docs/SOURCING.md](../../docs/SOURCING.md));
+- `@gtm-agents/core/adapters`: `createAdapterContext`, which builds the context an adapter runs with.
 
 The pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned, and [docs/SECURITY-MODEL.md](../../docs/SECURITY-MODEL.md) describes the security model.

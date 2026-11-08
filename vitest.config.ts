@@ -34,6 +34,14 @@ export default defineConfig(async () => {
           },
         },
         {
+          // Adapter contract tests: hermetic, with recorded responses instead of the network.
+          test: {
+            name: "adapters",
+            environment: "node",
+            include: ["packages/adapters/**/*.test.ts"],
+          },
+        },
+        {
           test: {
             name: "cli",
             environment: "node",

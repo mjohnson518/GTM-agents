@@ -114,7 +114,7 @@ function packageJson(name: string, local: string | undefined): Record<string, un
     private: true,
     type: "module",
     scripts: { dev: "wrangler dev", deploy: "wrangler deploy", "deploy:staging": "wrangler deploy --env staging", check: "gtm brain validate && gtm doctor" },
-    dependencies: { "@gtm-agents/core": dep("core") },
+    dependencies: { "@gtm-agents/adapters": dep("adapters"), "@gtm-agents/core": dep("core") },
     devDependencies: { "@gtm-agents/cli": dep("cli"), ...TOOLING },
   };
 }
