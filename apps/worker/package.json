@@ -1,0 +1,8 @@
+{
+  "name": "@gtm-agents/worker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The deployable GTM-agents Worker and the template that gtm init copies.",
+  "license": "Apache-2.0",
+  "type": "module"
+}

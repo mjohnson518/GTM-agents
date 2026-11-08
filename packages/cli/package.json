@@ -1,0 +1,8 @@
+{
+  "name": "@gtm-agents/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The gtm command: init, setup, doctor, migrate, brain, flags and deploy.",
+  "license": "Apache-2.0",
+  "type": "module"
+}

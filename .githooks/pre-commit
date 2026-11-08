@@ -1,0 +1,21 @@
+#!/bin/sh
+# GTM-agents pre-commit hook. `npm install` points git here (core.hooksPath = .githooks).
+# Every check runs on what the commit would contain. Fix the cause of a failure; do not bypass it.
+#
+# Machine-local extension point: if .local/hooks/pre-commit exists and is executable, it runs
+# last. Use it for checks that only make sense on your machine. .local/ is gitignored.
+set -eu
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+node scripts/check-conflict-copies.mjs --staged
+bash scripts/secrets-scan.sh --staged
+node scripts/check-placeholders.mjs --staged
+node scripts/check-migration-order.mjs
+npm run --silent typecheck
+npm run --silent lint
+npm run --silent test
+
+if [ -x "$root/.local/hooks/pre-commit" ]; then
+  "$root/.local/hooks/pre-commit"
+fi

@@ -1,0 +1,35 @@
+{
+  "name": "gtm-agents",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An open-source, multi-agent go-to-market system that runs as one Cloudflare Worker per product.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && npm run typecheck --workspaces --if-present",
+    "lint": "eslint . && node scripts/check-house-rules.mjs && node scripts/check-doc-links.mjs && node scripts/check-conflict-copies.mjs",
+    "test": "vitest run",
+    "eval": "vitest run --config tests/evals/vitest.config.ts --passWithNoTests",
+    "check:placeholders": "node scripts/check-placeholders.mjs",
+    "check:secrets": "bash scripts/secrets-scan.sh",
+    "check:migrations": "node scripts/check-migration-order.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run eval && npm run check:placeholders && npm run check:secrets && npm run check:migrations",
+    "prepare": "node scripts/install-hooks.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.0",
+    "vitest": "4.1.12"
+  }
+}

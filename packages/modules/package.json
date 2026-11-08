@@ -1,0 +1,8 @@
+{
+  "name": "@gtm-agents/modules",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Optional GTM-agents features behind flags: ship, link-intake, classifier-tier and code-mode.",
+  "license": "Apache-2.0",
+  "type": "module"
+}

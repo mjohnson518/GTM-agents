@@ -1,0 +1,13 @@
+#!/bin/sh
+# GTM-agents commit-msg hook: a short, capitalized subject without a trailing period.
+#
+# Machine-local extension point: if .local/hooks/commit-msg exists and is executable, it runs
+# after the shared check with the same argument. .local/ is gitignored.
+set -eu
+root="$(git rev-parse --show-toplevel)"
+
+node "$root/scripts/check-commit-msg.mjs" "$1"
+
+if [ -x "$root/.local/hooks/commit-msg" ]; then
+  "$root/.local/hooks/commit-msg" "$1"
+fi

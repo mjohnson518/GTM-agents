@@ -1,0 +1,8 @@
+{
+  "name": "@gtm-agents/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vendor integrations for GTM-agents, one folder per adapter behind a port, exported as subpaths.",
+  "license": "Apache-2.0",
+  "type": "module"
+}
