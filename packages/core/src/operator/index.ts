@@ -5,8 +5,8 @@ export { AGENT_DISABLED_TEXT, AGENT_FLAG, isAgentEnabled, isAllowedOperator } fr
 export { APPROVAL_DIGEST_CHARS, approvalPayload, parseApprovalPayload, payloadMatchesDigest } from "./approval-payload.ts";
 export { APPROVAL_SUMMARY, draftPreview, handleApprovalCallback, requestDraftApproval } from "./approvals.ts";
 export type { ApprovalDeps, ApprovalOutcome, ApprovalRequestResult } from "./approvals.ts";
-export { createChatConsumer, flagsFromKv, isChatMessage, processChatMessage, resolveChannel } from "./chat.ts";
+export { RELEASE_EFFECT, createChatConsumer, flagsFromKv, isChatMessage, processChatMessage, resolveChannel } from "./chat.ts";
 export type { OperatorAgentOptions } from "./chat.ts";
-export { helpText, parseCommand, runCommand } from "./commands.ts";
-export type { CommandDeps, ParsedCommand } from "./commands.ts";
+export { helpText, parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
+export type { CommandDeps, ParsedCommand, ReleaseCommandDeps } from "./commands.ts";
 export { OPERATOR_UPDATE_EFFECT, OPERATOR_WEBHOOK_PATH, createOperatorWebhook, updateKey } from "./webhook.ts";

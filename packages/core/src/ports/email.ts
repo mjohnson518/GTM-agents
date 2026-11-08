@@ -33,6 +33,8 @@ export type EmailEvent =
 
 export interface EmailProvider {
   readonly name: string;
+  /** Optional: the most messages one sendBatch call takes (the manifest's limits.batchSize). Core chunks to it. */
+  readonly batchLimit?: number;
   sendBatch(messages: OutboundMessage[]): Promise<{ outcomes: SendOutcome[]; cost?: Cost }>;
   /**
    * Verify the webhook signature (vendor scheme, 5-minute replay window) and return typed events.

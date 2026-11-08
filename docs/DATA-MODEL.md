@@ -117,6 +117,12 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 
 `feedback_items`, `themes`, `ship_tasks`, `link_items`, used by the optional modules. Feedback text is full taint.
 
+### Chat, delivery and outreach (0014 to 0016)
+
+- `chat_sessions` and `chat_messages` (0014): operator chat history and the session's taint, which persists until `/clean`.
+- `deferred_send_items` (0015): the items waiting in the deferred queue, with a deduplication key that is released when an item leaves the queue.
+- `approval_manifests` (0016): the manifest each manual cold batch is released against.
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

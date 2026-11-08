@@ -310,6 +310,7 @@ export type EmailEvent =
 
 export interface EmailProvider {
   readonly name: string;
+  readonly batchLimit?: number;          // the most messages one sendBatch call takes; core chunks to it
   sendBatch(messages: OutboundMessage[]): Promise<{ outcomes: SendOutcome[]; cost?: Cost }>;
   /**
    * Verify the webhook signature (vendor scheme, 5-minute replay window) and return typed events.
@@ -539,9 +540,10 @@ The security contract runs over every registered tool, including adapter tools, 
 runDiscoverySourceContract(create: (ctx: AdapterContext) => DiscoverySource, fixtures)   // _contract/discovery-source.ts
 runContactFinderContract(create, fixtures)        // _contract/contact-finder.ts; confidence runs 0 to 100
 runEmailVerifierContract(create, fixtures)        // _contract/email-verifier.ts; every vendor code maps to one of four statuses
+runEmailProviderContract(create, fixtures)        // _contract/email-provider.ts; a signed and a tampered webhook
 runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
 runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
-// Runners for EmailProvider, InboxProvider and the other ports arrive with the adapters that need them.
+// Runners for InboxProvider and the other ports arrive with the adapters that need them.
 ```
 
 Each adapter's `contract.test.ts` calls the runner with a recorded-response `fetch`. Contract tests are hermetic and run in `npm test`. Live tests, which use real keys, sit behind `ADAPTER_LIVE=1` and never run in CI.
@@ -550,7 +552,7 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 
 | Adapter | Ports | Notes |
 |---|---|---|
-| `email-resend` | EmailProvider | Batch send, Svix-style webhook, tags for correlation |
+| `email-resend` | EmailProvider | Batch send, Svix-style webhook, tags for correlation. Available |
 | `email-gmail` | EmailProvider (non-cold sends from the warm mailbox) | Shares Google auth with the other Google adapters |
 | `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured |
 | `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending |

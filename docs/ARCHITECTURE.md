@@ -164,13 +164,14 @@ The rule behind all of them: **gates fail closed, bookkeeping fails open.** A ga
 
 Every send passes these checks inside the send function itself, so no caller can skip them:
 
-1. The halt flag, and the kill switch for cold mail.
-2. Suppression.
+1. The halt flag, and the kill switch for cold mail (both defer).
+2. Suppression (fails closed).
 3. Content lint.
 4. The verification policy for the path.
-5. The recipient-local send window.
-6. Per-domain and per-account daily caps.
-7. The provider circuit breaker.
+5. The approval digest, when the send relies on an approval.
+6. The recipient-local send window (outside it, the item waits in the deferred queue).
+7. Per-domain daily and per-account weekly caps.
+8. The provider circuit breaker.
 
 Then the path:
 - chunks to the provider's batch limit;
@@ -178,6 +179,8 @@ Then the path:
 - adds `List-Unsubscribe` and threading headers;
 - tags the message for webhook correlation;
 - records the send in the ledger.
+
+[SENDING.md](SENDING.md) covers the provider, the footer and unsubscribe, windows, the ramp and the bounce monitor; [OUTREACH.md](OUTREACH.md) covers the quality gate and the daily cold batch.
 
 Email is plain text, with no tracking pixels or click tracking, so replies are the metric. Cold mail goes from an isolated subdomain through the email provider. Replies and lifecycle mail go from the real mailbox. `Reply-To` on cold mail points at that mailbox, so every reply lands in one inbox.
 

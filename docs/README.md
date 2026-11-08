@@ -6,6 +6,8 @@
 | [INTERFACES.md](INTERFACES.md) | Write an adapter: the port interfaces, the adapter manifest, how adapter tools are classified and gated, and the contract tests |
 | [SECURITY-MODEL.md](SECURITY-MODEL.md) | Classify a new tool, or judge what the system protects against: taint levels, tool classes and gates, the dispatcher, the fence, egress checks, delegation, approvals and the security contract |
 | [OPERATOR.md](OPERATOR.md) | Connect a chat channel to your agent: the bot, the webhook, the allowlist, commands, approvals and sessions |
+| [OUTREACH.md](OUTREACH.md) | Turn on cold outreach: templates and variables, the quality gate, the daily cold batch, readiness, manifests and release |
+| [SENDING.md](SENDING.md) | Send email safely: the sending domain, the provider and webhooks, the footer and unsubscribe, windows, caps, the ramp and the bounce monitor |
 | [SOURCING.md](SOURCING.md) | Turn on sourcing: discovery, enrichment and verification, the fit gate, promotion, flags, costs and adapters |
 | [DATA-MODEL.md](DATA-MODEL.md) | Read or write the database: conventions, status enums, erasure, and every table by group |
 | [EVENT-CONTRACT.md](EVENT-CONTRACT.md) | Connect your product (the host application) to a deployment: signed events in, reconciliation reads, attribution, erasure and the optional proof-of-value hook |

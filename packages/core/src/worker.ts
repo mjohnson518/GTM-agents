@@ -6,7 +6,10 @@
 //   - bearer authentication on every /api/* route except /api/webhooks/*, which verify their own
 //     signatures (an unset GATEWAY_TOKEN answers 503: the gate fails closed);
 //   - POST /api/webhooks/operator and the chat queue consumer, which run the operator agent when
-//     the `operator` and `model` factories are given and the operator:agent_enabled flag is on.
+//     the `operator` and `model` factories are given and the operator:agent_enabled flag is on;
+//   - POST /api/webhooks/email, the email provider's delivery events (answers 503 until the `email`
+//     factory is given), and GET and POST /u/:token, the one-click unsubscribe link (GET confirms,
+//     POST opts out). docs/SENDING.md covers both.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
@@ -16,10 +19,14 @@ import { runScheduledJobs, type JobOutcome, type JobRunner } from "./jobs/loop.t
 import { createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
 import { createChatConsumer, isChatMessage } from "./operator/chat.ts";
 import { OPERATOR_WEBHOOK_PATH, createOperatorWebhook } from "./operator/webhook.ts";
+import type { EmailProvider } from "./ports/email.ts";
 import type { ModelGateway } from "./ports/model.ts";
 import type { OperatorChannel } from "./ports/operator.ts";
+import type { SendOutreach } from "./sending/types.ts";
 import { createCronHealthJob } from "./runtime/cron-health.ts";
 import { createJobRunner } from "./runtime/job-runner.ts";
+import { UNSUBSCRIBE_ROUTE, createUnsubscribeHandlers } from "./sending/unsubscribe.ts";
+import { EMAIL_WEBHOOK_PATH, createEmailWebhook } from "./sending/webhook.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
 
@@ -62,6 +69,17 @@ export interface CreateWorkerOptions<E extends Env = Env> {
   operator?: (env: E) => OperatorChannel | undefined;
   /** The model gateway the hub agent calls. Without it, chat commands work but tasks are declined. */
   model?: (env: E) => ModelGateway | undefined;
+  /**
+   * The email provider: verifies and parses delivery webhooks at /api/webhooks/email. Return
+   * undefined (or throw) when it is not configured; the route then answers 503. The send function
+   * and the delivery jobs take the same factory (see createOutreachSender and createDeliveryJobs).
+   */
+  email?: (env: E) => EmailProvider | undefined;
+  /**
+   * The send function the operator's `batch-release-<id>-<code>` command hands approved drafts to,
+   * usually createOutreachSender(senderDepsFromEnv(...)). Without it, releases are refused.
+   */
+  sendOutreach?: (env: E) => SendOutreach | undefined;
   /** Limits and wiring for the operator chat agent. */
   agent?: OperatorAgentWorkerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
@@ -136,12 +154,21 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     config,
     operator: (env: E) => options.operator?.(env),
     ...(options.model ? { model: options.model } : {}),
+    ...(options.sendOutreach ? { sendOutreach: options.sendOutreach } : {}),
     ...(options.agent?.maxRounds !== undefined ? { maxRounds: options.agent.maxRounds } : {}),
     ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
     logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
   };
   app.post(OPERATOR_WEBHOOK_PATH, createOperatorWebhook<E>(agentOptions));
+
+  // Delivery: provider events (signature checked by the adapter before anything else) and the
+  // unsubscribe link, which lives outside /api/ so mail clients reach it without a token.
+  const deliveryLog = consoleLogger({ service: "gtm-agents", scope: "delivery" });
+  app.post(EMAIL_WEBHOOK_PATH, createEmailWebhook<E>({ ...(options.email ? { email: options.email } : {}), ...(options.operator ? { operator: options.operator } : {}), logger: deliveryLog }));
+  const unsubscribe = createUnsubscribeHandlers<E>({ config, ...(options.operator ? { operator: options.operator } : {}), logger: deliveryLog });
+  app.get(UNSUBSCRIBE_ROUTE, (c) => unsubscribe.get(c));
+  app.post(UNSUBSCRIBE_ROUTE, (c) => unsubscribe.post(c));
   const chatQueues = [options.agent?.chatQueue ?? DEFAULT_CHAT_QUEUE].flat();
   const chatConsumer = createChatConsumer<E>(agentOptions);
   const queueConsumers: Record<string, QueueConsumer<E>> = {

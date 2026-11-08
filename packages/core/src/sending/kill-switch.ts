@@ -6,8 +6,8 @@
 //   - outreach:cold-pause:critical, lifted only by an explicit operator call (liftCritical: true);
 //   - outreach:cold-pause, a warning-level pause that automation (such as a bounce monitor after
 //     clean days) may set and lift.
-// Automation never writes or deletes the critical key, so a stale or racing read in an automated
-// path can never lower or lift a critical pause.
+// Automation may add a critical pause when none stands, but never overwrites, lowers or lifts one,
+// so a stale or racing read in an automated path can never weaken a critical pause.
 //
 // It fails closed: a record that cannot be read, a KV error or a missing binding counts as a
 // critical pause.

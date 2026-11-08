@@ -38,6 +38,7 @@ export default defineConfig({
     "llm-gateway": { options: {} },
     "data-exa": { options: {} },
     "data-hunter": { options: {} },
+    "email-resend": { options: {} },
   },
 
   // Model id per role. Core asks for roles; only this file names models.

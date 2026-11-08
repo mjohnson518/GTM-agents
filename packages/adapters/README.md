@@ -38,6 +38,6 @@ packages/adapters/<name>/
 
 ## Status
 
-Available now: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search) and `data-hunter` (finder, verifier and people at a domain). The others are planned; [docs/INTERFACES.md](../../docs/INTERFACES.md#v1-adapters) has the details.
+Available now: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier and people at a domain) and `email-resend`. The others are planned; [docs/INTERFACES.md](../../docs/INTERFACES.md#v1-adapters) has the details.
 
 `_contract/` holds the shared contract runners (one per port), `recordedFetch` for hermetic tests and `testContext`. Each adapter's `contract.test.ts` runs in `npm test` with recorded responses; nothing reaches the network.

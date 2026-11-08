@@ -14,7 +14,9 @@
     "./operator-telegram": "./operator-telegram/index.ts",
     "./operator-telegram/manifest.json": "./operator-telegram/manifest.json",
     "./llm-gateway": "./llm-gateway/index.ts",
-    "./llm-gateway/manifest.json": "./llm-gateway/manifest.json"
+    "./llm-gateway/manifest.json": "./llm-gateway/manifest.json",
+    "./email-resend": "./email-resend/index.ts",
+    "./email-resend/manifest.json": "./email-resend/manifest.json"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

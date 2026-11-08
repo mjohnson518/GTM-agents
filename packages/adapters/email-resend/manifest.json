@@ -1,0 +1,16 @@
+{
+  "name": "email-resend",
+  "version": "0.1.0",
+  "ports": ["EmailProvider"],
+  "capabilities": ["batch", "idempotency", "webhooks"],
+  "requiredSecrets": ["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET"],
+  "optionalSecrets": [],
+  "flags": ["delivery:enabled"],
+  "tools": {},
+  "costs": {
+    "send": { "usd": 0.0004, "per": "email" }
+  },
+  "limits": { "batchSize": 100, "perSecond": 2 },
+  "webhook": { "path": "/api/webhooks/email", "signature": "svix" },
+  "contract": "./contract.test.ts"
+}

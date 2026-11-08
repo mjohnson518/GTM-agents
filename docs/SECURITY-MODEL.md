@@ -197,7 +197,7 @@ Do not wrap a send in `runOnce`. A send can fail after the provider accepted it 
 - a `critical` pause (`outreach:cold-pause:critical`) is lifted only by an explicit operator call, `resumeColdOutreach(kv, { liftCritical: true })`. Agent tools and automation call it without `liftCritical`, and are refused while a critical pause stands;
 - a `warning` pause (`outreach:cold-pause`) may be set and lifted by automation, such as a bounce monitor after clean days.
 
-Automation never writes or deletes the critical key, so a stale or racing KV read in an automated path cannot lower or lift a critical pause. A record that cannot be read, a KV error or a missing binding counts as a critical pause.
+Automation may add a critical pause when none stands (the bounce monitor does, on a critical bounce rate), but it never overwrites, lowers or lifts one, so a stale or racing KV read in an automated path cannot weaken a critical pause. A record that cannot be read, a KV error or a missing binding counts as a critical pause.
 
 **`checkSendGates`** must be called inside every send function, so no caller can skip it. In order: the halt (every path), the kill switch (the `cold` and `sequence` paths; an unknown path counts as cold), then suppression for every recipient. A refusal is a message starting with `[SEND BLOCKED:<reason>]`. On success it returns the normalized recipient addresses, and the send function sends to exactly those, never to the raw strings it was given. The rest of the send path (content lint, verification policy, send window, per-domain and per-account caps, the provider circuit breaker) runs after these ([ARCHITECTURE.md](ARCHITECTURE.md#the-send-path)).
 

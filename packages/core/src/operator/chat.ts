@@ -3,6 +3,8 @@
 // The webhook verifies, allowlists, deduplicates and enqueues; this consumer does the slow work off
 // the webhook path. For each message it checks the allowlist and the agent flag again (the config
 // or the flag may have changed while the message waited), then:
+//   - `batch-release-<id>-<code>` releases a waiting cold batch through the send function, once
+//     per message, without the model;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -13,12 +15,15 @@ import type { ChatMessage, Env } from "../env.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
+import type { SendOutreach } from "../sending/types.ts";
 import { runHubTurn, type AgentLogger } from "../agents/hub.ts";
 import { claimEffect } from "../events/effects.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator } from "./access.ts";
 import { requestDraftApproval } from "./approvals.ts";
-import { parseCommand, runCommand } from "./commands.ts";
+import { parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
+
+export const RELEASE_EFFECT = "operator_batch_release";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -26,6 +31,8 @@ export interface OperatorAgentOptions<E extends Env = Env> {
   operator: (env: E) => OperatorChannel | undefined;
   /** The model gateway the hub agent calls. */
   model?: (env: E) => ModelGateway | undefined;
+  /** The send function a released cold batch goes through. Without it, releases are refused. */
+  sendOutreach?: (env: E) => SendOutreach | undefined;
   maxRounds?: number;
   maxTokens?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
@@ -94,6 +101,32 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     const session = { sessionKey: message.sessionKey, chatId: message.chatId };
+    const release = parseReleaseCommand(message.text);
+    if (release) {
+      // Queue delivery is at least once: a redelivered release must not run twice. (Each draft is
+      // also claimed before it is handed over, so even a second run could not send it again.)
+      if (!(await claimEffect(env.DB, message.updateId, RELEASE_EFFECT))) {
+        log.warn("redelivered release command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let send: SendOutreach | undefined;
+      try {
+        send = options.sendOutreach?.(env);
+      } catch {
+        send = undefined;
+      }
+      let text: string;
+      try {
+        text = await runReleaseCommand(
+          { db: env.DB, flags, kv: env.KV, send, config: options.config, userId: message.userId, ...(options.now ? { now: options.now } : {}) },
+          release,
+        );
+      } catch (error) {
+        text = `That release could not be completed (${sanitizeErrorMessage(error)}). Drafts not yet handed over stay waiting; send the same command again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
     const command = parseCommand(message.text);
     if (command) {
       let text: string;

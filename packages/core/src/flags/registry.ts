@@ -29,10 +29,20 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "outreach:ramp_level", kind: "number", default: "0", description: "Warm-up ramp level index." },
   { key: "outreach:min_email_confidence", kind: "string", default: "medium", description: "Verification floor for cold sends." },
   { key: "outreach:holdout_rate", kind: "number", default: "0.05", description: "Share of the ready window held out as a no-send control." },
-  { key: "outreach:allocation_mode", kind: "string", default: "thompson", description: "Template allocation: thompson, or weighted to revert to plain rotation." },
+  { key: "outreach:allocation_mode", kind: "string", default: "weighted", description: "Template allocation. Only weighted rotation by volume_weight exists today; thompson is reserved for the experiments milestone, and every value runs as weighted rotation until then." },
+  { key: "quality:model_review_enabled", kind: "boolean", default: "false", description: "The model reviewer (judge role) in the quality gate. Off, or unavailable, nothing is approved automatically: drafts that would auto-send are held with REVIEW_UNAVAILABLE." },
   { key: "outreach:send_time_experiment", kind: "boolean", default: "false", description: "Run the send-time experiment." },
   { key: "outreach:seed_inboxes", kind: "json", default: null, description: "Seed inboxes for placement checks." },
   { key: "outreach:ref_tokens_enabled", kind: "boolean", default: "false", description: "Attribution tokens on product links." },
+
+  // Delivery: the provider boundary, the deferred queue, the warm-up ramp and the bounce monitor (docs/SENDING.md).
+  { key: "delivery:enabled", kind: "boolean", default: "false", description: "Master switch for the send function's actual send. Off, or unreadable, nothing is sent: every item comes back as a retryable failure ([SEND BLOCKED:disabled]). Also gates the deferred replay and the bounce monitor jobs." },
+  { key: "delivery:domain_daily_cap", kind: "number", default: "500", description: "Messages per UTC day through the email provider, from the sending domain (at most 10000). Overflow waits for midnight UTC; an unreadable value allows none." },
+  { key: "delivery:account_weekly_cap", kind: "number", default: "3", description: "Cold and sequence messages per recipient account in any 7 days, enforced inside the send function (at most 50). An unreadable value allows none." },
+  { key: "outreach:ramp_auto", kind: "boolean", default: "false", description: "Let the ramp job move the warm-up level (25, 50, 100, 250, 500 a day) on delivery evidence. Off, the level only changes by hand." },
+  { key: "outreach:ramp_changed_at", kind: "string", default: null, description: "State: when the warm-up ramp level last changed, written by the ramp job and the bounce monitor." },
+  { key: "delivery:breaker:<day>", kind: "json", default: null, description: "State: the provider circuit breaker for one UTC day, {consecutive, openedAt}. Three consecutive provider failures open it until midnight UTC; an unreadable record counts as open." },
+  { key: "delivery:last_auto_resume", kind: "string", default: null, description: "State: when the bounce monitor last lifted a warning pause, kept 14 days. A spike inside that time pauses at critical." },
 
   // Scoring and sourcing.
   { key: "intent_score:enforce", kind: "boolean", default: "false", description: "Use the intent score to filter cold selection." },

@@ -10,7 +10,8 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 0b. First agent | Done (behind `operator:agent_enabled`) |
 | 1. Safety spine and data layer | Done |
 | 2. Sourcing and enrichment | Done (behind `discovery:enabled`) |
-| 3 to 14 | Planned |
+| 3. Outreach | Done (behind `cold_batch:enabled` and `delivery:enabled`) |
+| 4 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -27,9 +28,11 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the data model ([DATA-MODEL.md](DATA-MODEL.md)): about a hundred tables across the CRM, pipeline, outreach, experiments, discovery, events, agent operations and the ship loop, with the helpers that keep warmth forward-only and deal stages valid;
 - the first agent ([OPERATOR.md](OPERATOR.md)): a Telegram operator channel, a hub agent that runs a tool loop through the dispatcher with research, contact search and drafting tools, chat sessions whose taint persists until `/clean`, approvals bound to the draft's digest, and bearer auth on the API;
 - sourcing and enrichment ([SOURCING.md](SOURCING.md)): a weekday discovery cycle, the email finder and verifier waterfall with cached verification, per-field evidence and conflict holds, identity and duplicate rules, a deterministic person-fit gate, a nightly account prescore and an optional model fit score, and promotion of qualified candidates with verified work emails;
-- the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search) and `data-hunter` (finder, verifier, people), each with a hermetic contract test.
+- outreach ([OUTREACH.md](OUTREACH.md)): template allocation and variables, the quality gate with an optional model reviewer, the daily cold batch with account-level rules, a no-send holdout, readiness scoring, and approval manifests released from the operator chat;
+- delivery ([SENDING.md](SENDING.md)): a provider boundary that runs every send check itself, the plain-text footer and one-click unsubscribe, delivery and bounce webhooks that suppress hard bounces and complaints, send windows and the deferred queue, per-domain and per-account caps, a circuit breaker, the warm-up ramp, the bounce monitor and liveness checks;
+- the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people) and `email-resend`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent and the discovery cycle are off by default, and neither has yet been run against live providers. Sending (milestone 3) comes next, so promoted contacts are not emailed yet.
+Nothing runs until you turn it on: the agent, discovery, the cold batch and real sends are each off by default, and none has yet been run against live providers. Replies (milestone 4) come next.
 
 ## Milestones
 

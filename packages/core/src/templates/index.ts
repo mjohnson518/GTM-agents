@@ -9,3 +9,5 @@ export type { TemplateValidation, TemplateValidationOptions } from "./validate.t
 export { renderTemplate } from "./render.ts";
 export type { RenderResult, TemplateValues } from "./render.ts";
 export { INLINE_VARIABLES, LINE_VARIABLES, countWords, isAllowedVariable, variablesIn } from "./variables.ts";
+export { TEMPLATES_LOCK_KEY, computeTemplateLock, loadTemplates, parseTemplateLock, serveTemplateFiles, templateFileKey, templateLockSchema } from "./store.ts";
+export type { ServedTemplate, TemplateFile, TemplateLoad, TemplateLock } from "./store.ts";
