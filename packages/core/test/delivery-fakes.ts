@@ -11,7 +11,8 @@ import { fakeEmailProvider, type FakeEmailProvider } from "../src/sending/testin
 import type { OutreachItem } from "../src/sending/types.ts";
 import { acmeConfig } from "./fixtures.ts";
 
-export const SIGNING_KEY = "test-unsubscribe-signing-key-0123456789abcdef";
+/** A synthetic signing key, low-entropy on purpose so secret scanners never mistake it for a real one. */
+export const SIGNING_KEY = "k".repeat(48);
 export const BASE_URL = "https://agent.acme.example";
 export const WEBHOOK_SECRET = "test-webhook-signing-secret";
 /** Wednesday 4 November 2026, 12:00 in New York (EST), inside the default Monday to Thursday 8 to 15 window. */

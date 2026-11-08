@@ -61,7 +61,7 @@ function setup(kvValues: Record<string, string> = {}, overrides: Partial<Outreac
     kv,
     config,
     provider,
-    unsubscribeSigningKey: "test-unsubscribe-signing-key-0123456789abcdef",
+    unsubscribeSigningKey: "k".repeat(48), // synthetic and low-entropy, so secret scanners ignore it
     baseUrl: "https://agent.acme.example",
     operator: operator.channel,
     now: () => NOW,

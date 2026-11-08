@@ -10,7 +10,8 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { uid } from "./helpers.ts";
 
-const KEY = "test-unsubscribe-signing-key-0123456789abcdef";
+// A synthetic signing key, low-entropy on purpose so secret scanners never mistake it for a real one.
+const KEY = "k".repeat(48);
 const config = defineConfig({
   company: { name: "Acme", domain: "acme.example", url: "https://acme.example", product: { name: "Acme Quarantine", description: "Quarantines flaky tests." } },
   agent: { name: "Avery" },

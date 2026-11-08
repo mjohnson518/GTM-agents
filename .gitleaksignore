@@ -1,3 +1,7 @@
 # Reviewed gitleaks false positives, one fingerprint per line (commit:file:rule:line).
 # A synthetic test value in the placeholder-check tests, since replaced with a low-entropy stand-in.
 67c0cb54b3f5123c5cc2a243af728829a71f306f:scripts/test/placeholders.test.ts:generic-api-key:13
+# Synthetic unsubscribe signing keys in the delivery tests, since replaced with low-entropy stand-ins.
+5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:tests/security/delivery-unsubscribe.test.ts:generic-api-key:13
+5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:tests/security/delivery-gates.test.ts:generic-api-key:64
+5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:packages/core/test/delivery-fakes.ts:generic-api-key:14
