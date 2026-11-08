@@ -74,7 +74,7 @@ Working on the repository today:
 git clone <repository-url> gtm-agents
 cd gtm-agents
 npm install                  # Node 24 or later; also installs the git hooks
-npm run check                # typecheck, lint, tests, evals, placeholder, secret and migration checks
+npm run check                # typecheck, lint, tests, evals, placeholder, secret, migration and license checks
 ```
 
 ## Documentation
@@ -95,4 +95,6 @@ npm run check                # typecheck, lint, tests, evals, placeholder, secre
 
 [Apache-2.0](LICENSE).
 
-Created and maintained by Marc Johnson.
+## Credits and contact
+
+Created and maintained by Marc Johnson. If you're interested in using this system for your product or services, Marc is happy to work with you: [info@c12.space](mailto:info@c12.space).
