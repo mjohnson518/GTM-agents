@@ -19,17 +19,19 @@ npm run check:placeholders       # template hygiene: UUIDs, workers.dev hosts, r
 npm run check:secrets            # known credential formats
 npm run check:migrations         # migration order and idempotency
 npm run check:licenses           # production dependencies of every workspace are permissively licensed
+npm run check:brain              # the example brain and templates validate against the schema and lock
 npm run check                    # all of the above, in that order; must be green before staging
 ```
 
-These need the CLI and the worker template, so they work once those land (see [docs/ROADMAP.md](docs/ROADMAP.md)):
+The worker template and the CLI:
 
 ```bash
 npx wrangler deploy --dry-run    # in apps/worker; placeholders must still produce a valid bundle
-npx gtm doctor                   # bindings, secrets, adapters, webhooks, kill switch, flags
-npx gtm brain validate <dir>     # brain and templates against the schema and byte budgets
-npx gtm migrate --dry-run        # migration order and idempotency check
+npx gtm doctor --config apps/worker   # bindings, config, adapters, secrets, webhooks, kill switch, flags
+npx gtm brain validate <dir>     # brain and templates against the schema, byte budgets and lock
 ```
+
+`gtm setup`, `gtm migrate`, `gtm flags`, `gtm deploy` and `gtm brain upload|diff` are not available yet; [docs/ROADMAP.md](docs/ROADMAP.md) tracks them.
 
 ## Repository layout
 

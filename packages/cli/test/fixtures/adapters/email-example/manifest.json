@@ -1,0 +1,8 @@
+{
+  "name": "email-example",
+  "version": "1.0.0",
+  "ports": ["EmailProvider"],
+  "requiredSecrets": ["EXAMPLE_EMAIL_KEY"],
+  "tools": { "email_send_batch": { "taint": "none", "gate": "structured" } },
+  "contract": "./contract.test.ts"
+}

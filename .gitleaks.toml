@@ -1,0 +1,8 @@
+# GTM-agents: gitleaks configuration. Keeps every default rule and adds one narrow exception.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Brain lock files hold SHA-256 hashes of brain files, which look random by design. Their format is validated by gtm brain validate."
+paths = ['''(^|/)brain\.lock\.json$''']

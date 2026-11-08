@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hash": "2b27d3fcfafb1fac0aa6b599c7ee96cf5982701690493993d61f7d82dbe77102",
+  "files": {
+    "commercial.md": "51a356cb902f9575f07d7a5e0f571e370ad1446d493cdec7e34f3fe4dc68c217",
+    "competitors.md": "b707236504934143675b52b4b97b13864c81530f2ec5f477dfcefa6eb73e8323",
+    "facts.md": "9ce41bd0c66eae824085b8cedc947f899d7d576ed9cd0fbc5b1e8d90941f142a",
+    "hiring.md": "8fabc6c23a836635f53234a5652bde8e8108fb7528a2c5e876c302560a8796aa",
+    "icp.md": "490198afa3e2312e9470979d81ffb97e38aa83452d5cc4632fa9adce2b7069ba",
+    "influencers.md": "654643fcd6fdf3e8636558ed67f977de5d08a22fd9e0adb50c645d5d4ba9f91f",
+    "keyword-portfolio.md": "4e34f1e1a6744ba183369980dbee104120d6559db4efbb18183fda0b79726659",
+    "market-profile.md": "4faf8d57fba7e826307bda0a1f77bbb373be14fc10469314696fed663fe945e4",
+    "message-pillars.md": "7465ce3ab9595311d3c01eceb727de074219880f18ac20cdb332b5841cc0dad7",
+    "objections.md": "e57e53f0085fdb8686839972157f8ba9de19a451a02a24dfaa37f94fe7ce180d",
+    "personas.md": "a2a71bf241bd7a2004993a3dd183835108480a7efba28bc1fbbda86b835ab2c5",
+    "signals.md": "109273a47a6257e0dbd41489676c7b2ae07ac580d07c9d085241a69c9ed4e88a",
+    "stack.md": "0bb2e74ca6053f4199d87112089c4ef6353508669211b16094ff0877fc60dc37",
+    "voice.md": "6323932dd049f57808655815f97bfdd9f3b610e4bdc05c90d1646087dad427b8"
+  }
+}

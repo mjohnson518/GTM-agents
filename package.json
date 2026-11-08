@@ -21,7 +21,8 @@
     "check:secrets": "bash scripts/secrets-scan.sh",
     "check:migrations": "node scripts/check-migration-order.mjs",
     "check:licenses": "node scripts/check-licenses.mjs",
-    "check": "npm run typecheck && npm run lint && npm run test && npm run eval && npm run check:placeholders && npm run check:secrets && npm run check:migrations && npm run check:licenses",
+    "check:brain": "gtm brain validate examples/brains/acme",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run eval && npm run check:placeholders && npm run check:secrets && npm run check:migrations && npm run check:licenses && npm run check:brain",
     "prepare": "node scripts/install-hooks.mjs"
   },
   "devDependencies": {

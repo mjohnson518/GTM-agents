@@ -14,4 +14,12 @@ The `gtm` command, for setting up and operating a deployment.
 
 ## Status
 
-This package is a scaffold. `init`, `doctor` and `brain validate` come first.
+Available today:
+
+- **`gtm init <dir> [--name <worker-name>] [--local <checkout>]`** copies the worker template into a new directory. It sets the Worker and bucket names, points migrations at the installed core package, and writes `package.json`, `tsconfig.json` and `.gitignore`. Until the packages are published, `--local` installs them from a checkout of this repository.
+- **`gtm doctor [--config <dir>] [--env <name>] [--remote]`** reports PASS, WARN, FAIL or INFO for each check and exits non-zero on any FAIL. Offline it reads `wrangler.jsonc`, `gtm.config.ts`, adapter manifests and `.dev.vars`. `--remote` also reads the deployed secrets and the halt flag and kill switch through Wrangler.
+- **`gtm brain validate [dir] [--templates <dir>] [--domain <domain>] [--write-lock]`** checks every brain component and template, and writes `brain.lock.json` when everything passes.
+
+`setup`, `migrate`, `brain upload`, `brain diff`, `flags` and `deploy` print a short message and exit with code 2; see [docs/ROADMAP.md](../../docs/ROADMAP.md).
+
+Node 24 runs the CLI's TypeScript directly; there is no build step.

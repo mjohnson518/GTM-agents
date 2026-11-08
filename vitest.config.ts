@@ -27,6 +27,13 @@ export default defineConfig(async () => {
           },
         },
         {
+          test: {
+            name: "cli",
+            environment: "node",
+            include: ["packages/cli/test/**/*.test.ts"],
+          },
+        },
+        {
           plugins: [
             cloudflareTest({
               wrangler: { configPath: resolve(root, "packages/core/test/wrangler.test.jsonc") },

@@ -6,8 +6,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 
 | Milestone | Status |
 |---|---|
-| 0. Foundation | In progress |
-| 1 to 14 | Planned |
+| 0. Foundation | Done |
+| 0b. First agent | Planned |
+| 1 to 14 | Planned (1, the safety spine, is next) |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -15,7 +16,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the reference docs in this folder;
 - the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies;
 - the core runtime skeleton: `createWorker`, configuration, the job registry, the port interfaces, the brain and template engines, and the baseline migration;
-- the worker template, which bundles from placeholders, and the admin shell.
+- the worker template, which bundles from placeholders, and the admin shell;
+- the `gtm` CLI with `init`, `doctor` and `brain validate`;
+- `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it.
 
 The runtime does not run any GTM work yet: no jobs, adapters or agents are registered.
 

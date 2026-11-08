@@ -1,0 +1,8 @@
+// GTM-agents: a deliberately incomplete deployment for `gtm doctor` tests. It lacks most bindings.
+{
+  "name": "broken-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "kv_namespaces": [{ "binding": "KV", "id": "${KV_ID}" }],
+  "durable_objects": { "bindings": [{ "name": "GATEWAY", "class_name": "OperatorGateway" }] },
+}

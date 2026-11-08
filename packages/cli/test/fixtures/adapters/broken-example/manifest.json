@@ -1,0 +1,4 @@
+{
+  "name": "broken-example",
+  "ports": ["NotAPort"]
+}

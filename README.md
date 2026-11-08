@@ -57,25 +57,23 @@ operator chat + dashboard -> OperatorGateway -> hub agent -> tools (taint-classi
 
 ## Quick start
 
-The intended flow, once the CLI ships:
-
-```bash
-npx gtm init my-agent        # copy the worker template: wrangler.jsonc, gtm.config.ts, brain/, templates/
-cd my-agent
-npx gtm setup                # create the Cloudflare resources and fill in the placeholders
-npx gtm brain validate       # check your brain and templates against the schema
-npx gtm doctor               # bindings, secrets, adapters, webhooks, kill switch, flags
-npx gtm deploy
-```
-
-Working on the repository today:
+The packages are not published to npm yet, so start from a checkout of this repository (Node 24 or later):
 
 ```bash
 git clone <repository-url> gtm-agents
 cd gtm-agents
-npm install                  # Node 24 or later; also installs the git hooks
-npm run check                # typecheck, lint, tests, evals, placeholder, secret, migration and license checks
+npm install                          # also installs the git hooks
+npm run check                        # typecheck, lint, tests, evals and the repository checks
+
+npx gtm init ../my-agent --local .   # copy the worker template, using this checkout's packages
+cd ../my-agent
+npm install
+npx gtm brain validate               # check your brain and templates against the schema
+npx gtm doctor                       # bindings, config, adapters, secrets, webhooks, kill switch, flags
+npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 ```
+
+`examples/brains/acme` is a complete brain to copy from. Creating the Cloudflare resources (`gtm setup`) and deploying (`gtm deploy`) are not available yet; see the roadmap.
 
 ## Documentation
 
@@ -97,4 +95,4 @@ npm run check                # typecheck, lint, tests, evals, placeholder, secre
 
 ## Credits and contact
 
-Created and maintained by Marc Johnson. If you're interested in using this system for your product or services, Marc is happy to work with you: [info@c12.space](mailto:info@c12.space).
+Created and maintained by [Marc Johnson](https://marcjohnson.xyz). If you're interested in using this system for your product or services, I'm happy to work with you: [info@c12.space](mailto:info@c12.space).
