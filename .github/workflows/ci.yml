@@ -1,5 +1,6 @@
-# GTM-agents CI. Runs the same checks as `npm run check`, plus a full-history secrets scan and a
-# license check of production dependencies. Third-party actions are pinned to commit SHAs.
+# GTM-agents CI. Runs the same checks as `npm run check`, plus a gitleaks scan of the pushed
+# commits and a license check of production dependencies. Third-party actions are pinned to
+# commit SHAs. Reviewed gitleaks false positives are listed by fingerprint in .gitleaksignore.
 name: CI
 
 on:
@@ -35,7 +36,7 @@ jobs:
       - run: npm run check:migrations
 
   secrets:
-    name: Secrets scan (full history)
+    name: Secrets scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

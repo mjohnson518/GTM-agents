@@ -10,7 +10,8 @@ import { SYNTHETIC_MARKER, scanPlaceholders } from "../check-placeholders.mjs";
 const uuid = ["123e4567", "e89b", "12d3", "a456", "426614174000"].join("-");
 const realHost = ["acme-agent", "acct"].join(".") + ".workers" + ".dev";
 const hex32 = "0123456789abcdef".repeat(2);
-const secretValue = "Zx9Qw7Er5Ty3Ui1Op0As";
+// A low-entropy stand-in, long enough to look like a credential to the check under test.
+const sampleValue = "Ab9".repeat(7);
 
 describe("check-placeholders", () => {
   it("rejects a UUID-shaped string in an ordinary file", () => {
@@ -41,14 +42,14 @@ describe("check-placeholders", () => {
   });
 
   it("rejects a secret-shaped assignment and accepts obvious placeholders", () => {
-    expect(scanPlaceholders("src/x.ts", `const api_key = "${secretValue}";`).map((f) => f.rule)).toEqual(["secret"]);
+    expect(scanPlaceholders("src/x.ts", `const api_key = "${sampleValue}";`).map((f) => f.rule)).toEqual(["secret"]);
     expect(scanPlaceholders("src/x.ts", 'const api_key = "test-secret-do-not-use";')).toEqual([]);
     expect(scanPlaceholders("src/x.ts", 'token: "<your-telegram-bot-token>"')).toEqual([]);
   });
 
   it("never prints the secret value in a finding", () => {
-    const [finding] = scanPlaceholders("src/x.ts", `password = "${secretValue}"`);
-    expect(finding?.detail).not.toContain(secretValue);
+    const [finding] = scanPlaceholders("src/x.ts", `password = "${sampleValue}"`);
+    expect(finding?.detail).not.toContain(sampleValue);
   });
 
   it("exits non-zero from the command line when a file has a problem", () => {
