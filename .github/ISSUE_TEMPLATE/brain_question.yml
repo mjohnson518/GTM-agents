@@ -1,0 +1,52 @@
+name: Brain or template question
+description: Ask how to express your company, market or voice in the brain and templates.
+labels: ["brain"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        docs/BRAIN-SCHEMA.md describes every component and the template format, and examples/brains/acme is a complete example.
+        Do not paste your real brain, prospects or customers here. Rewrite your example with Acme and invented details.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - market-profile
+        - personas
+        - icp
+        - message-pillars
+        - objections
+        - competitors
+        - influencers
+        - keyword-portfolio
+        - voice
+        - signals
+        - stack
+        - hiring
+        - facts
+        - commercial
+        - Templates
+        - Byte budgets or the lock file
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you are trying to express, and what you tried.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Synthetic example
+      description: A short brain item or template using Acme and invented details.
+      render: markdown
+  - type: textarea
+    id: validator
+    attributes:
+      label: Output of `gtm brain validate`
+      description: If the validator rejected something, paste its output.
+      render: text

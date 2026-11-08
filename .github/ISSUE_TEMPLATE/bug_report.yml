@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in GTM-agents does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security vulnerability, do not use this form; follow SECURITY.md instead.
+        Never paste secrets, real contact data, real email content or resource ids. Use Acme and `*.example` addresses.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps, config or synthetic data that shows the problem.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: e.g. main at abc1234
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core runtime
+        - Safety controls (taint, gates, budgets, suppression)
+        - An adapter
+        - CLI (gtm)
+        - Worker template
+        - Admin dashboard
+        - Brain or templates
+        - Docs
+        - Repository checks or CI
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Errors or logs, with secrets, addresses and ids removed.
+      render: text
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: I removed secrets, real contact details, real email content and resource ids from this report.
+          required: true

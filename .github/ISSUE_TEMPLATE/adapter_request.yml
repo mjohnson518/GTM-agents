@@ -1,0 +1,76 @@
+name: Adapter request
+description: Ask for, or propose, an integration with a vendor behind one of the ports.
+labels: ["adapter"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Adapters translate between a port and a vendor; core makes every decision. See docs/INTERFACES.md for the ports and the manifest.
+  - type: input
+    id: vendor
+    attributes:
+      label: Vendor and product
+      placeholder: e.g. Example Mail API
+    validations:
+      required: true
+  - type: checkboxes
+    id: ports
+    attributes:
+      label: Ports it would implement
+      options:
+        - label: DiscoverySource
+        - label: SignalSource
+        - label: PeopleProvider / CompanyProvider
+        - label: ContactFinder / EmailVerifier
+        - label: EmailProvider
+        - label: InboxProvider
+        - label: OperatorChannel
+        - label: CalendarProvider
+        - label: BillingProvider
+        - label: ModelGateway
+        - label: CrmSink
+  - type: textarea
+    id: auth
+    attributes:
+      label: Auth model
+      description: API key, OAuth, service account, signed requests. Which secrets would the manifest require?
+    validations:
+      required: true
+  - type: textarea
+    id: pricing
+    attributes:
+      label: Price table
+      description: What each call costs (per request, per record, per credit), so the budget layer can check before the call.
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Rate limits and batch sizes
+    validations:
+      required: true
+  - type: textarea
+    id: webhooks
+    attributes:
+      label: Webhook signature scheme
+      description: How the vendor signs webhooks, and its replay window. Write "none" if the vendor has no webhooks.
+  - type: textarea
+    id: human-only
+    attributes:
+      label: Capabilities that must be human-only
+      description: Anything that creates offers, spends money irreversibly, deletes data or acts on someone's behalf.
+  - type: textarea
+    id: links
+    attributes:
+      label: Vendor documentation
+      description: Links to the API reference.
+  - type: dropdown
+    id: contributing
+    attributes:
+      label: Would you write it?
+      options:
+        - Yes, I plan to open a pull request
+        - Maybe, with guidance
+        - No, requesting only
+    validations:
+      required: true

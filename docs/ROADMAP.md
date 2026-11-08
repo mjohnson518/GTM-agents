@@ -12,7 +12,8 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 **What exists today:**
 - the workspace layout and its package boundaries;
 - the repository checks (placeholders, secrets, migration order, house rules, conflict copies, doc links), run by the pre-commit hook and by CI;
-- the reference docs in this folder.
+- the reference docs in this folder;
+- the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies.
 
 The runtime is not usable yet.
 
