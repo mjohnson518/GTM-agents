@@ -155,6 +155,8 @@ These controls are built in from the start. Each is covered by the security cont
 | Suppression | Opt-outs, bounces, complaints and erasures. It is checked inside every send path, fails closed, and has no remove tool |
 | Earned autonomy | Each action class starts at "draft and ask". Promotion is proposed from measured outcomes and applied by a person. Merging code, pricing, billing and auth changes, offers and discounts, proof-of-value sends and data deletion are permanently human |
 
+[SECURITY-MODEL.md](SECURITY-MODEL.md) covers the taint model, the tool dispatcher, the fence, egress checks, delegation and approvals in detail.
+
 The rule behind all of them: **gates fail closed, bookkeeping fails open.** A gate whose input cannot be read blocks. An audit row, memory write or cost record that fails is logged and dropped, and never blocks a send.
 
 ## The send path

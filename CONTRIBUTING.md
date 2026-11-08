@@ -83,7 +83,7 @@ An adapter connects one vendor to one or more ports. Read [docs/INTERFACES.md](d
 - [ ] Webhooks verify the vendor's signature, with its replay window, inside `parseWebhook` and throw `AdapterError("auth")` on failure.
 - [ ] `contract.test.ts` runs the shared contract for each port with a recorded-response `fetch`. Live tests sit behind `ADAPTER_LIVE=1` and never run in CI.
 - [ ] Recorded responses are scrubbed: no real names, addresses, keys or account ids.
-- [ ] The security contract passes with the adapter's tools registered.
+- [ ] The security contract passes with the adapter's tools registered: `runSecurityContract` from `@gtm-agents/core/testing` ([docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)).
 
 If you want an adapter but are not writing it yourself, open an adapter request issue with the vendor's auth model, price table, rate limits and webhook signature scheme.
 

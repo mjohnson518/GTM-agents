@@ -34,6 +34,8 @@ The runtime skeleton exists:
 - the port interfaces and the adapter manifest schema;
 - the flag registry and autonomy levels;
 - the brain (parse, validate, lock, slice assembly, runtime loader) and templates (validate, render);
-- the baseline migration.
+- the baseline migration;
+- the first part of the safety spine (`@gtm-agents/core/security`, `@gtm-agents/core/runtime`): the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint and approval digests;
+- the security contract for adapters and modules (`@gtm-agents/core/testing`).
 
-The safety spine and the pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned.
+The rest of the safety spine and the pipeline stages are not in this package yet; [docs/ROADMAP.md](../../docs/ROADMAP.md) lists what is planned, and [docs/SECURITY-MODEL.md](../../docs/SECURITY-MODEL.md) describes the security model.

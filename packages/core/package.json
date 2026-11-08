@@ -14,6 +14,9 @@
     "./jobs": "./src/jobs/index.ts",
     "./flags": "./src/flags/index.ts",
     "./autonomy": "./src/autonomy/index.ts",
+    "./security": "./src/security/index.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./testing": "./src/testing/index.ts",
     "./durable-objects": "./src/durable-objects/index.ts",
     "./brain/schema/*": "./brain/schema/*",
     "./migrations/*": "./migrations/*"

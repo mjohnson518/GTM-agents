@@ -113,7 +113,7 @@ Every record an adapter returns is raw data to core. Core sanitizes strings, ass
 |---|---|
 | `tools.<name>.taint` | The taint the tool's output gives the session: `none`, `metadata`, `structured` or `full`. Required |
 | `tools.<name>.gate` | The lowest session taint at which the tool is refused: `never` for read-only tools, then `metadata`, `structured` or `full`. Omitted means `metadata`, so the tool is refused as soon as anything untrusted has been read. A threshold can only block more as taint rises, so gates never loosen |
-| `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. At full taint, core refuses URLs that carry data out (an email address, an encoded blob, a long query string) and queries that carry an email address |
+| `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. Every URL is checked against internal and reserved addresses. At full taint, core refuses URLs that carry data out (an email address, an encoded blob, a long query string, an oversized hostname) and any input that carries an email address or an encoded blob. An egress tool must declare a `rateCategory` |
 | `tools.<name>.humanOnly` | The action gate refuses the call unless it carries an approval whose digest matches the exact input |
 | `tools.<name>.rateCategory` | The rate-limit bucket the call counts against |
 | `costs` | The price table the budget layer reads |
@@ -517,7 +517,7 @@ Core registers each manifest `tools` entry as an agent tool with:
 - **the cost table.** The budget gate checks before the call and records after it.
 - **the adapter's flag.** A tool whose adapter flag is off is not offered to the model at all.
 
-The security contract in `tests/security/` runs over every registered tool, including adapter tools, in CI. It checks that every tool is classified, that gates never loosen as taint rises, and that every taint source is fenced.
+The security contract runs over every registered tool, including adapter tools, in CI. It checks that every tool is classified, that gates never loosen as taint rises, that refused calls never reach their handler, and that every taint source is fenced. Run it in your adapter's tests with `runSecurityContract(createToolRegistry({ manifests: [manifest] }))` from `@gtm-agents/core/testing`. [SECURITY-MODEL.md](SECURITY-MODEL.md) explains how to choose `taint`, `gate` and `egress` for a tool.
 
 ## Contract tests
 

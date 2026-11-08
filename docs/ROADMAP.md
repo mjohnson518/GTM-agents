@@ -8,7 +8,8 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 |---|---|
 | 0. Foundation | Done |
 | 0b. First agent | Planned |
-| 1 to 14 | Planned (1, the safety spine, is next) |
+| 1. Safety spine and data layer | In progress |
+| 2 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -18,7 +19,8 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the core runtime skeleton: `createWorker`, configuration, the job registry, the port interfaces, the brain and template engines, and the baseline migration;
 - the worker template, which bundles from placeholders, and the admin shell;
 - the `gtm` CLI with `init`, `doctor` and `brain validate`;
-- `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it.
+- `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it;
+- the first part of the safety spine: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run ([SECURITY-MODEL.md](SECURITY-MODEL.md)).
 
 The runtime does not run any GTM work yet: no jobs, adapters or agents are registered.
 

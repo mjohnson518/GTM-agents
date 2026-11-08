@@ -1,6 +1,7 @@
 // GTM-agents: the brain lock file. A component is served only when the SHA-256 of its exact bytes
 // matches its entry here, so what reaches a prompt is always what the operator approved.
 import { z } from "zod";
+import { sha256Hex } from "../shared/hash.ts";
 
 export const lockSchema = z.strictObject({
   version: z.literal(1),
@@ -9,10 +10,7 @@ export const lockSchema = z.strictObject({
 });
 export type BrainLock = z.output<typeof lockSchema>;
 
-export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+export { sha256Hex };
 
 /** Build the lock for a set of approved files. */
 export async function computeLock(files: Array<{ name: string; content: string }>): Promise<BrainLock> {

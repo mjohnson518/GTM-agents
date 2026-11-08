@@ -47,7 +47,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
                      src/index.ts, gtm.config.ts, brain/, templates/)
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/
-docs/                ARCHITECTURE, INTERFACES, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -146,6 +146,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 |----------|------|
 | How does a deployment work, and what are the bindings | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | What does an adapter have to implement | [docs/INTERFACES.md](docs/INTERFACES.md) |
+| How is a tool classified, and what does the action gate refuse | [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |
 | What goes in `brain/` and `templates/`, and how is it validated | [docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md) |
 | Why was a structural choice made | [docs/DECISIONS.md](docs/DECISIONS.md) |
