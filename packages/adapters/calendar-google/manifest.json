@@ -1,0 +1,15 @@
+{
+  "name": "calendar-google",
+  "version": "0.1.0",
+  "ports": ["CalendarProvider"],
+  "capabilities": ["list"],
+  "requiredSecrets": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_CALENDAR_REFRESH_TOKEN"],
+  "optionalSecrets": [],
+  "flags": ["convert:calendar_enabled"],
+  "tools": {},
+  "costs": {
+    "read": { "usd": 0, "per": "API request (Calendar API quota units, no per-call price)" }
+  },
+  "limits": { "perSecond": 5 },
+  "contract": "./contract.test.ts"
+}

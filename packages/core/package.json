@@ -31,6 +31,8 @@
     "./replies/testing": "./src/replies/testing.ts",
     "./metrics": "./src/metrics/index.ts",
     "./reports": "./src/reports/index.ts",
+    "./convert": "./src/convert/index.ts",
+    "./convert/testing": "./src/convert/testing.ts",
     "./budget": "./src/budget/index.ts",
     "./data": "./src/data/index.ts",
     "./adapters": "./src/adapters/index.ts",

@@ -21,6 +21,11 @@
 // Report commands (reports/commands.ts) start with "/", only read, and never reach the model:
 // /scorecard shows the daily scorecard as of now, and /report conversion|funnel|cost|holdout shows
 // the other reports. The chat consumer routes them to runReportCommand.
+//
+// Meeting commands (convert/commands.ts) never reach the model: /meetings lists meetings,
+// `meeting-held-<code>`, `meeting-noshow-<code>`, `meeting-notes-<code> <notes>`,
+// `meeting-link-<code> <contact>` and `meeting-unlink-<code>` answer for a meeting, and
+// `prep-<contact>` shows a prep brief. The chat consumer routes them to runConvertCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -41,6 +46,9 @@ import { REPLY_HELP_LINES } from "../replies/commands.ts";
 // Reports: the scorecard and the other reports on demand, read-only.
 export { REPORT_COMMAND_NAMES, REPORT_HELP_LINES, isReportCommand, runReportCommand, type ReportCommandDeps } from "../reports/commands.ts";
 import { REPORT_HELP_LINES } from "../reports/commands.ts";
+// Convert: the meeting commands and the prep brief on demand.
+export { CONVERT_HELP_LINES, parseConvertCommand, runConvertCommand, type ConvertCommand, type ConvertCommandDeps } from "../convert/commands.ts";
+import { CONVERT_HELP_LINES } from "../convert/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -66,6 +74,7 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     "channel-done-<id> [linkedin|x] / channel-skip-<id>  answer a manual touch before the last follow-up",
     ...REPLY_HELP_LINES,
     ...REPORT_HELP_LINES,
+    ...CONVERT_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",

@@ -65,10 +65,10 @@ export default createWorker(config, {
   queueConsumers: {},
   operator: (env) => telegram(createAdapterContext({ name: "operator-telegram", env: { ...env }, config })),
   model: (env) => anthropic(createAdapterContext({ name: "llm-gateway", env: { ...env }, config })),
-  // The names of the queues bound as CHAT_QUEUE in wrangler.jsonc, one per environment.
-  // Defaults to "gtm-chat". A chat message arriving on an unlisted queue is still handled, with a
-  // warning in the logs, so list your names to keep the logs clean.
-  agent: { chatQueue: ["gtm-chat", "gtm-chat-staging"] },
+  // The names of the queues bound as CHAT_QUEUE in wrangler.jsonc, one per environment. `gtm setup`
+  // names them <worker name>-chat. A chat message arriving on an unlisted queue is still handled,
+  // with a warning in the logs, so list your names to keep the logs clean.
+  agent: { chatQueue: ["gtm-agent-chat", "gtm-agent-staging-chat"] },
 });
 ```
 
@@ -78,7 +78,7 @@ In `gtm.config.ts`, enable the adapters, give the strategist role a model, and p
 
 ```ts
 adapters: {
-  "operator-telegram": { options: { chatId: "123456789" } },   // where job pages go; optional
+  "operator-telegram": { options: { chatId: "123456789" } },   // where job pages, release messages and alerts go
   "llm-gateway": { options: {} },
 },
 models: {
@@ -97,7 +97,7 @@ models: {
 | `promptCache` | Mark the system prompt for prompt caching. Defaults to `true` |
 | `fallbacks` | `"default"` turns on the provider's server-side fallback for refused requests |
 
-`operator-telegram` options: `chatId`, the default chat for messages core sends without one (job pages), and `apiBaseUrl` for a self-hosted Bot API server.
+`operator-telegram` options: `chatId`, the default chat for messages core sends without one, and `apiBaseUrl` for a self-hosted Bot API server. Set `chatId` in practice: without it, job failure pages, cron health pages, batch and sequence release messages and delivery alerts have no chat to go to and are dropped.
 
 ## 4. Register the webhook
 
@@ -151,6 +151,9 @@ Replies and follow-ups add their own commands, documented with them:
 | `sequence-release-<id>-<code>` | Release the follow-ups a sweep put up ([SEQUENCES.md](SEQUENCES.md)) |
 | `sequence-resume-<contact id>` | Resume a contact's paused sequence |
 | `channel-done-<id> [linkedin\|x]`, `channel-skip-<id>` | Record or skip the optional manual touch before the last step |
+| `/meetings`, `prep-<contact id or email>` | Meetings the calendar shows, and a one-page brief on any contact ([CONVERT.md](CONVERT.md)) |
+| `meeting-held-<code>`, `meeting-noshow-<code>`, `meeting-notes-<code> <notes>` | Record how a meeting went, and keep notes |
+| `meeting-link-<code> <contact>`, `meeting-unlink-<code>` | Attribute an ambiguous meeting to a contact, or make a meeting inert |
 | `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
 | `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 

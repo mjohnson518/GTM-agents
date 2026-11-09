@@ -4,8 +4,10 @@
 // otherwise GREEN):
 //   - send cap: today's room under the sending domain's daily cap. Block at the cap, warn when the
 //     batch is larger than the room left;
-//   - bounce rate: cold and sequence hard bounces over 1 and 7 days. Block at 5% or more, warn from
-//     2%; under 20 sends in a window is too few to judge;
+//   - bounce rate: the hard bounce rate of cold and sequence mail over trailing 1 and 7 days
+//     (hardBounceRate in metrics/delivery-rates.ts, the bounce monitor's definition: hard bounces
+//     that arrived in the window over sends in it). Block at 5% or more, warn from 2%; under 20 sends
+//     in a window is too few to judge;
 //   - suppression overlap: the canonical suppression check over the recipients. Block on any
 //     overlap, and block when the check fails;
 //   - verification coverage: block on any cached undeliverable address, warn when half or more have
@@ -17,6 +19,7 @@
 //
 // Salvage: when RED comes only from suppression overlap or the account cap, the offending drafts are
 // dropped and the rest scored once more. Anything else that is RED holds the whole batch.
+import { deliveryCounts, hardBounceRate, trailingDays } from "../metrics/delivery-rates.ts";
 import { checkSuppression } from "../sending/suppression.ts";
 import { lintOutbound } from "../quality/lint.ts";
 import { sha256Hex } from "../shared/hash.ts";
@@ -91,18 +94,16 @@ async function sendCap(db: D1Database, items: readonly ReadinessItem[], options:
 async function bounceRate(db: D1Database, options: ReadinessOptions): Promise<DimensionResult> {
   try {
     const window = async (days: number) => {
-      const since = new Date(options.now.getTime() - days * DAY_MS).toISOString();
-      const row = await db
-        .prepare("SELECT COUNT(*) AS sends, COUNT(bounced_at) AS bounces FROM outreach_sends WHERE send_path IN ('cold', 'sequence') AND sent_at >= ?1")
-        .bind(since)
-        .first<{ sends: number; bounces: number }>();
-      const sends = Number(row?.sends ?? 0);
-      return { sends, rate: sends > 0 ? Number(row?.bounces ?? 0) / sends : 0 };
+      const counts = await deliveryCounts(db, trailingDays(options.now, days));
+      return { sends: counts.sends, rate: hardBounceRate(counts) };
     };
-    const [day, week] = [await window(1), await window(7)];
-    const level = (w: { sends: number; rate: number }): DimensionStatus => (w.sends < BOUNCE_MIN_SENDS ? "pass" : w.rate >= BOUNCE_CRITICAL ? "block" : w.rate >= BOUNCE_WARN ? "warn" : "pass");
+    const [day, week] = await Promise.all([window(1), window(7)]);
+    // A rate that cannot be computed over enough sends blocks (fail closed); it cannot happen.
+    const level = (w: { sends: number; rate: number | null }): DimensionStatus =>
+      w.sends < BOUNCE_MIN_SENDS ? "pass" : w.rate === null || w.rate >= BOUNCE_CRITICAL ? "block" : w.rate >= BOUNCE_WARN ? "warn" : "pass";
     const status = [level(day), level(week)].sort((a, b) => STATUS_RANK[b] - STATUS_RANK[a])[0] ?? "pass";
-    return { status, detail: `bounces ${pct(day.rate)} over 1 day (${day.sends} sends), ${pct(week.rate)} over 7 days (${week.sends} sends)` };
+    const rate = (r: number | null) => (r === null ? "n/a" : pct(r));
+    return { status, detail: `bounces ${rate(day.rate)} over 1 day (${day.sends} sends), ${rate(week.rate)} over 7 days (${week.sends} sends)` };
   } catch {
     return unreadable("the bounce rate");
   }

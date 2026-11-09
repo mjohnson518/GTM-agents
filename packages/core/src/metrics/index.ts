@@ -37,7 +37,9 @@ export {
 export type { MaturedSample, MaturedTotals, OutcomeCounts, OutcomeDimension, OutcomeSlice, ReplyCounts, ReplyDepth, SendCounts } from "./outreach.ts";
 export { COMPLAINT_ALERT_RATE, HARD_BOUNCE_ALERT_RATE, MIN_DELIVERED_COVERAGE, deliveryAlerts, deliveryHealth } from "./delivery.ts";
 export type { DeliveryAlerts, DeliveryHealth } from "./delivery.ts";
-export { REPLY_SLA_HOURS, REPLY_SLA_WINDOW_DAYS, median, replyResponseTimes, replySla } from "./sla.ts";
+export { complaintRate, deliveryCounts, hardBounceRate, hardBounceShareOfOutcomes, peakDayDelivered, sinceWindow, trailingDays } from "./delivery-rates.ts";
+export type { DeliveryCounts } from "./delivery-rates.ts";
+export { REPLY_SLA_HOURS, REPLY_SLA_WINDOW_DAYS, median, owedWindowDays, replyResponseTimes, replySla } from "./sla.ts";
 export type { ReplySla, ResponseTimes } from "./sla.ts";
 export { MICRO_CENTS_PER_CENT, failedJobs, operatorQueue, spendByJob } from "./operations.ts";
 export type { JobFailures, JobSpend, OperatorQueue, Spend } from "./operations.ts";
@@ -45,3 +47,17 @@ export { BRIDGE_STUCK_HOURS, COVERAGE_DAYS, MIN_LEDGER_COVERAGE, MIN_SENDS_FOR_C
 export type { LedgerCoverage, MeasurementHealth } from "./health.ts";
 export { MIN_HELD, SIGNUP_WINDOW_DAYS, holdoutLift, liftVerdict } from "./holdout.ts";
 export type { ArmOutcome, HoldoutLift, LiftVerdict } from "./holdout.ts";
+// Meetings: the one definition of a meeting booked, and the meeting counts.
+export {
+  HEURISTIC_ATTRIBUTIONS,
+  MEETING_ATTRIBUTIONS,
+  MEETING_OUTCOMES,
+  countMeetings,
+  isMeetingAttribution,
+  isMeetingBooked,
+  meetingAttributedSql,
+  meetingBookedSql,
+  meetingEvidence,
+  perHundred,
+} from "./meetings.ts";
+export type { MeetingAttribution, MeetingCounts, MeetingOutcome, MeetingRow } from "./meetings.ts";

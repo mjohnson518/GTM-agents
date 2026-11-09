@@ -12,10 +12,13 @@ import {
   median,
   metricWindow,
   operatorQueue,
+  owedWindowDays,
   replyResponseTimes,
   replySla,
   spendByJob,
 } from "../src/metrics/index.ts";
+import { DEFAULT_REPLY_JOB_OPTIONS } from "../src/replies/jobs.ts";
+import { loadScorecard } from "../src/reports/scorecard.ts";
 import { bounceWindow } from "../src/sending/bounce-monitor.ts";
 import { uid } from "./delivery-fakes.ts";
 
@@ -75,6 +78,29 @@ describe("the reply SLA", () => {
     await inbound(ago(24 * 20));
     expect(await replySla(db, now)).toEqual({ waiting: 2, oldestHours: 30 });
     expect(await replySla(db, new Date("2001-01-01T00:00:00.000Z"))).toEqual({ waiting: 0, oldestHours: null });
+  });
+
+  it("counts over a deployment's reply window when given one, the same in the SLA and the operator's queue", async () => {
+    const now = new Date("2022-12-14T12:00:00.000Z");
+    const ago = (days: number) => new Date(now.getTime() - days * DAY).toISOString();
+    await inbound(ago(10));
+    await inbound(ago(20));
+    // Without an override, both read the reply clock's default window.
+    expect(owedWindowDays()).toBe(DEFAULT_REPLY_JOB_OPTIONS.owedWindowDays);
+    expect(await replySla(db, now)).toEqual({ waiting: 1, oldestHours: 240 });
+    expect((await operatorQueue(db, now)).owedReplies).toBe(1);
+    // A deployment that chases owed replies for 21 days (createReplyJobs' owedWindowDays) sees both.
+    expect(await replySla(db, now, 21)).toEqual({ waiting: 2, oldestHours: 480 });
+    expect((await operatorQueue(db, now, 21)).owedReplies).toBe(2);
+    // The scorecard reads the same window when the deployment passes it.
+    const flagsOff = { get: () => Promise.resolve(null) };
+    const card = await loadScorecard(db, flagsOff, now, { owedWindowDays: 21 });
+    expect(card.sla?.owed).toEqual({ waiting: 2, oldestHours: 480 });
+    // A bad window is an error, never a silently different window.
+    for (const bad of [0, -3, 1.5, Number.NaN]) {
+      await expect(replySla(db, now, bad)).rejects.toThrow(/reply window/);
+      await expect(operatorQueue(db, now, bad)).rejects.toThrow(/reply window/);
+    }
   });
 
   it("takes the median hours to answer replies that needed a person", async () => {

@@ -6,12 +6,13 @@
 //   - failedJobs: scheduled, rerun and manual job runs (execution_runs) that failed in the window,
 //     per job. Chat turns and delegated runs are not jobs;
 //   - operatorQueue: what waits on a person now: drafts pending approval (by kind), approval
-//     manifests that can still be released (by kind), owed replies (the reply clock's definition)
+//     manifests that can still be released (by kind), owed replies (the reply clock's definition,
+//     over its window: the deployment's owedWindowDays or the default, as replySla counts them)
 //     and manual touches to make.
 import { RELEASE_MAX_AGE_DAYS } from "../outreach/select.ts";
 import { OWED_SQL } from "../replies/owed.ts";
 import { SEQUENCE_LIMITS } from "../sequences/flags.ts";
-import { REPLY_SLA_WINDOW_DAYS } from "./sla.ts";
+import { owedWindowDays } from "./sla.ts";
 import { n } from "./sql.ts";
 import { DAY_MS, HOUR_MS, type MetricWindow } from "./window.ts";
 
@@ -72,9 +73,14 @@ export interface OperatorQueue {
   manualTouches: number;
 }
 
-/** Everything waiting on the operator at `now`. Throws on a database error. */
-export async function operatorQueue(db: D1Database, now: Date): Promise<OperatorQueue> {
+/**
+ * Everything waiting on the operator at `now`. Owed replies are counted over the reply window (the
+ * deployment's owedWindowDays, or the default), exactly as replySla reads it. Throws on a database
+ * error or a bad window.
+ */
+export async function operatorQueue(db: D1Database, now: Date, windowDays?: number): Promise<OperatorQueue> {
   const at = now.toISOString();
+  const owedSince = new Date(now.getTime() - owedWindowDays(windowDays) * DAY_MS).toISOString();
   const [drafts, manifests, owed, touches] = await db.batch<Record<string, unknown>>([
     db.prepare("SELECT kind, COUNT(*) AS drafts FROM drafts WHERE status = 'pending_approval' GROUP BY kind ORDER BY drafts DESC, kind ASC"),
     db
@@ -84,7 +90,7 @@ export async function operatorQueue(db: D1Database, now: Date): Promise<Operator
            FROM approval_manifests WHERE released_at IS NULL AND created_at >= ?1`,
       )
       .bind(new Date(now.getTime() - RELEASE_MAX_AGE_DAYS * DAY_MS).toISOString(), new Date(now.getTime() - SEQUENCE_LIMITS.releaseMaxAgeHours * HOUR_MS).toISOString()),
-    db.prepare(`SELECT COUNT(*) AS owed FROM inbound_emails i WHERE ${OWED_SQL} AND i.received_at >= ?1`).bind(new Date(now.getTime() - REPLY_SLA_WINDOW_DAYS * DAY_MS).toISOString()),
+    db.prepare(`SELECT COUNT(*) AS owed FROM inbound_emails i WHERE ${OWED_SQL} AND i.received_at >= ?1`).bind(owedSince),
     db.prepare("SELECT COUNT(*) AS touches FROM manual_touches WHERE status = 'pending' AND expires_at > ?1").bind(at),
   ]);
   const manifestRow = manifests?.results[0];

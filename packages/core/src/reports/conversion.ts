@@ -28,7 +28,7 @@ import {
   type OutcomeDimension,
   type OutcomeSlice,
 } from "../metrics/index.ts";
-import { NOT_MEASURED, fitMessage, label, pct, plural } from "./format.ts";
+import { fitMessage, label, pct, plural } from "./format.ts";
 
 /** Under this many sends a slice is directional: shown, never named the leader. */
 export const MIN_SLICE_SENDS = 30;
@@ -118,7 +118,7 @@ export function renderConversionReport(data: ConversionData): string {
   }
   lines.push(
     "",
-    `Positive means interested, question or referral (meetings are ${NOT_MEASURED}). Opt-outs and automatic replies never count as replies. A slice under ${MIN_SLICE_SENDS} sends is directional. First touches younger than ${MATURITY_DAYS} days are still collecting replies. Segment and persona are as recorded today.`,
+    `Positive means interested, question or referral, or a booked meeting first seen after the send (counted once calendar sync is on). Opt-outs and automatic replies never count as replies. A slice under ${MIN_SLICE_SENDS} sends is directional. First touches younger than ${MATURITY_DAYS} days are still collecting replies. Segment and persona are as recorded today.`,
   );
   return fitMessage(lines);
 }

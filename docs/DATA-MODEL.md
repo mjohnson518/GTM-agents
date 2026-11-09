@@ -129,6 +129,12 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `inbound_emails.triage` (JSON) and `drafts.action_class` (0018): the model triage result for a message, and the autonomy class a reply draft falls under (`reply_send`, `reply_question` or `reply_demo_link`).
 - `outreach_sends.message_id` and `approval_manifests.kind` (0019): the RFC 5322 Message-ID the provider gave a sent email, which follow-ups thread under, and whether a manifest releases a cold batch or sequence steps. Sequence steps use idempotency keys of the form `seq:<campaign>:<contact>:<step>`. A paused sequence stays active with `sequence_paused_at` set until it is resumed.
 
+### Convert and retention (0021, 0022)
+
+- `calendar_events` (0021): what calendar sync has seen of each event: times, a short code for commands, the recurring series, whether the operator organized it, attendee address hashes (exact and without a `+tag`) and domains, the attributed contact and other contacts, and its state. It never stores an address or a title. Attribution is one of `accepted_contact`, `organized_contact`, `domain_contacted` or `operator_link`. Erasure strips an erased person's hashes from other people's meetings and deletes their own.
+- The existing `calendar_meetings` hold booked meetings, `meetings.summary` the operator's notes (keyed `calendar:<code>:<contact>`), and `deal_handoffs` the static briefs (`trigger` `meeting_booked:<code>` or `stage:<stage>`). Indexes on `calendar_meetings (first_seen_at)` and `deal_handoffs (deal_id, trigger)`.
+- 0022 indexes `execution_runs (task_name, status, started_at)` for the retention job.
+
 ### Measurement (0020)
 
 - `drafts.template_sha256` and `drafts.cohort`: the template version a draft was built from and its cohort (`signalled`, `segment_routed` or `generic`), carried to `outreach_sends` when it is sent, so matured samples compare only sends of the template's current copy. Indexes on `outreach_sends (replied_at)` and `(positive_reply_at)`, `execution_runs (started_at)` and `event_effects (effect, created_at)` serve the reports ([MEASUREMENT.md](MEASUREMENT.md)).

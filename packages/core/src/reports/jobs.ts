@@ -34,6 +34,8 @@ export interface ReportJobOptions {
   costSchedule: string;
   /** The chat reports go to. Defaults to the first allowlisted chat. */
   chatId?: string;
+  /** The reply window given to createReplyJobs, so the scorecard's owed counts match the reply jobs'. */
+  owedWindowDays?: number;
 }
 
 export const DEFAULT_REPORT_JOB_OPTIONS: Readonly<ReportJobOptions> = Object.freeze({
@@ -76,7 +78,7 @@ export function createReportJobs<E extends ReportEnv>(deps: ReportDeps<E>): Regi
     rerunnable: true,
     async run(ctx) {
       if (!(await reportFlagOn(ctx.flags, REPORT_FLAGS.scorecard))) return { summary: "flag off" };
-      return send(ctx, `report:scorecard:${day(ctx.now)}`, async () => renderScorecard(await loadScorecard(ctx.env.DB, ctx.flags, ctx.now)));
+      return send(ctx, `report:scorecard:${day(ctx.now)}`, async () => renderScorecard(await loadScorecard(ctx.env.DB, ctx.flags, ctx.now, options.owedWindowDays !== undefined ? { owedWindowDays: options.owedWindowDays } : {})));
     },
   });
 

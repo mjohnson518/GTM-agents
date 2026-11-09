@@ -425,8 +425,27 @@ Authorization, meaning which chat and user ids may command the agent, belongs to
 
 ### CalendarProvider
 
+Booking detection reads the calendar with privacy-limited fields only: an adapter asks the vendor for ids, status, times, attendees and organizer, and never returns a title, description, location, conferencing link or attendee name.
+
 ```ts
-export interface CalendarEvent {
+export interface CalendarAttendee {
+  email: string;
+  self: boolean;
+  responseStatus: "accepted" | "declined" | "tentative" | "needsAction";
+}
+
+export interface CalendarEventSummary {
+  id: string;
+  status: "confirmed" | "tentative" | "cancelled";
+  start: string | null;                // ISO 8601 UTC; null for all-day or an undescribed cancellation
+  end: string | null;
+  allDay: boolean;
+  seriesId: string | null;             // the recurring series, or null for a one-off
+  organizer: { email: string; self: boolean } | null;
+  attendees: CalendarAttendee[];
+}
+
+export interface CalendarEvent {       // for writing events, which a read-only adapter refuses
   id?: string;
   title: string;
   start: string;
@@ -439,8 +458,9 @@ export interface CalendarEvent {
 
 export interface CalendarProvider {
   readonly name: string;
+  readonly capabilities?: Partial<Record<"list" | "freeBusy" | "write", boolean>>;
   freeBusy(args: { start: string; end: string }): Promise<Array<{ start: string; end: string }>>;
-  listEvents(args: { start: string; end: string }): Promise<CalendarEvent[]>;
+  listEvents(args: { start: string; end: string }): Promise<CalendarEventSummary[]>;
   createEvent(event: CalendarEvent, effectKey: string): Promise<{ id: string; htmlLink?: string }>;
   updateEvent(id: string, patch: Partial<CalendarEvent>): Promise<void>;
   cancelEvent(id: string): Promise<void>;
@@ -566,6 +586,7 @@ runEmailProviderContract(create, fixtures)        // _contract/email-provider.ts
 runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
 runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
 runInboxProviderContract(create, fixtures)        // _contract/inbox-provider.ts; capability-limited adapters declare what they cannot do
+runCalendarProviderContract(create, fixtures)     // _contract/calendar-provider.ts; the request asks for no title or description
 // Runners for the other ports arrive with the adapters that need them.
 ```
 
@@ -584,7 +605,7 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Many providers behind one gateway; the allowlist and daily cap are core config |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
 | `data-xai` | SignalSource | Public-post signals with live search |
-| `calendar-google` | CalendarProvider | Service account or OAuth |
+| `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature, 5-minute tolerance |
 | `llm-gateway` | ModelGateway | Anthropic is available; OpenAI and Workers AI are planned. AI Gateway optional |
 

@@ -34,6 +34,8 @@ export interface ReportCommandDeps {
   db: D1Database;
   flags: FlagReader;
   now?: () => Date;
+  /** The reply window the deployment's reply jobs use, so /scorecard counts owed replies the same way. */
+  owedWindowDays?: number;
 }
 
 const usage = () => ["Reports:", ...REPORT_HELP_LINES].join("\n");
@@ -41,7 +43,7 @@ const usage = () => ["Reports:", ...REPORT_HELP_LINES].join("\n");
 /** Run a report command and return the reply text. Throws on a database error; the caller reports it. */
 export async function runReportCommand(deps: ReportCommandDeps, command: { name: string; args: string }): Promise<string> {
   const now = deps.now?.() ?? new Date();
-  if (command.name === "scorecard") return renderScorecard(await loadScorecard(deps.db, deps.flags, now));
+  if (command.name === "scorecard") return renderScorecard(await loadScorecard(deps.db, deps.flags, now, deps.owedWindowDays !== undefined ? { owedWindowDays: deps.owedWindowDays } : {}));
   if (command.name !== "report") return usage();
   const [kind = "", arg, ...rest] = command.args.toLowerCase().split(/\s+/).filter(Boolean);
   if (rest.length > 0) return usage();

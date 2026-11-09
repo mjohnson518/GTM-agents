@@ -12,11 +12,43 @@ export interface CalendarEvent {
   location?: string;
 }
 
+/** One attendee, as booking detection reads it: the address, whether it is the calendar's own account, and the answer. */
+export interface CalendarAttendee {
+  /** Lowercase. */
+  email: string;
+  self: boolean;
+  responseStatus: "accepted" | "declined" | "tentative" | "needsAction";
+}
+
+/**
+ * What listEvents returns. It never carries a title, description, location, conferencing link or
+ * attendee name: an adapter asks the vendor for these fields only, and drops anything else.
+ */
+export interface CalendarEventSummary {
+  id: string;
+  status: "confirmed" | "tentative" | "cancelled";
+  /** ISO 8601 UTC. Null for an all-day event, or a cancelled one the calendar no longer describes. */
+  start: string | null;
+  end: string | null;
+  /** True for an event with dates but no times. */
+  allDay: boolean;
+  /** The recurring series an instance belongs to, or null for a one-off event. */
+  seriesId: string | null;
+  organizer: { email: string; self: boolean } | null;
+  attendees: CalendarAttendee[];
+}
+
 /** For booking detection, core asks only for ids, status, times, attendees and organizer; never titles or descriptions. */
 export interface CalendarProvider {
   readonly name: string;
+  /**
+   * Which methods work. A read-only adapter says so here and refuses the others with a
+   * non-retryable "invalid" AdapterError, without a request.
+   */
+  readonly capabilities?: Partial<Record<"list" | "freeBusy" | "write", boolean>>;
   freeBusy(args: { start: string; end: string }): Promise<Array<{ start: string; end: string }>>;
-  listEvents(args: { start: string; end: string }): Promise<CalendarEvent[]>;
+  /** Single events (recurring ones expanded) in the window, cancelled ones included with status "cancelled". */
+  listEvents(args: { start: string; end: string }): Promise<CalendarEventSummary[]>;
   createEvent(event: CalendarEvent, effectKey: string): Promise<{ id: string; htmlLink?: string }>;
   updateEvent(id: string, patch: Partial<CalendarEvent>): Promise<void>;
   cancelEvent(id: string): Promise<void>;

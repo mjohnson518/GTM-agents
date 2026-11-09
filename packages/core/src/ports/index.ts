@@ -21,7 +21,7 @@ export { VERIFICATION_STATUSES } from "./contact.ts";
 export type { ContactFinder, EmailVerifier, VerificationStatus } from "./contact.ts";
 export type { EmailEvent, EmailProvider, InboundMessage, InboxProvider, OutboundMessage, SendOutcome } from "./email.ts";
 export type { ApprovalRequest, OperatorChannel, OperatorMessage, OperatorUpdate } from "./operator.ts";
-export type { BillingEvent, BillingProvider, CalendarEvent, CalendarProvider, CrmSink, Sandbox } from "./business.ts";
+export type { BillingEvent, BillingProvider, CalendarAttendee, CalendarEvent, CalendarEventSummary, CalendarProvider, CrmSink, Sandbox } from "./business.ts";
 export { MODEL_ROLES } from "./model.ts";
 export type { CompletionRequest, CompletionResult, ModelContentBlock, ModelGateway, ModelRole } from "./model.ts";
 export { GATE_LEVELS, PORT_NAMES, manifestSchema, manifestToolSchema } from "./manifest-schema.ts";

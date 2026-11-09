@@ -7,10 +7,12 @@
 //
 // The ramp job (flag outreach:ramp_auto) moves the level one step at a time, on evidence from the
 // send ledger since the later of 7 days ago and the last change (so evidence that moved the level
-// once never moves it again):
+// once never moves it again). The counts and rates come from metrics/delivery-rates.ts:
 //   - up, only when all hold: at least 7 days since the last change; sends in that window;
 //     delivered events present; the best day delivered at least 70% of the current level; hard
-//     bounces under 2% of delivered plus hard-bounced; complaints under 0.1% of delivered;
+//     bounces under 2% of the mail the provider reported an outcome for (hardBounceShareOfOutcomes:
+//     delivered plus hard-bounced, so mail with no outcome yet cannot dilute it); complaints under
+//     0.1% of delivered (complaintRate);
 //   - down, when complaints reach 0.3% of delivered with 20 or more delivered, or once for each
 //     warning-level cold pause (the bounce monitor also steps down when it lifts one; the step is
 //     taken once per pause, whichever comes first);
@@ -19,6 +21,7 @@
 // readColdVolume is what the cold batch sizes itself by: the ramp level, lowered by the operator's
 // cold_batch:daily_limit and by the per-domain daily cap, never above 1,500.
 import type { FlagReader } from "../jobs/registry.ts";
+import { complaintRate, deliveryCounts, hardBounceShareOfOutcomes, peakDayDelivered, sinceWindow } from "../metrics/delivery-rates.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import type { KvStore } from "../shared/kv.ts";
 import { DELIVERY_FLAGS, DELIVERY_LIMITS, readCap } from "./flags.ts";
@@ -140,34 +143,11 @@ export interface DeliveryEvidence {
   complained: number;
 }
 
-/** Cold and sequence delivery evidence since `since`, from the send ledger. Throws on a database error. */
+/** Cold and sequence delivery evidence since `since`, from the send ledger (metrics/delivery-rates.ts). Throws on a database error. */
 export async function loadDeliveryEvidence(db: D1Database, since: Date): Promise<DeliveryEvidence> {
-  const s = since.toISOString();
-  const totals = await db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN sent_at >= ?1 THEN 1 ELSE 0 END) AS sends,
-         SUM(CASE WHEN delivered_at >= ?1 THEN 1 ELSE 0 END) AS delivered,
-         SUM(CASE WHEN bounced_at >= ?1 THEN 1 ELSE 0 END) AS bounced,
-         SUM(CASE WHEN complained_at >= ?1 THEN 1 ELSE 0 END) AS complained
-       FROM outreach_sends WHERE send_path IN ('cold', 'sequence') AND (sent_at >= ?1 OR delivered_at >= ?1 OR bounced_at >= ?1 OR complained_at >= ?1)`,
-    )
-    .bind(s)
-    .first<{ sends: number | null; delivered: number | null; bounced: number | null; complained: number | null }>();
-  const peak = await db
-    .prepare(
-      `SELECT COUNT(*) AS n FROM outreach_sends WHERE send_path IN ('cold', 'sequence') AND delivered_at >= ?1
-        GROUP BY substr(delivered_at, 1, 10) ORDER BY n DESC LIMIT 1`,
-    )
-    .bind(s)
-    .first<{ n: number }>();
-  return {
-    sends: Number(totals?.sends ?? 0),
-    delivered: Number(totals?.delivered ?? 0),
-    peakDayDelivered: Number(peak?.n ?? 0),
-    hardBounced: Number(totals?.bounced ?? 0),
-    complained: Number(totals?.complained ?? 0),
-  };
+  const window = sinceWindow(since);
+  const [counts, peak] = await Promise.all([deliveryCounts(db, window), peakDayDelivered(db, window)]);
+  return { sends: counts.sends, delivered: counts.delivered, peakDayDelivered: peak, hardBounced: counts.hardBounces, complained: counts.complaints };
 }
 
 const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
@@ -178,17 +158,19 @@ export function rampAdvanceVerdict(e: DeliveryEvidence, levelLimit: number): { o
   if (e.delivered === 0) return { ok: false, reason: "no delivered events in the window" };
   const needed = Math.ceil(levelLimit * RAMP_MIN_LEVEL_USE);
   if (e.peakDayDelivered < needed) return { ok: false, reason: `the best day delivered ${e.peakDayDelivered}; ${needed} (70% of ${levelLimit}) are needed` };
-  const hardRate = e.hardBounced / (e.delivered + e.hardBounced);
-  if (hardRate >= RAMP_MAX_HARD_BOUNCE_RATE) return { ok: false, reason: `hard bounces at ${pct(hardRate)}` };
-  const complaintRate = e.complained / e.delivered;
-  if (complaintRate >= RAMP_MAX_COMPLAINT_RATE) return { ok: false, reason: `complaints at ${pct(complaintRate)}` };
-  return { ok: true, reason: `${e.delivered} delivered, hard bounces ${pct(hardRate)}, complaints ${pct(complaintRate)}` };
+  // Unreachable nulls (delivered is above zero here) hold the ramp rather than advance it.
+  const hardRate = hardBounceShareOfOutcomes({ delivered: e.delivered, hardBounces: e.hardBounced });
+  if (hardRate === null || hardRate >= RAMP_MAX_HARD_BOUNCE_RATE) return { ok: false, reason: hardRate === null ? "no delivery outcomes in the window" : `hard bounces at ${pct(hardRate)}` };
+  const complaints = complaintRate({ delivered: e.delivered, complaints: e.complained });
+  if (complaints === null || complaints >= RAMP_MAX_COMPLAINT_RATE) return { ok: false, reason: complaints === null ? "no delivered events in the window" : `complaints at ${pct(complaints)}` };
+  return { ok: true, reason: `${e.delivered} delivered, hard bounces ${pct(hardRate)}, complaints ${pct(complaints)}` };
 }
 
 /** Whether complaints call for a step down. Pure. */
 export function rampStepDownVerdict(e: DeliveryEvidence): { ok: boolean; reason: string } {
   if (e.delivered < RAMP_STEP_DOWN_MIN_DELIVERED || e.complained === 0) return { ok: false, reason: "not enough complaint evidence" };
-  const rate = e.complained / e.delivered;
+  const rate = complaintRate({ delivered: e.delivered, complaints: e.complained });
+  if (rate === null) return { ok: false, reason: "not enough complaint evidence" };
   return rate >= RAMP_STEP_DOWN_COMPLAINT_RATE ? { ok: true, reason: `complaints at ${pct(rate)} of ${e.delivered} delivered` } : { ok: false, reason: `complaints at ${pct(rate)}` };
 }
 

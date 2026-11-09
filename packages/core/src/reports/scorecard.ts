@@ -12,16 +12,22 @@
 // 2% or more, complaints of 0.1% or more, or delivered events covering under 95% of sends; replies
 // and positives with how deep the sequence was; the reply SLA; spend per job; failed jobs; the
 // convert stage; cohorts; measurement health; everything waiting on the operator; the flags that are
-// on; then what needs attention. Meetings, sign-ups, activations, paid customers and quotas belong
-// to later milestones, and their lines say "not measured yet", never a zero.
+// on; then what needs attention. Meetings (countMeetings, the one definition in metrics/meetings.ts)
+// are shown once calendar sync is on (convert:calendar_enabled); until then, and for sign-ups,
+// activations, paid customers and quotas, which belong to later milestones, the lines say "not
+// measured yet", never a zero.
 //
 // Each section loads on its own: a failed read shows that section as "could not be read" and is
 // listed under what needs attention, and the rest of the message still goes. Measurement health
 // that cannot be read holds every conclusion (fail closed).
+import { CONVERT_FLAGS } from "../convert/flags.ts";
 import { FLAGS } from "../flags/registry.ts";
 import { isFlagOn } from "../jobs/loop.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import {
+  countMeetings,
+  perHundred,
+  type MeetingCounts,
   COMPLAINT_ALERT_RATE,
   HARD_BOUNCE_ALERT_RATE,
   MIN_DELIVERED_COVERAGE,
@@ -98,6 +104,8 @@ export interface ScorecardData {
   health: MeasurementHealth;
   queue: OperatorQueue | null;
   flagsOn: string[] | null;
+  /** Meetings, once calendar sync is on: booked week to date, and the 30-day convert counts. */
+  meetings: { calendarOn: boolean; weekToDate: MeetingCounts; month: MeetingCounts; monthFirstTouches: number } | null;
 }
 
 async function section<T>(load: () => Promise<T>): Promise<T | null> {
@@ -115,23 +123,32 @@ export async function flagsOn(flags: FlagReader): Promise<string[]> {
   return keys.filter((_, i) => isFlagOn(values[i] ?? null));
 }
 
-/** Load every section. Never throws. */
-export async function loadScorecard(db: D1Database, flags: FlagReader, now: Date): Promise<ScorecardData> {
+/**
+ * Load every section. Never throws. `owedWindowDays` is the reply window the deployment gives its
+ * reply jobs, so the owed counts here match theirs; without it the default window applies.
+ */
+export async function loadScorecard(db: D1Database, flags: FlagReader, now: Date, options: { owedWindowDays?: number } = {}): Promise<ScorecardData> {
   const w = scorecardWindows(now);
-  const [funnel, sends, delivery, replies, sla, spend, failed, cohorts, health, queue, on] = await Promise.all([
+  const [funnel, sends, delivery, replies, sla, spend, failed, cohorts, health, queue, on, meetings] = await Promise.all([
     section(async () => ({ sends: await countSends(db, w.weekToDate), replies: await countReplies(db, w.weekToDate) })),
     section(async () => ({ day: await countSends(db, w.day), week: await countSends(db, w.week) })),
     section(() => deliveryHealth(db, w.week)),
     section(async () => ({ day: await countReplies(db, w.day), week: await countReplies(db, w.week), depth: await replyDepth(db, w.week) })),
-    section(async () => ({ owed: await replySla(db, now), answered: await replyResponseTimes(db, w.month) })),
+    section(async () => ({ owed: await replySla(db, now, options.owedWindowDays), answered: await replyResponseTimes(db, w.month) })),
     section(() => spendByJob(db, w.day)),
     section(() => failedJobs(db, w.day)),
     section(() => firstTouchOutcomesBy(db, w.month, "cohort")),
     section(() => measurementHealth(db, now)),
-    section(() => operatorQueue(db, now)),
+    section(() => operatorQueue(db, now, options.owedWindowDays)),
     section(() => flagsOn(flags)),
+    section(async () => ({
+      calendarOn: isFlagOn(await flags.get(CONVERT_FLAGS.calendar)),
+      weekToDate: await countMeetings(db, w.weekToDate),
+      month: await countMeetings(db, w.month),
+      monthFirstTouches: (await countSends(db, w.month)).firstTouches,
+    })),
   ]);
-  return { windows: w, funnel, sends, delivery, replies, sla, spend, failed, cohorts, health: health ?? unreadableHealth(), queue, flagsOn: on };
+  return { windows: w, funnel, sends, delivery, replies, sla, spend, failed, cohorts, health: health ?? unreadableHealth(), queue, flagsOn: on, meetings };
 }
 
 /** The measurement line, shared with the other reports. Pure. */
@@ -149,7 +166,9 @@ export function renderScorecard(d: ScorecardData): string {
 
   if (d.funnel) {
     lines.push(
-      `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}. Sign-ups, activations, new paying customers, meetings and quotas: ${NOT_MEASURED}.`,
+      d.meetings?.calendarOn
+        ? `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}. Sign-ups, activations, new paying customers and quotas: ${NOT_MEASURED}.`
+        : `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}. Sign-ups, activations, new paying customers, meetings and quotas: ${NOT_MEASURED}.`,
     );
   } else {
     lines.push(`Week to date: ${UNREADABLE}`);
@@ -225,7 +244,16 @@ export function renderScorecard(d: ScorecardData): string {
     unreadable("failed jobs");
   }
 
-  lines.push(`Convert, 30 days: meetings booked and held, sign-ups, activations and paid: ${NOT_MEASURED}`);
+  if (d.meetings?.calendarOn) {
+    const m = d.meetings.month;
+    const per100 = perHundred(m.held, d.meetings.monthFirstTouches);
+    lines.push(
+      `Convert, 30 days: ${plural(m.booked, "meeting booked", "meetings booked")}, ${m.held} held, ${plural(m.noShows, "no-show", "no-shows")}, ${m.cancelled} cancelled; held per 100 first touches: ${per100 === null ? "n/a" : per100}. Sign-ups, activations and paid: ${NOT_MEASURED}`,
+    );
+  } else {
+    lines.push(`Convert, 30 days: meetings booked and held, sign-ups, activations and paid: ${NOT_MEASURED}`);
+    if (d.meetings === null) unreadable("meetings");
+  }
 
   if (d.cohorts) {
     lines.push(

@@ -4,9 +4,9 @@ This page is for deployers who want to know what their deployment's numbers mean
 
 ## The rule
 
-Every metric has exactly one implementation, a function in `packages/core/src/metrics/` that reads the database for a time window. Every report, experiment and promotion check calls those functions, so two reports asking about the same window always show the same number. A report module never counts anything itself: it holds no SQL at all, and a test fails the build if one ever does.
+Every metric has exactly one implementation, a function in `packages/core/src/metrics/` that reads the database for a time window. Every report, experiment and promotion check calls those functions, so two reports asking about the same window always show the same number. A report module never counts anything itself: it holds no SQL at all, and a test fails the build if one ever does. The same holds for the send gates' bounce rates: a test fails the build if any module outside `metrics/` counts bounces or divides by them.
 
-Reports make no model calls. A number that cannot be read is shown as "could not be read", never as a zero, and a line that depends on a later milestone (meetings, sign-ups, activations, paid customers, quotas) says "not measured yet".
+Reports make no model calls. A number that cannot be read is shown as "could not be read", never as a zero, and a line that depends on something not measured (sign-ups, activations, paid customers, quotas; meetings while calendar sync is off) says "not measured yet".
 
 ## Windows
 
@@ -42,7 +42,8 @@ The composer (the cold batch, the follow-up sweep) works out the template versio
 | Metric | Function | Definition |
 |---|---|---|
 | Reply | `countsAsReply` | A message a person wrote back. Opt-outs, unsubscribes, automatic replies (out of office included), spam and noise never count, whatever their classification |
-| Positive reply | `isPositiveReply` | A reply whose triage intent is interested, question or referral, or a non-cancelled, attributed meeting first seen after the send. "Not a fit" is a reply but never positive. Meetings are not measured yet, so today only the intent half applies |
+| Positive reply | `isPositiveReply` | A reply whose triage intent is interested, question or referral, or a non-cancelled, attributed meeting first seen after the send. "Not a fit" is a reply but never positive. The meeting half applies once calendar sync is on (`meetingCountsAsPositive`, below), and a meeting that is later cancelled or unlinked withdraws its credit |
+| Meeting booked | `isMeetingBooked`, `countMeetings` (metrics/meetings.ts) | A calendar meeting attributed to a contact (by an accepted attendee, an operator-organized invite, the one contact at that company contacted in 60 days, or an operator link) that is not cancelled. A recurring series counts once. Heuristic attributions are flagged. [CONVERT.md](CONVERT.md) describes detection |
 | First-touch attribution | reply track (`creditReply`) | A reply is credited to the contact's latest first touch sent in the 60 days before it. `replied_at` and `positive_reply_at` are the reply's own received time, never the time a job ran; when replies arrive out of order the earliest wins. `reply_after_step` is the highest step actually sent between that first touch and the reply, so it says how deep the sequence was and can never name a step that did not go out |
 | Sends | `countSends` | Outreach (the cold and sequence paths) by when it was sent: first touches (step 1), follow-ups (later steps) and unnumbered sends (recorded with no step). An unnumbered send is outreach, so delivery health counts it, but it is neither a first touch nor a follow-up and no reply is credited to it. The three always add up to delivery health's sends for the same window |
 | Replies received | `countReplies` | Human and positive replies by when they arrived. One ledger row is one conversation, so a second reply to the same first touch is not counted again |
@@ -50,8 +51,12 @@ The composer (the cold batch, the follow-up sweep) works out the template versio
 | First-touch outcomes | `firstTouchOutcomes`, `firstTouchOutcomesBy` | The first touches sent in a window, and how many of them hard bounced, earned a human reply and earned a positive reply by now. The basis of every rate. Sliced by template, subject, cohort, segment or persona, the slices add up to the total |
 | Matured samples | `maturedSamples`, `maturedTotals` | Below. `maturedTotals` adds the same rows up over every template |
 | Rate | `replyRate` | Replies (human or positive) over the sends they came from, or n/a with no sends. Every report that prints or compares a rate uses it |
-| Delivery health | `deliveryHealth` | Outreach sent in the window; delivered, hard bounce and complaint events that arrived in it. Hard bounce rate is hard bounces over sends, the bounce monitor's definition (the monitor reads a rolling window ending now, the reports full UTC days). Complaint rate is complaints over delivered mail, as the warm-up ramp counts it. Delivered coverage is delivered plus hard-bounced over sends: the share the provider reported an outcome for, so a high bounce rate never lowers it |
-| Reply SLA | `replySla` | Replies owed for more than 4 hours, using the reply clock's definition of owed ([REPLIES.md](REPLIES.md)), and the oldest one's age |
+| Delivery counts | `deliveryCounts` | Outreach sent in the window, and the delivered, hard bounce and complaint events that arrived in it. Events count by when they arrived, so a bounce that comes in today for last week's mail counts today. Every bounce and complaint figure below is taken from these counts |
+| Hard bounce rate | `hardBounceRate` | Hard bounces over sends. The one bounce rate the bounce monitor, campaign readiness, the scorecard and the funnel digest read. The gates read a trailing window that stays open at its end (anything recorded since the window opened counts, including an event stamped while the check runs); the reports read full UTC days. Their thresholds differ, their definition does not |
+| Hard bounce share of outcomes | `hardBounceShareOfOutcomes` | Hard bounces over delivered plus hard-bounced mail: of the mail the provider reported an outcome for, how much bounced. Only the warm-up ramp reads it, before it raises volume, so mail whose outcome has not been reported yet never dilutes the rate it advances on. |
+| Complaint rate | `complaintRate` | Complaints over delivered mail. The warm-up ramp and the reports read it |
+| Delivery health | `deliveryHealth` | The counts, the hard bounce rate and the complaint rate for a report window, and delivered coverage: delivered plus hard-bounced over sends, the share the provider reported an outcome for, so a high bounce rate never lowers it |
+| Reply SLA | `replySla` | Replies owed for more than 4 hours, using the reply clock's definition of owed ([REPLIES.md](REPLIES.md)), and the oldest one's age. Counted over the reply clock's window, 14 days by default. `replySla` and the operator queue's owed count (`operatorQueue`) both take a deployment's override, the `owedWindowDays` it gives `createReplyJobs`, and resolve it the same way (`owedWindowDays`), so the two never count over different windows |
 | Time to answer | `replyResponseTimes` | Median hours from a reply that needed a person arriving to its answer going out |
 | Spend per job | `spendByJob` | The cost ledger per job. A cost recorded outside a job (the email provider's per-message cost) is shown as `provider:<name>` |
 | Failed jobs | `failedJobs` | Scheduled, rerun and manual job runs that failed. Chat turns are not jobs |
@@ -86,7 +91,7 @@ One operator message each weekday at 12:00 UTC, behind `ops:daily_scorecard`. Ea
 
 | Line | What it shows |
 |---|---|
-| Week to date | First touches and positive replies since Monday. Sign-ups, activations, new paying customers, meetings and quotas: not measured yet |
+| Week to date | First touches, positive replies and, while calendar sync is on, meetings booked since Monday. Sign-ups, activations, new paying customers and quotas: not measured yet |
 | Sends | First touches and follow-ups for the day, and for 7 days, and unnumbered sends when there are any |
 | Delivery, 7 days | Delivered of sends (delivered coverage), hard bounces and complaints with their rates. Flagged when hard bounces reach 2% of sends, complaints reach 0.1% of delivered mail, or delivered and bounce events together cover under 95% of sends (then the two rates cannot be trusted; check that the provider's webhook is arriving) |
 | Replies | Human and positive replies for the day and for 7 days, and over 7 days how many came after step 1, step 2 and so on |

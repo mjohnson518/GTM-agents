@@ -13,7 +13,9 @@
 // A missed, failed or abandoned job marked `rerunnable` runs again through the job runner, so the
 // halt, its flag and the budget gate still apply. Each expected fire is rerun at most once: the
 // rerun is claimed in the effects ledger first. Reruns that would not finish before the check's
-// own deadline are left for the next check.
+// own deadline are left for the next check. Each rerun gets the time it actually starts as its
+// `now`, never the check's own start time, so a send window or a daily claim is judged on the real
+// clock even after earlier reruns took minutes.
 import { claimEffect } from "../events/effects.ts";
 import { previousFire } from "../jobs/cron.ts";
 import { runOneJob, type ContextFactory, type JobOutcome, type JobRunner } from "../jobs/loop.ts";
@@ -123,6 +125,8 @@ export interface CronHealthJobOptions<E> {
   runner: JobRunner<E>;
   operator?: (env: E) => OperatorChannel | undefined;
   graceMs?: number;
+  /** The clock: the check's time and each rerun's start time. Defaults to the real clock; tests pass their own. */
+  now?: () => Date;
 }
 
 export const CRON_HEALTH_JOB = "cron_health";
@@ -139,11 +143,12 @@ export function createCronHealthJob<E extends RunnerEnv>(options: CronHealthJobO
     ceilings: { maxDurationMs: CRON_HEALTH_CEILING_MS },
     async run(ctx) {
       const started = Date.now();
+      const clock = options.now ?? (() => new Date());
       const registry = options.registry();
       const findings = await checkCronHealth({
         registry,
         db: ctx.env.DB,
-        now: new Date(),
+        now: clock(),
         exclude: [CRON_HEALTH_JOB],
         ...(options.graceMs !== undefined ? { graceMs: options.graceMs } : {}),
       });
@@ -156,7 +161,7 @@ export function createCronHealthJob<E extends RunnerEnv>(options: CronHealthJobO
       }
       let paged = 0;
       if (operator) {
-        const eventId = `cron-health:${new Date().toISOString().slice(0, 10)}`;
+        const eventId = `cron-health:${clock().toISOString().slice(0, 10)}`;
         for (const f of unhealthy) {
           const effect = `${f.job}:${f.status}`;
           if (!(await claimPage(ctx.env.DB, ctx.env.KV, eventId, effect))) continue;
@@ -165,11 +170,12 @@ export function createCronHealthJob<E extends RunnerEnv>(options: CronHealthJobO
           else await releasePage(ctx.env.DB, ctx.env.KV, eventId, effect);
         }
       }
-      // A rerun for this check is the same run, so the Worker stays alive while it finishes.
+      // A rerun for this check is the same run, so the Worker stays alive while it finishes. Its
+      // context is built when it starts, with that moment as its now.
       await rerunUnhealthy(findings, registry, ctx.env.DB, {
         runner: options.runner,
         deadline: started + CRON_HEALTH_CEILING_MS - 5_000,
-        makeContext: (j, signal) => ({ ...ctx, job: j.name, signal, ceilings: j.ceilings }),
+        makeContext: (j, signal) => ({ ...ctx, job: j.name, signal, ceilings: j.ceilings, now: clock() }),
       });
       const reran = findings.filter((f) => f.rerun).length;
       return { summary: `${findings.length} critical job(s) checked, ${unhealthy.length} unhealthy, ${paged} paged, ${reran} rerun` };

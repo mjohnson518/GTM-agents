@@ -12,8 +12,10 @@
 //     meeting that is not cancelled, is attributed to the outreach, and was first seen after the
 //     send. "Not a fit" is a reply but never positive.
 //
-// The meeting half is an input: calendar sync and attribution are a later milestone, and until it
-// lands callers pass no meeting, so only the intent half can make a reply positive.
+// The meeting half is an input. What counts as a booked, attributed meeting is defined once in
+// meetings.ts (meetingEvidence turns a calendar_meetings row into a MeetingEvidence); calendar sync
+// credits it to the send ledger (packages/core/src/convert/ledger.ts). A caller that passes no
+// meeting gets the intent half only.
 //
 // Every function here is pure. An intent or classification this module does not know never counts.
 
@@ -62,7 +64,7 @@ export function countsAsReply(signal: ReplySignal): boolean {
   return !NON_REPLY_INTENTS.includes(intent);
 }
 
-/** A booked meeting, as calendar sync and attribution will report it. */
+/** A booked meeting, as calendar sync and attribution report it (meetings.ts, meetingEvidence). */
 export interface MeetingEvidence {
   /** confirmed, tentative or cancelled. */
   status: string;

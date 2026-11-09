@@ -14,7 +14,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 4. Replies | Done (behind `inbox:enabled` and the `replies:*` flags; no reply is sent automatically yet) |
 | 5. Measurement | Done (the scorecard and digests behind the `ops:*` flags) |
 | 6. Sequences | Done (behind `sequences:enabled`) |
-| 7 to 14 | Planned |
+| 7. Experiments | Planned |
+| 8. Convert | Done (calendar sync behind `convert:calendar_enabled`; post-meeting messages are drafts, and proof of value is not built yet) |
+| 9 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -37,10 +39,12 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the inbox ([INBOX.md](INBOX.md)): Gmail polling and push, Cloudflare Email Routing through the Worker's `email()` entry point, structural classification without a model, and the deterministic consequences of each class (a reply stops every sequence at the account, an unsubscribe suppresses, an out-of-office reply holds the next step, a bounce suppresses the address);
 - replies ([REPLIES.md](REPLIES.md)): model triage, routing by intent, the meeting qualifier, drafts from approved facts, approved sends from the warm mailbox with freshness checks, reply-owed reminders, mailbox draft mirroring, and the one definition of a positive reply;
 - measurement ([MEASUREMENT.md](MEASUREMENT.md)): one definition of each metric in one module (sends, matured samples, replies and positive replies, first-touch attribution, bounce and complaint rates, reply SLA, spend, failed jobs, measurement health, holdout lift), the daily scorecard, the funnel and cost digests and the conversion report, all reading the same definitions;
+- meetings ([CONVERT.md](CONVERT.md)): read-only Google Calendar sync with privacy-limited fields, attribution without click tracking, the one "meeting booked" definition, a booking that stops outreach and writes a prep brief, reminders, held and no-show handling, and post-meeting drafts;
+- run-row retention and one definition of the bounce rate, shared by the ramp, the bounce monitor, readiness and the reports;
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
-- the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail` and `email-cloudflare`, each with a hermetic contract test.
+- the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail`, `email-cloudflare` and `calendar-google`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling and follow-ups are each off by default, and none has yet been run against live providers. Experiments (milestone 7) come next.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups and calendar sync are each off by default, and none has yet been run against live providers. Experiments (milestone 7) come next.
 
 ## Milestones
 

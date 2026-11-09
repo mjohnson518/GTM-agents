@@ -7,7 +7,7 @@ An open-source, multi-agent go-to-market system that runs as a single Cloudflare
 
 A person approves every send until the system has earned autonomy for that kind of action, from evidence.
 
-> **Status: pre-alpha.** The foundation milestone is in progress and the runtime is not usable yet. [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists today and what comes next.
+> **Status: early.** Sourcing, outreach, delivery, replies, follow-ups and measurement are built and tested, each behind a flag that defaults to off, but no capability has yet been proven on a live deployment. [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists today and what comes next; [docs/DEPLOYING.md](docs/DEPLOYING.md) is the full path to your own deployment.
 
 ## Who it is for
 

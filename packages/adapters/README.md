@@ -38,6 +38,6 @@ packages/adapters/<name>/
 
 ## Status
 
-Available now: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier and people at a domain) `email-resend` (send, webhooks, Message-ID lookup), `inbox-gmail` (reading, drafts, sends and push from a Gmail mailbox, with the shared `_google-auth` helper) and `email-cloudflare` (inbound mail from Cloudflare Email Routing). The others are planned; [docs/INTERFACES.md](../../docs/INTERFACES.md#v1-adapters) has the details.
+Available now: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier and people at a domain) `email-resend` (send, webhooks, Message-ID lookup), `inbox-gmail` (reading, drafts, sends and push from a Gmail mailbox, with the shared `_google-auth` helper) `email-cloudflare` (inbound mail from Cloudflare Email Routing) and `calendar-google` (read-only calendar events with privacy-limited fields). The others are planned; [docs/INTERFACES.md](../../docs/INTERFACES.md#v1-adapters) has the details.
 
 `_contract/` holds the shared contract runners (one per port), `recordedFetch` for hermetic tests and `testContext`. Each adapter's `contract.test.ts` runs in `npm test` with recorded responses; nothing reaches the network.

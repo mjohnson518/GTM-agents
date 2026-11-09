@@ -1,7 +1,8 @@
 // GTM-agents: the bounce monitor, which pauses cold outreach when hard bounces climb.
 //
-// It reads hard bounces over sends for cold and sequence mail in two windows, 7 days (the stable
-// signal) and 1 day (the early warning), from the send ledger:
+// It reads the hard bounce rate (hard bounces over sends, metrics/delivery-rates.ts, the one
+// definition campaign readiness and the reports also use) for cold and sequence mail in two trailing
+// windows, 7 days (the stable signal) and 1 day (the early warning):
 //   - fewer than 20 sends in a window is low volume (no sends: no data), and says nothing;
 //   - under 2% is healthy, 2% to 5% warns, 5% or more is critical.
 // The overall reading is the worse of the two.
@@ -19,6 +20,7 @@
 //     (no hard bounces at all, or 20 or more sends at under 2%), with one ramp step down for it.
 // Automation adds a critical pause only when none stands, and never overwrites, lowers or lifts
 // one. Pages go through the operator channel, each claimed once per day in the effects ledger.
+import { deliveryCounts, hardBounceRate, trailingDays } from "../metrics/delivery-rates.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import type { KvStore } from "../shared/kv.ts";
 import { DELIVERY_FLAGS } from "./flags.ts";
@@ -41,7 +43,8 @@ export interface BounceWindow {
   days: number;
   sent: number;
   bounced: number;
-  rate: number;
+  /** hardBounceRate over the window: null with no sends. */
+  rate: number | null;
   level: BounceLevel;
 }
 
@@ -49,8 +52,8 @@ export interface BounceWindow {
 export function bounceLevel(sent: number, bounced: number): BounceLevel {
   if (sent <= 0) return "no_data";
   if (sent < BOUNCE_MIN_VOLUME) return "low_volume";
-  const rate = bounced / sent;
-  if (rate >= BOUNCE_CRITICAL_RATE) return "critical";
+  const rate = hardBounceRate({ sends: sent, hardBounces: bounced });
+  if (rate === null || rate >= BOUNCE_CRITICAL_RATE) return "critical";
   if (rate >= BOUNCE_WARN_RATE) return "warn";
   return "healthy";
 }
@@ -62,19 +65,10 @@ export function pauseSeverityFor(level7d: BounceLevel, level1d: BounceLevel): Pa
   return level1d === "critical" && level7d === "healthy" ? "warning" : "critical";
 }
 
-/** Hard bounces over sends for cold and sequence mail in the last `days`. Throws on a database error. */
+/** The hard bounce rate for cold and sequence mail over the last `days` (a trailing window). Throws on a database error. */
 export async function bounceWindow(db: D1Database, days: number, now: Date): Promise<BounceWindow> {
-  const since = new Date(now.getTime() - days * DAY_MS).toISOString();
-  const row = await db
-    .prepare(
-      `SELECT SUM(CASE WHEN sent_at >= ?1 THEN 1 ELSE 0 END) AS sent, SUM(CASE WHEN bounced_at >= ?1 THEN 1 ELSE 0 END) AS bounced
-         FROM outreach_sends WHERE send_path IN ('cold', 'sequence') AND (sent_at >= ?1 OR bounced_at >= ?1)`,
-    )
-    .bind(since)
-    .first<{ sent: number | null; bounced: number | null }>();
-  const sent = Number(row?.sent ?? 0);
-  const bounced = Number(row?.bounced ?? 0);
-  return { days, sent, bounced, rate: sent > 0 ? bounced / sent : 0, level: bounceLevel(sent, bounced) };
+  const counts = await deliveryCounts(db, trailingDays(now, days));
+  return { days, sent: counts.sends, bounced: counts.hardBounces, rate: hardBounceRate(counts), level: bounceLevel(counts.sends, counts.hardBounces) };
 }
 
 export interface BounceMonitorDeps {
@@ -91,7 +85,7 @@ export interface BounceMonitorResult {
   action: string;
 }
 
-const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+const pct = (x: number | null) => (x === null ? "n/a" : `${(x * 100).toFixed(1)}%`);
 const describe = (w: BounceWindow) => `${w.days}d ${pct(w.rate)} (${w.bounced}/${w.sent}, ${w.level})`;
 
 /** One monitor pass. Throws when the send ledger cannot be read; then nothing changes. */
@@ -127,7 +121,7 @@ export async function runBounceMonitor(deps: BounceMonitorDeps): Promise<BounceM
     const since = pause.since ? Date.parse(pause.since) : NaN;
     if (!Number.isFinite(since) || now.getTime() - since < AUTO_RESUME_MIN_DAYS * DAY_MS) return done("warning pause stands (too recent to lift)");
     const recent = await bounceWindow(db, AUTO_RESUME_MIN_DAYS, now);
-    const clean = recent.bounced === 0 || (recent.sent >= BOUNCE_MIN_VOLUME && recent.rate < BOUNCE_WARN_RATE);
+    const clean = recent.bounced === 0 || (recent.sent >= BOUNCE_MIN_VOLUME && recent.rate !== null && recent.rate < BOUNCE_WARN_RATE);
     if (!clean) return done(`warning pause stands (the last ${AUTO_RESUME_MIN_DAYS} days were not clean: ${describe(recent)})`);
     const resumed = await resumeColdOutreach(kv);
     if (!resumed.ok) return done(`warning pause stands (${resumed.refused})`);

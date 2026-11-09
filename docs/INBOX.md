@@ -155,6 +155,7 @@ Change schedules and limits with `createInboxJobs({ options: { pollLimit, pollPa
 |---|---|
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | The Google OAuth client, shared by the Google adapters |
 | `GMAIL_REFRESH_TOKEN` | `inbox-gmail`, granted `gmail.modify` |
+| `GOOGLE_CALENDAR_REFRESH_TOKEN` | `calendar-google` (meetings, [CONVERT.md](CONVERT.md)); it can come from the same grant if that grant also included a read-only calendar scope |
 | `GMAIL_PUBSUB_TOPIC` | Optional: the push topic, instead of the adapter option |
 | `MAIL_PUSH_SECRET` | The push webhook's shared secret |
 

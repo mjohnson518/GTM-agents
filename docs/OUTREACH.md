@@ -158,7 +158,7 @@ A scorecard over the drafts about to go; the worst dimension decides. Any data t
 | Dimension | Block (RED) | Warn (YELLOW) |
 |---|---|---|
 | Send cap | The sending domain is at its daily cap | The batch is larger than today's room |
-| Bounce rate (1 and 7 days) | 5% or more | 2% or more; under 20 sends is too few to judge |
+| Bounce rate (1 and 7 days) | 5% or more | 2% or more; under 20 sends is too few to judge. The hard bounce rate the bounce monitor reads (`hardBounceRate`, [MEASUREMENT.md](MEASUREMENT.md#the-metrics)): hard bounces that arrived in the window over sends in it |
 | Suppression overlap | Any recipient suppressed, or the check failed | |
 | Verification coverage | Any cached undeliverable address | Half or more without a cached result |
 | Content lint (sample of five) | Any lint block | Any lint warning |

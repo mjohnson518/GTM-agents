@@ -58,6 +58,8 @@ export interface OperatorAgentWorkerOptions {
   maxRounds?: number;
   /** Output tokens per model call. Defaults to 8192. */
   maxTokens?: number;
+  /** The reply window given to createReplyJobs, so /scorecard counts owed replies the same way. */
+  owedWindowDays?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
   fetch?: typeof fetch;
 }
@@ -190,6 +192,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     ...(options.inbox ? { inbox: options.inbox } : {}),
     ...(options.agent?.maxRounds !== undefined ? { maxRounds: options.agent.maxRounds } : {}),
     ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
+    ...(options.agent?.owedWindowDays !== undefined ? { owedWindowDays: options.agent.owedWindowDays } : {}),
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
     logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
   };

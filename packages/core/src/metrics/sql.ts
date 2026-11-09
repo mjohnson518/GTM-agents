@@ -43,7 +43,10 @@ export const followUpSql = (a: string): string => `${outreachSql(a)} AND ${alias
  */
 export const humanReplySql = (a: string): string => `(${alias(a)}.replied_at IS NOT NULL AND ${alias(a)}.reply_intent IN (${sqlList(LEDGER_REPLY_INTENTS)}))`;
 
-/** A ledger row credited with a positive reply: positive_reply_at, which only isPositiveReply sets. */
+/**
+ * A ledger row credited with a positive reply: positive_reply_at, set when a reply's intent is
+ * positive (isPositiveReply) or when an attributed meeting counts (meetingCountsAsPositive).
+ */
 export const positiveReplySql = (a: string): string => `${alias(a)}.positive_reply_at IS NOT NULL`;
 
 /**

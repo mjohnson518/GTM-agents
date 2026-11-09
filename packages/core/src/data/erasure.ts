@@ -8,7 +8,11 @@
 //   2. deletes rows that hold one of their addresses without a contact link, matching case,
 //      surrounding spaces and the "Name <address>" form: candidates and their evidence, drafts and
 //      deferred sends, referrals naming them, operator chat messages that mention them, cached
-//      verification results. Before that batch, inbound mail they sent or that names them (in its
+//      verification results, calendar events that hold one of their address hashes or are linked
+//      to their contact (calendar sync; a meeting that belongs to someone else loses only their
+//      attendee entry, hash, domain and contact id), and deal handoff briefs about them (linked
+//      through their contact's deals, or naming one of their addresses). Before that batch,
+//      inbound mail they sent or that names them (in its
 //      subject, preview or headers, or as a failed recipient of a delivery report) is deleted,
 //      each body from blob storage before its row (the bucket option is required when bodies
 //      exist);
@@ -76,6 +80,35 @@ async function eraseInbound(db: D1Database, bucket: Pick<R2Bucket, "delete"> | n
   throw new Error("inbound mail kept arriving while it was being erased; run the erasure again");
 }
 
+/**
+ * Take the people whose hashes are in `hashes` (a JSON list) off the calendar events `scope`
+ * selects (meetings that belong to someone else): their attendee entries go, and the hash and
+ * domain lists are rebuilt from the entries left, so a domain only they shared disappears too.
+ * `scope` may use ?2, bound to `scopeParam`.
+ */
+function pruneCalendarAttendees(db: D1Database, hashes: string, scope: string, scopeParam = "[]"): D1PreparedStatement[] {
+  const bind = (statement: D1PreparedStatement) => (scope.includes("?2") ? statement.bind(hashes, scopeParam) : statement.bind(hashes));
+  const holds = "EXISTS (SELECT 1 FROM json_each(calendar_events.attendee_hashes) h WHERE h.value IN (SELECT value FROM json_each(?1)))";
+  return [
+    bind(
+      db.prepare(
+        `UPDATE calendar_events SET attendees = (SELECT json_group_array(json(e.value)) FROM json_each(calendar_events.attendees) e
+            WHERE json_extract(e.value, '$.h') NOT IN (SELECT value FROM json_each(?1)) AND json_extract(e.value, '$.m') NOT IN (SELECT value FROM json_each(?1)))
+          WHERE ${scope} AND ${holds}`,
+      ),
+    ),
+    bind(
+      db.prepare(
+        `UPDATE calendar_events SET
+            attendee_hashes = (SELECT json_group_array(v) FROM (SELECT json_extract(e.value, '$.h') AS v FROM json_each(calendar_events.attendees) e
+                                 UNION SELECT json_extract(e.value, '$.m') FROM json_each(calendar_events.attendees) e)),
+            attendee_domains = (SELECT json_group_array(v) FROM (SELECT DISTINCT json_extract(e.value, '$.d') AS v FROM json_each(calendar_events.attendees) e))
+          WHERE ${scope} AND ${holds}`,
+      ),
+    ),
+  ];
+}
+
 /** Erase everything held about the mailbox of `email`. Throws on invalid input or a database error. */
 export async function eraseContact(db: D1Database, email: string, options: ErasureOptions): Promise<ErasureResult> {
   const fields = await contactEmailFields(email);
@@ -110,6 +143,29 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     // Operator chat history can quote an address; drop any message that mentions one of them.
     db.prepare("DELETE FROM chat_messages WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(content), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM email_verifications WHERE email_sha256 IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([fields.email_sha256, ...hashes.map(([h]) => h)])),
+    // Calendar sync: a meeting that belongs to someone else stays theirs and loses the person's
+    // attendee entry and contact id; events linked to their contact or still holding one of their
+    // hashes are deleted, and so are the briefs written about them. Deal rows outlive the contact
+    // (contact_id is cleared), so their briefs are deleted here, before the contact rows go.
+    ...pruneCalendarAttendees(db, addressHashes, "event_id IN (SELECT event_id FROM calendar_meetings WHERE contact_id NOT IN (SELECT value FROM json_each(?2)))", ids),
+    db
+      .prepare(
+        `UPDATE calendar_events SET other_contacts = (SELECT json_group_array(o.value) FROM json_each(calendar_events.other_contacts) o WHERE o.value NOT IN (SELECT value FROM json_each(?1)))
+          WHERE EXISTS (SELECT 1 FROM json_each(calendar_events.other_contacts) o WHERE o.value IN (SELECT value FROM json_each(?1)))`,
+      )
+      .bind(ids),
+    db
+      .prepare(
+        `DELETE FROM calendar_events WHERE event_id IN (SELECT event_id FROM calendar_meetings WHERE contact_id IN (SELECT value FROM json_each(?1)))
+           OR EXISTS (SELECT 1 FROM json_each(calendar_events.attendee_hashes) h WHERE h.value IN (SELECT value FROM json_each(?2)))`,
+      )
+      .bind(ids, addressHashes),
+    db
+      .prepare(
+        `DELETE FROM deal_handoffs WHERE deal_id IN (SELECT id FROM deals WHERE contact_id IN (SELECT value FROM json_each(?1)))
+           OR EXISTS (SELECT 1 FROM json_each(?2) WHERE instr(lower(brief_markdown), value) > 0)`,
+      )
+      .bind(ids, addresses),
     db.prepare("DELETE FROM contacts WHERE id IN (SELECT value FROM json_each(?1))").bind(ids),
   ]);
   return { emailSha256: fields.email_sha256, contactsDeleted: contacts.length };
@@ -126,9 +182,14 @@ export async function eraseByHash(db: D1Database, emailSha256: string, options: 
   const now = (options.now ?? new Date()).toISOString();
   // Mail they sent and delivery reports about them are found by the hash too.
   await eraseInbound(db, options.bucket, inboundAbout, ["[]", "[]", JSON.stringify([emailSha256])]);
-  await db
-    .prepare("INSERT OR IGNORE INTO erasure_tombstones (email_sha256, product_user_id, source, erased_at, created_at) VALUES (?1, ?2, ?3, ?4, ?4)")
-    .bind(emailSha256, options.productUserId ?? null, options.source, now)
-    .run();
+  await db.batch([
+    db
+      .prepare("INSERT OR IGNORE INTO erasure_tombstones (email_sha256, product_user_id, source, erased_at, created_at) VALUES (?1, ?2, ?3, ?4, ?4)")
+      .bind(emailSha256, options.productUserId ?? null, options.source, now),
+    // A calendar event that holds the hash (an attendee who was never a contact): the attendee comes
+    // off a meeting that belongs to a contact, and any other such event is deleted.
+    ...pruneCalendarAttendees(db, JSON.stringify([emailSha256]), "event_id IN (SELECT event_id FROM calendar_meetings)"),
+    db.prepare("DELETE FROM calendar_events WHERE EXISTS (SELECT 1 FROM json_each(calendar_events.attendee_hashes) h WHERE h.value = ?1)").bind(emailSha256),
+  ]);
   return { emailSha256, contactsDeleted: 0 };
 }

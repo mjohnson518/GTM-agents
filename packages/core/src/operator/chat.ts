@@ -9,6 +9,9 @@
 //     `channel-done-<id>`, `channel-skip-<id>`) runs once per message, without the model;
 //   - a reply command (/replies, /reply_done, /reply_ignore, /reply_send, /reply_draft) runs once
 //     per message, without the model;
+//   - a meeting command (/meetings, `meeting-held-<code>`, `meeting-noshow-<code>`,
+//     `meeting-notes-<code>`, `meeting-link-<code>`, `meeting-unlink-<code>`, `prep-<contact>`) runs
+//     once per message, without the model;
 //   - a report command (/scorecard, /report ...) reads and replies once per message, without the
 //     model;
 //   - a command (/clean, /status, /help) runs without the model;
@@ -38,11 +41,14 @@ import type { InboxProvider } from "../ports/email.ts";
 import { isReplyCommand, runReplyCommand } from "../replies/commands.ts";
 // Reports: the scorecard and the other reports on demand.
 import { isReportCommand, runReportCommand } from "../reports/commands.ts";
+// Convert: the meeting commands and the prep brief on demand.
+import { parseConvertCommand, runConvertCommand } from "../convert/commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
 export const SEQUENCE_COMMAND_EFFECT = "operator_sequence_command";
 export const REPORT_COMMAND_EFFECT = "operator_report_command";
+export const CONVERT_COMMAND_EFFECT = "operator_convert_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -65,6 +71,8 @@ export interface OperatorAgentOptions<E extends Env = Env> {
   inbox?: (env: E) => InboxProvider | undefined;
   maxRounds?: number;
   maxTokens?: number;
+  /** The reply window given to createReplyJobs, so /scorecard counts owed replies the same way. */
+  owedWindowDays?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
   fetch?: typeof fetch;
   now?: () => Date;
@@ -184,6 +192,25 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       await reply(text);
       return;
     }
+    // Convert: the meeting commands and the prep brief on demand, once per message.
+    const convertCommand = parseConvertCommand(message.text);
+    if (convertCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, CONVERT_COMMAND_EFFECT))) {
+        log.warn("redelivered meeting command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let text: string;
+      try {
+        text = await runConvertCommand(
+          { db: env.DB, flags, config: options.config, operator: channel, shown: env.KV, chatId: message.chatId, userId: message.userId, ...(options.now ? { now: options.now } : {}), log },
+          convertCommand,
+        );
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing was sent; send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
     const command = parseCommand(message.text);
     // Replies: list and settle owed replies, and send approved ones, once per message.
     if (command && isReplyCommand(command.name)) {
@@ -230,7 +257,7 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       }
       let text: string;
       try {
-        text = await runReportCommand({ db: env.DB, flags, ...(options.now ? { now: options.now } : {}) }, command);
+        text = await runReportCommand({ db: env.DB, flags, ...(options.now ? { now: options.now } : {}), ...(options.owedWindowDays !== undefined ? { owedWindowDays: options.owedWindowDays } : {}) }, command);
       } catch (error) {
         text = `That report could not be built (${sanitizeErrorMessage(error)}). Send the command again to retry.`;
       }

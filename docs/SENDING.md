@@ -166,7 +166,7 @@ A new sending domain earns reputation gradually, so daily cold volume follows fi
 
 With `outreach:ramp_auto` on, the `delivery_ramp` job moves the level one step at a time, on evidence from the send ledger:
 
-- **up** only when all hold: at least 7 days since the last change, sends in that time, delivered events present, the best day delivered at least 70% of the current level, hard bounces under 2% and complaints under 0.1%;
+- **up** only when all hold: at least 7 days since the last change, sends in that time, delivered events present, the best day delivered at least 70% of the current level, hard bounces under 2% of the mail the provider reported an outcome for (delivered plus hard-bounced, `hardBounceShareOfOutcomes`) and complaints under 0.1% of delivered mail;
 - **down** when complaints reach 0.3% of delivered mail (with at least 20 delivered), or once for each warning-level pause;
 - otherwise, and while a critical pause stands, it holds.
 
@@ -174,15 +174,17 @@ With it off, the level changes only when you set it.
 
 ## The bounce monitor and the kill switch
 
-The `delivery_bounce_monitor` job runs every morning. It reads hard bounces over sends for cold and sequence mail in two windows, 7 days and 1 day: under 20 sends is low volume and says nothing; under 2% is healthy; 2% to 5% warns (you are paged); 5% or more is critical.
+The `delivery_bounce_monitor` job runs every morning. It reads the hard bounce rate (hard bounces over sends, `hardBounceRate`) for cold and sequence mail in two trailing windows, 7 days and 1 day: under 20 sends is low volume and says nothing; under 2% is healthy; 2% to 5% warns (you are paged); 5% or more is critical. A bounce counts by when it arrived, so bounces coming in today for older mail count today.
+
+Every bounce figure comes from one place, `packages/core/src/metrics/delivery-rates.ts` ([MEASUREMENT.md](MEASUREMENT.md#the-metrics)): the monitor, campaign readiness and the reports read the hard bounce rate, and only the ramp reads the share of reported outcomes. Each keeps its own thresholds; none counts bounces itself.
 
 - **Critical pauses cold outreach.** A spike only in the 1-day window, with the 7-day window still healthy, looks like one bad batch and gives a **warning** pause. Anything the 7-day window confirms gives a **critical** pause, and so does a second spike within 14 days of the monitor lifting a warning pause.
 - **A warning pause lifts itself** once it is at least 3 days old and the last 3 days were clean, with one ramp step down. You are told when it lifts.
-- **A critical pause is lifted only by a person.** You are reminded once a day while it stands. To lift it, from the operator path or with Wrangler:
+- **A critical pause is lifted only by a person.** You are reminded once a day while it stands. There is no chat command for it; lift it from the command line:
 
 ```bash
-npx wrangler kv key delete --binding KV --remote "outreach:cold-pause:critical"
-npx wrangler kv key delete --binding KV --remote "outreach:cold-pause"
+npx gtm flags unset outreach:cold-pause:critical
+npx gtm flags unset outreach:cold-pause
 ```
 
 The monitor adds a critical pause only when none stands, and never overwrites, lowers or lifts one. A pause stops cold and sequence mail; replies and lifecycle mail keep flowing. The system halt (`system:halt`) stops everything. Both fail closed: state that cannot be read counts as halted or paused.

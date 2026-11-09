@@ -73,7 +73,7 @@ Optional modules add their own bindings, for example a container and a Workflow 
 ## Storage roles
 
 - **The database is the truth.** Agents query state; they do not remember it. [DATA-MODEL.md](DATA-MODEL.md) describes the tables.
-- KV, R2 and the vector index are caches or archives that can be rebuilt from D1.
+- KV and the vector index are caches that can be rebuilt from D1. R2 is the archive of what D1 points to, such as inbound email bodies: D1 says which messages exist, R2 holds their text, and a missing body reads as missing rather than empty. Back it up if you need the text.
 - **The account key** is the lowercased registrable domain without `www.`, and everything account-level joins on it. Personal mail domains and shared hosts are never accounts.
 - **Fields that only some deployments need** (a buyer's budget band, an account's stage, a niche attribute) go in the `attributes` JSON column of contacts and accounts, never in new columns.
 
@@ -109,6 +109,8 @@ defineJob({
 ```
 
 - The Worker has one cron trigger, `* * * * *`. Each minute the scheduled handler asks the registry which jobs are due at that minute (UTC, from each job's own schedule) and runs them concurrently, at most four at a time, longest ceiling first, each under its own ceiling. It is a loop, not a switch statement, and changing a schedule never touches `wrangler.jsonc`. A minute with nothing due touches no binding. A job whose ceiling would not fit in the invocation's remaining wall time is not started: it gets a failed run row and the normal failure page, rather than being cut off. A job whose previous run is still going is skipped.
+- A ceiling is not a hard stop. At its ceiling a job's AbortSignal fires and its run is recorded as failed, but JavaScript cannot cancel a promise, so a body that ignores the signal keeps running. The scheduler keeps that job's slot taken until it settles, the invocation's wall budget runs out, or no job is left waiting to start, so a stuck job costs the minute one slot instead of running beside the jobs after it. Long work should check `ctx.signal` between steps.
+- A daily retention job (`run_retention`, behind `ops:retention_enabled`) deletes old run rows, always keeping the newest row of each job and status, which cron health and the follow-up intake gate read.
 - Schedules use named days. On Cloudflare, numeric day-of-week `1` is Sunday, so `MON-FRI` is the only unambiguous form. The registry rejects numeric days.
 - Every job runs inside a fault-tolerant runner:
   - It writes a run row (running, then completed, failed or skipped), including for jobs it holds because the system is halted, the job's flag is off or its budget is spent.
@@ -187,6 +189,10 @@ The same send function serves two providers. Cold first touches and sequence fol
 ## Replies and follow-ups
 
 Inbound mail arrives two ways: a mailbox the Worker polls every minute and is woken by push (Gmail), or Cloudflare Email Routing delivering to the Worker's `email()` entry point. Intake records each message once, classifies it structurally without a model (bounce, auto reply, out of office, unsubscribe, reply, new inquiry) and applies the deterministic consequences at once: a reply stops every sequence at the account, an unsubscribe suppresses the sender, an out-of-office reply holds the next step, a delivery report for an address we sent to suppresses it. Model triage, routing, the meeting qualifier and drafting run afterwards in their own jobs, and every reply draft waits for a person's approval. The follow-up sweep sends sequence steps threaded under the first email, re-checking for replies from anyone at the account right before each send. [INBOX.md](INBOX.md), [REPLIES.md](REPLIES.md) and [SEQUENCES.md](SEQUENCES.md) cover each part.
+
+## Meetings
+
+Calendar sync reads the operator's calendar every 15 minutes, read-only, asking only for times, attendees and the organizer. A booking needs an outside attendee who accepted, or an invite the operator organized, and it is attributed to a contact by address, or by the one contact at that company contacted recently; there is no click tracking. A booked meeting stops every sequence at the company, moves the contact to hot and the deal to demo scheduled, writes a static prep brief and reminds the operator before the meeting. Recaps, rebooks and post-meeting steps are drafts a person approves. [CONVERT.md](CONVERT.md) covers it.
 
 Email is plain text, with no tracking pixels or click tracking, so replies are the metric. Cold mail goes from an isolated subdomain through the email provider. Replies and lifecycle mail go from the real mailbox. `Reply-To` on cold mail points at that mailbox, so every reply lands in one inbox.
 

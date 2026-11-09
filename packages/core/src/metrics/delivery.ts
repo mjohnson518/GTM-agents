@@ -1,20 +1,21 @@
-// GTM-agents: delivery health for outreach (cold and sequence mail) over a window, from the send
-// ledger, the way the bounce monitor and the warm-up ramp read it.
+// GTM-agents: delivery health for outreach (cold and sequence mail) over a report window, with the
+// thresholds the reports flag at.
 //
+// The counts and the rates come from delivery-rates.ts, the one definition every bounce and
+// complaint figure uses:
 //   - sends: outreach sent in the window;
-//   - delivered, hard bounces, complaints: delivery events that arrived in the window, from the
-//     ledger's delivered_at, bounced_at and complained_at (the provider webhook sets them; only a
-//     hard bounce sets bounced_at);
-//   - hard bounce rate: hard bounces over sends, the bounce monitor's definition (the monitor reads
-//     a rolling window ending now, the reports full UTC days, so their windows can differ);
-//   - complaint rate: complaints over delivered mail, as the ramp counts it;
+//   - delivered, hard bounces, complaints: delivery events that arrived in the window;
+//   - hard bounce rate: hard bounces over sends (hardBounceRate), the rate the bounce monitor and
+//     campaign readiness gate on. They read a trailing window ending now, the reports full UTC days,
+//     so their windows can differ, never their definition;
+//   - complaint rate: complaints over delivered mail (complaintRate), as the warm-up ramp counts it;
 //   - delivered coverage: delivered plus hard-bounced over sends, the share the provider reported an
 //     outcome for. Under 95%, events are missing (is the provider webhook arriving?) and the two rates
 //     above cannot be trusted. A bounce is an outcome, so a high bounce rate never lowers coverage.
 // Rates are null when their denominator is zero: no data is not a 0% rate.
 import { BOUNCE_WARN_RATE } from "../sending/bounce-monitor.ts";
 import { RAMP_MAX_COMPLAINT_RATE } from "../sending/ramp.ts";
-import { n, outreachSql } from "./sql.ts";
+import { complaintRate, deliveryCounts, hardBounceRate } from "./delivery-rates.ts";
 import type { MetricWindow } from "./window.ts";
 
 /** Flag hard bounces at or above this share of sends. The bounce monitor warns at the same rate. */
@@ -39,31 +40,12 @@ export interface DeliveryHealth {
 
 /** Delivery health for outreach in the window. Throws on a database error. */
 export async function deliveryHealth(db: D1Database, window: MetricWindow): Promise<DeliveryHealth> {
-  const inWindow = (column: string) => `(os.${column} >= ?1 AND os.${column} < ?2)`;
-  const row = await db
-    .prepare(
-      `SELECT SUM(CASE WHEN ${inWindow("sent_at")} THEN 1 ELSE 0 END) AS sends,
-              SUM(CASE WHEN ${inWindow("delivered_at")} THEN 1 ELSE 0 END) AS delivered,
-              SUM(CASE WHEN ${inWindow("bounced_at")} THEN 1 ELSE 0 END) AS bounced,
-              SUM(CASE WHEN ${inWindow("complained_at")} THEN 1 ELSE 0 END) AS complained
-         FROM outreach_sends os
-        WHERE ${outreachSql("os")}
-          AND (${inWindow("sent_at")} OR ${inWindow("delivered_at")} OR ${inWindow("bounced_at")} OR ${inWindow("complained_at")})`,
-    )
-    .bind(window.from, window.to)
-    .first<{ sends: number | null; delivered: number | null; bounced: number | null; complained: number | null }>();
-  const sends = n(row?.sends);
-  const delivered = n(row?.delivered);
-  const hardBounces = n(row?.bounced);
-  const complaints = n(row?.complained);
+  const counts = await deliveryCounts(db, window);
   return {
-    sends,
-    delivered,
-    hardBounces,
-    complaints,
-    hardBounceRate: sends > 0 ? hardBounces / sends : null,
-    complaintRate: delivered > 0 ? complaints / delivered : null,
-    deliveredCoverage: sends > 0 ? Math.min(1, (delivered + hardBounces) / sends) : null,
+    ...counts,
+    hardBounceRate: hardBounceRate(counts),
+    complaintRate: complaintRate(counts),
+    deliveredCoverage: counts.sends > 0 ? Math.min(1, (counts.delivered + counts.hardBounces) / counts.sends) : null,
   };
 }
 

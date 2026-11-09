@@ -9,19 +9,22 @@
 // agent behind operator:agent_enabled, discovery behind discovery:enabled, the cold batch behind
 // cold_batch:enabled, real sends behind delivery:enabled, mailbox intake behind inbox:enabled,
 // reply triage and drafting behind the replies:* flags, follow-ups behind sequences:enabled, and
-// the scorecard and digests behind the ops:* flags.
+// the scorecard and digests behind the ops:* flags, and calendar sync behind convert:calendar_enabled.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
 import { createWorker, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
+import { createConvertJobs } from "@gtm-agents/core/convert";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
 import { createReplyJobs } from "@gtm-agents/core/replies";
 import { createReportJobs } from "@gtm-agents/core/reports";
+import { createRetentionJob } from "@gtm-agents/core/runtime";
 import { createDeliveryJobs, createOutreachSender, readColdVolume, senderDepsFromEnv } from "@gtm-agents/core/sending";
 import { createSequenceJobs } from "@gtm-agents/core/sequences";
 import { createSourcingJobs } from "@gtm-agents/core/sourcing";
 import { createAdapter as createExa } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
+import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
 import { createAdapter as createRoutedMail } from "@gtm-agents/adapters/email-cloudflare";
 import { createAdapter as createResend } from "@gtm-agents/adapters/email-resend";
 import { createAdapter as createGmail } from "@gtm-agents/adapters/inbox-gmail";
@@ -38,6 +41,8 @@ const email = (env: Env) => createResend(context(env, "email-resend"));
 // The warm mailbox: replies arrive here, reply drafts are mirrored here, and approved replies are sent
 // from here. Cold mail and follow-ups never go through it.
 const inbox = (env: Env) => createGmail(context(env, "inbox-gmail"));
+// The calendar, read-only: only event times and attendees, never titles or descriptions.
+const calendar = (env: Env) => createGoogleCalendar(context(env, "calendar-google"));
 
 // The send function: every boundary check (halt, kill switch, suppression, lint, verification,
 // approval digest, send window, caps, circuit breaker) runs inside it.
@@ -65,18 +70,27 @@ const delivery = createDeliveryJobs<Env>({ email, operator });
 // Inbox: polling, the safety-net sweep and the push watch renewal. No model calls.
 const inboxJobs = createInboxJobs<Env>({ inbox, operator });
 
+// How long a reply counts as owed. The reply jobs, the reports and /scorecard share it.
+const owedWindowDays = 14;
+
 // Replies: triage, drafting, approved sends, mailbox mirroring and the reply-owed reminders.
-const replies = createReplyJobs<Env>({ model, inbox, operator });
+const replies = createReplyJobs<Env>({ model, inbox, operator, options: { owedWindowDays } });
 
 // Sequences: the follow-up sweep and the weekend stale-sequence check.
 const sequences = createSequenceJobs<Env>({ email, operator, model });
 
 // Reports: the daily scorecard, the Monday funnel digest and the weekday cost digest. No model calls.
-const reports = createReportJobs<Env>({ operator });
+const reports = createReportJobs<Env>({ operator, options: { owedWindowDays } });
+
+// Convert: calendar sync, meeting follow-ups and deal handoff briefs. Nothing is sent automatically.
+const convert = createConvertJobs<Env>({ calendar, operator });
+
+// Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
+const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports],
+  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},
@@ -92,7 +106,7 @@ export default createWorker(config, {
   inboundEmail: { parser: (env) => createRoutedMail(context(env, "email-cloudflare")) },
   // The CHAT_QUEUE names from wrangler.jsonc, one per environment (`gtm setup` names them
   // <worker name>-chat). Change these if you rename the Worker or the queues.
-  agent: { chatQueue: ["gtm-agent-chat", "gtm-agent-staging-chat"] },
+  agent: { chatQueue: ["gtm-agent-chat", "gtm-agent-staging-chat"], owedWindowDays },
 
   // Watches every critical job and pages when one is missed or failing.
   cronHealth: { schedule: "30 10,15 * * *" },

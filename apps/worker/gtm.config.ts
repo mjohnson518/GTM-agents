@@ -41,6 +41,7 @@ export default defineConfig({
     "email-resend": { options: {} },
     "inbox-gmail": { options: {} },
     "email-cloudflare": { options: {} },
+    "calendar-google": { options: {} },
   },
 
   // Model id per role. Core asks for roles; only this file names models.

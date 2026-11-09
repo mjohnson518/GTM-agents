@@ -48,7 +48,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/
 docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, DEPLOYING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -157,6 +157,9 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How a mailbox is connected and inbound mail is classified | [docs/INBOX.md](docs/INBOX.md) |
 | How replies are triaged, drafted, approved and sent | [docs/REPLIES.md](docs/REPLIES.md) |
 | How metrics and reports are defined | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) |
+| How meetings are detected and what a booking does | [docs/CONVERT.md](docs/CONVERT.md) |
+| How to deploy and roll out a deployment | [docs/DEPLOYING.md](docs/DEPLOYING.md) |
+| The whole design in one place | [docs/BLUEPRINT.md](docs/BLUEPRINT.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |
 | What goes in `brain/` and `templates/`, and how is it validated | [docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md) |
 | Why was a structural choice made | [docs/DECISIONS.md](docs/DECISIONS.md) |
