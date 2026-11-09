@@ -3,7 +3,8 @@
 // the operator.
 //
 // For each attributed meeting that is not cancelled and starts between 14 days ago and 25 hours
-// from now:
+// from now, whose time is not stale (staleTime: the last calendar listing that still covered it left
+// it out; it stays stale until listed again):
 //   - reminders: the operator is reminded once when the meeting is 24 hours away (with the prep
 //     brief) and once when it is 1 hour away. Each is claimed in the effects ledger per start time,
 //     so a moved meeting is reminded again and a failed notice is retried;
@@ -51,6 +52,8 @@ export interface FollowupDeps {
 
 export interface FollowupResult {
   meetings: number;
+  /** Meetings held back because their time is stale. */
+  stale: number;
   reminders: number;
   asked: number;
   recaps: number;
@@ -61,6 +64,9 @@ export interface FollowupResult {
 
 export interface FollowupRow {
   event_id: string;
+  /** When calendar sync last listed the event, and when its last listing finished (null before the first). */
+  last_seen_at?: string | null;
+  last_synced_at?: string | null;
   code: string;
   contact_id: string;
   starts_at: string;
@@ -80,6 +86,21 @@ export interface FollowupRow {
 }
 
 const OPEN_OR_DONE = new Set(["approved", "sent"]);
+
+/**
+ * True when a meeting's stored time cannot be trusted: the last listing that still covered it
+ * (the latest one, or the last one before the meeting ended more than the sync's back window ago)
+ * did not include its event, because it moved past the window or was deleted without a cancelled
+ * marker. A stale meeting stays stale until its event is listed again. Before the first sync
+ * nothing is judged. Pure.
+ */
+export function staleTime(row: Pick<FollowupRow, "ends_at" | "last_seen_at" | "last_synced_at">): boolean {
+  if (!row.last_synced_at) return false;
+  // An hour of margin at the window's edge, as calendar sync uses when it looks for missing meetings.
+  const coveredUntil = Date.parse(row.ends_at) + CONVERT_LIMITS.syncBackDays * DAY_MS - HOUR_MS;
+  const mark = Math.min(Date.parse(row.last_synced_at), coveredUntil);
+  return !row.last_seen_at || Date.parse(row.last_seen_at) < mark;
+}
 
 /** The reminder due for a meeting at `now`, or null. Pure. */
 export function dueReminder(startsAt: string, now: Date): "24h" | "1h" | null {
@@ -155,15 +176,16 @@ const who = (row: FollowupRow) => `${displayName(row)}${row.job_title ? ` (${lab
 /** One run. Throws only when the meetings cannot be read. */
 export async function runMeetingFollowups(deps: FollowupDeps): Promise<FollowupResult> {
   const { db, now, log } = deps;
-  const result: FollowupResult = { meetings: 0, reminders: 0, asked: 0, recaps: 0, steps: 0, stopped: 0, failed: 0 };
+  const result: FollowupResult = { meetings: 0, stale: 0, reminders: 0, asked: 0, recaps: 0, steps: 0, stopped: 0, failed: 0 };
   const postDemo = await readOn(deps.flags, CONVERT_FLAGS.postDemo);
   const { results: rows } = await db
     .prepare(
-      `SELECT cm.event_id, ce.code, cm.contact_id, cm.starts_at, cm.ends_at, cm.status, cm.attribution, cm.outcome, cm.held_asked_at,
+      `SELECT cm.event_id, ce.code, ce.last_seen_at, s.last_synced_at, cm.contact_id, cm.starts_at, cm.ends_at, cm.status, cm.attribution, cm.outcome, cm.held_asked_at,
               cm.sequence_step, cm.sequence_stopped, c.first_name, c.last_name, c.email, c.job_title, c.timezone, c.account_key
          FROM calendar_meetings cm
          JOIN calendar_events ce ON ce.event_id = cm.event_id AND ce.state = 'attributed'
          JOIN contacts c ON c.id = cm.contact_id
+         LEFT JOIN calendar_sync_state s ON s.id = 'calendar'
         WHERE cm.status <> 'cancelled' AND cm.starts_at >= ?1 AND cm.starts_at <= ?2
         ORDER BY cm.starts_at ASC LIMIT ?3`,
     )
@@ -174,6 +196,11 @@ export async function runMeetingFollowups(deps: FollowupDeps): Promise<FollowupR
 
   for (const row of rows) {
     try {
+      // A time the calendar no longer confirms is never reminded on or asked about.
+      if (staleTime(row)) {
+        result.stale += 1;
+        continue;
+      }
       const reminder = dueReminder(row.starts_at, now);
       if (reminder) {
         const head = `Reminder: meeting with ${who(row)} ${reminder === "1h" ? "in about an hour" : "in about 24 hours"}, ${when(row.starts_at)} [${row.code}].`;

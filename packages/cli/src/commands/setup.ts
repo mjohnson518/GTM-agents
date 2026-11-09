@@ -4,7 +4,8 @@
 // For one environment (production, the top level, or a named block such as staging) it:
 //   1. reads wrangler.jsonc and finds the D1 database, KV namespace, R2 bucket, Vectorize index and
 //      queues that still need a resource, deriving each missing name from the Worker's name and the
-//      binding (my-agent-db, my-agent-kv, my-agent-memory, my-agent-events, ...);
+//      binding (my-agent-db, my-agent-kv, my-agent-memory, my-agent-events, my-agent-jobs and its
+//      dead-letter queue my-agent-jobs-dlq, ...);
 //   2. asks Cloudflare, read-only, whether a resource with that name already exists. One the file
 //      already names is reused; one the file does not name yet is adopted only with
 //      --reuse-existing, because it may belong to another deployment with the same Worker name;
@@ -233,6 +234,17 @@ export async function setupCommand(args: string[], io: Io, options: SetupOptions
   if (chatName) {
     io.out("");
     io.out(`The chat queue is ${chatName}; list it in agent.chatQueue in src/index.ts so chat turns reach the operator agent directly.`);
+  }
+  // The jobs queue and its dead-letter queue: createWorker routes their batches by name.
+  const filled = (path: string, value: unknown): string | undefined => (isFilled(value) ? value : plan.fills.find((f) => pathKey(f.path) === path)?.value());
+  const jobsIndex = producers.findIndex((p) => p.binding === "JOBS_QUEUE");
+  const jobsName = jobsIndex === -1 ? undefined : filled(`queues.producers[${jobsIndex}].queue`, producers[jobsIndex]?.queue);
+  if (jobsName) {
+    const consumers = asArray(asObject(loaded.config.queues).consumers);
+    const consumerIndex = consumers.findIndex((c) => c.queue === producers[jobsIndex]?.queue);
+    const dlqName = consumerIndex === -1 ? undefined : filled(`queues.consumers[${consumerIndex}].dead_letter_queue`, consumers[consumerIndex]?.dead_letter_queue);
+    io.out("");
+    io.out(`The jobs queue is ${jobsName}${dlqName ? `, with dead-letter queue ${dlqName}` : ""}; list ${dlqName ? "them" : "it"} in scheduler.jobsQueue${dlqName ? " and scheduler.deadLetterQueue" : ""} in src/index.ts.`);
   }
 
   await printSecrets(io, dir, env, wrangler, options.adaptersDir ?? DEFAULT_ADAPTERS_DIR);

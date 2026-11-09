@@ -135,7 +135,7 @@ export function createConvertJobs<E extends ConvertEnv>(deps: ConvertDeps<E>): R
         maxRows: Math.min(options.followupMaxRows, ctx.ceilings.maxRows ?? options.followupMaxRows),
       });
       return {
-        summary: `${result.meetings} meetings: reminders ${result.reminders}, asked ${result.asked}, recaps ${result.recaps}, follow-ups ${result.steps}, stopped ${result.stopped}, failed ${result.failed}`,
+        summary: `${result.meetings} meetings (${result.stale} with a stale time): reminders ${result.reminders}, asked ${result.asked}, recaps ${result.recaps}, follow-ups ${result.steps}, stopped ${result.stopped}, failed ${result.failed}`,
         rows: result.meetings,
       };
     },

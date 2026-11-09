@@ -31,6 +31,12 @@
 // class's level and evidence, `autonomy-set <class> <0-3>` proposes a level, and
 // `autonomy-confirm-<id>-<code>` applies a proposal if the class has not changed since. The chat
 // consumer routes them to runAutonomyCommand.
+//
+// Experiment commands (experiments/commands.ts) never reach the model: `experiment-create`,
+// `experiment-update`, `experiment-show`, `experiment-list`, `experiment-start <id>` then
+// `experiment-start-<id>-<code>`, `experiment-stop`, `exp-list`, `exp-approve-<id>`,
+// `exp-reject-<id>`, `subject-test-create`, `subject-test-stop`, `ab-dashboard` and `sample-size`.
+// The chat consumer routes them to runExperimentCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -57,6 +63,9 @@ import { CONVERT_HELP_LINES } from "../convert/commands.ts";
 // Autonomy: the level commands.
 export { AUTONOMY_HELP_LINES, parseAutonomyCommand, runAutonomyCommand, type AutonomyCommand, type AutonomyCommandDeps } from "../autonomy/commands.ts";
 import { AUTONOMY_HELP_LINES } from "../autonomy/commands.ts";
+// Experiments: pre-registered experiments, subject tests, proposals and the A/B dashboard.
+export { EXPERIMENT_HELP_LINES, parseExperimentCommand, runExperimentCommand, type ExperimentCommand, type ExperimentCommandDeps } from "../experiments/commands.ts";
+import { EXPERIMENT_HELP_LINES } from "../experiments/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -84,6 +93,7 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     ...REPORT_HELP_LINES,
     ...CONVERT_HELP_LINES,
     ...AUTONOMY_HELP_LINES,
+    ...EXPERIMENT_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",

@@ -12,9 +12,10 @@
 // the scorecard and digests behind the ops:* flags, calendar sync behind convert:calendar_enabled,
 // and product events and billing behind lifecycle:enabled and billing:enabled.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
-import { createWorker, type Env } from "@gtm-agents/core";
+import { createWorker, kvFlagReader, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
+import { createExperimentJobs } from "@gtm-agents/core/experiments";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createAutonomyJobs } from "@gtm-agents/core/autonomy/runtime";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
@@ -24,8 +25,10 @@ import { createReportJobs } from "@gtm-agents/core/reports";
 import { createRetentionJob } from "@gtm-agents/core/runtime";
 import { createDeliveryJobs, createOutreachSender, readColdVolume, senderDepsFromEnv } from "@gtm-agents/core/sending";
 import { createSequenceJobs } from "@gtm-agents/core/sequences";
+import { createSignalJobs, handleMonitorWebhook, type MonitorConfig } from "@gtm-agents/core/signals";
 import { createSourcingJobs } from "@gtm-agents/core/sourcing";
-import { createAdapter as createExa } from "@gtm-agents/adapters/data-exa";
+import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
+import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
 import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
 import { createAdapter as createRoutedMail } from "@gtm-agents/adapters/email-cloudflare";
@@ -59,12 +62,32 @@ const sourcing = createSourcingJobs<Env>({
   },
 });
 
+// Signals: websets, search monitors, dated news, hiring boards, responder lookalikes and coverage fill,
+// each behind its own signals:* flag (docs/SIGNALS.md). Add your monitors here: each names its key, the
+// Worker secret that signs its deliveries, and whether its results are company sites or articles.
+const monitors: readonly MonitorConfig[] = [];
+const signals = createSignalJobs<Env>({
+  adapters(env) {
+    const exa = createExa(context(env, "data-exa"));
+    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")) };
+  },
+  options: { monitors },
+});
+
 // Outreach: the daily cold batch, with today's volume from the warm-up ramp.
 const outreach = createOutreachJobs<Env>({
   send: sendOutreach,
   volume: async (env, { flags }) => (await readColdVolume({ kv: env.KV, flags })).volume,
   model,
   operator,
+});
+
+// Experiments: evaluation twice a day and the weekly rule-based self-review, behind experiments:* flags
+// (docs/EXPERIMENTS.md). Nothing changes copy or weights without your approval.
+const experiments = createExperimentJobs<Env>({
+  operator,
+  volume: async (env, { flags }) => (await readColdVolume({ kv: env.KV, flags })).volume,
+  options: { signalSources: [] },
 });
 
 // Delivery: the deferred queue replay, the bounce monitor, the ramp and liveness.
@@ -102,10 +125,28 @@ const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...autonomy, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...autonomy, ...experiments, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},
+
+  // Search monitor deliveries: each is verified against its own Worker secret before anything is read.
+  routes(app) {
+    app.post("/api/webhooks/search/:key", (c) =>
+      handleMonitorWebhook(c.req.raw, c.req.param("key"), {
+        db: c.env.DB,
+        flags: kvFlagReader(c.env.KV),
+        monitors,
+        secret: (name) => {
+          const value = (c.env as unknown as Record<string, unknown>)[name];
+          return typeof value === "string" && value.length > 0 ? value : undefined;
+        },
+        verify: verifyMonitorSignature,
+        parse: parseMonitorDelivery,
+        now: new Date(),
+      }),
+    );
+  },
 
   // The operator channel carries chat, approvals, batch releases, job failure pages and cron health pages.
   operator,
@@ -120,6 +161,10 @@ export default createWorker(config, {
   // The CHAT_QUEUE names from wrangler.jsonc, one per environment (`gtm setup` names them
   // <worker name>-chat). Change these if you rename the Worker or the queues.
   agent: { chatQueue: ["gtm-agent-chat", "gtm-agent-staging-chat"], owedWindowDays },
+
+  // The JOBS queue names from wrangler.jsonc (`gtm setup` names them <worker name>-jobs and -jobs-dlq).
+  // With scheduler:queue_enabled on, each due job runs in its own queue consumer invocation.
+  scheduler: { jobsQueue: ["gtm-agent-jobs", "gtm-agent-staging-jobs"], deadLetterQueue: ["gtm-agent-jobs-dlq", "gtm-agent-staging-jobs-dlq"] },
 
   // Watches every critical job and pages when one is missed or failing.
   cronHealth: { schedule: "30 10,15 * * *" },

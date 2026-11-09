@@ -104,6 +104,7 @@ export function itemFromRow(row: QueuedRow): OutreachItem {
     approvedDigest: str(extra.approvedDigest),
     templateSha256: str(extra.templateSha256),
     cohort: str(extra.cohort),
+    sendSlot: extra.sendSlot === "early" || extra.sendSlot === "afternoon" ? extra.sendSlot : undefined,
   };
   for (const [k, v] of Object.entries(optional)) if (v !== undefined) (item as unknown as Record<string, unknown>)[k] = v;
   return item;

@@ -12,8 +12,8 @@
 // 2% or more, complaints of 0.1% or more, or delivered events covering under 95% of sends; replies
 // and positives with how deep the sequence was; the reply SLA; spend per job; failed jobs; the
 // convert stage; cohorts; measurement health; everything waiting on the operator; the flags that are
-// on; then what needs attention. Meetings (countMeetings, the one definition in metrics/meetings.ts)
-// are shown once calendar sync is on (convert:calendar_enabled); until then the lines say "not
+// on; then what needs attention. Meetings (countMeetings, the one definition in metrics/meetings.ts:
+// every attributed booking, with the part that followed outreach beside it) are shown once calendar sync is on (convert:calendar_enabled); until then the lines say "not
 // measured yet", never a zero. Sign-ups, activations and new paying customers (countProductOutcomes,
 // the one definition in metrics/product.ts) are shown once the product bridge has delivered an event
 // (measurement health's productEventsSeen), with how many were credited to a first touch; until then,
@@ -191,18 +191,21 @@ export function renderScorecard(d: ScorecardData): string {
   const outcomes = (p: ProductOutcomeCounts) =>
     `${plural(p.signups, "sign-up", "sign-ups")}, ${plural(p.activations, "activation", "activations")}, ${plural(p.newPaying, "new paying customer", "new paying customers")}`;
   if (d.product === null) unreadable("product outcomes");
+  // "Booked" counts every attributed booking, customers' calls included; the share that followed a
+  // first touch is said beside it, so the line never reads as outreach's result alone.
+  const bookedLine = (m: MeetingCounts) => `${plural(m.booked, "meeting booked", "meetings booked")} (${m.bookedAfterOutreach} after outreach)`;
   if (d.funnel) {
     const head = `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}`;
     if (product) {
       lines.push(
         d.meetings?.calendarOn
-          ? `${head}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}, ${outcomes(product.weekToDate)}. Quotas: ${NOT_MEASURED}.`
+          ? `${head}, ${bookedLine(d.meetings.weekToDate)}, ${outcomes(product.weekToDate)}. Quotas: ${NOT_MEASURED}.`
           : `${head}, ${outcomes(product.weekToDate)}. Meetings and quotas: ${NOT_MEASURED}.`,
       );
     } else {
       lines.push(
         d.meetings?.calendarOn
-          ? `${head}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}. Sign-ups, activations, new paying customers and quotas: ${NOT_MEASURED}.`
+          ? `${head}, ${bookedLine(d.meetings.weekToDate)}. Sign-ups, activations, new paying customers and quotas: ${NOT_MEASURED}.`
           : `${head}. Sign-ups, activations, new paying customers, meetings and quotas: ${NOT_MEASURED}.`,
       );
     }
@@ -284,9 +287,10 @@ export function renderScorecard(d: ScorecardData): string {
     `${plural(p.signups, "sign-up", "sign-ups")} (${p.fromOutreach.signups} from outreach), ${plural(p.activations, "activation", "activations")}, ${plural(p.newPaying, "new paying customer", "new paying customers")} (${p.fromOutreach.newPaying} from outreach)`;
   if (d.meetings?.calendarOn) {
     const m = d.meetings.month;
-    const per100 = perHundred(m.held, d.meetings.monthFirstTouches);
+    // Per 100 first touches counts only the held meetings that followed a first touch.
+    const per100 = perHundred(m.heldAfterOutreach, d.meetings.monthFirstTouches);
     lines.push(
-      `Convert, 30 days: ${plural(m.booked, "meeting booked", "meetings booked")}, ${m.held} held, ${plural(m.noShows, "no-show", "no-shows")}, ${m.cancelled} cancelled; held per 100 first touches: ${per100 === null ? "n/a" : per100}. ${product ? `${monthOutcomes(product.month)}` : `Sign-ups, activations and paid: ${NOT_MEASURED}`}`,
+      `Convert, 30 days: ${bookedLine(m)}, ${m.held} held (${m.heldAfterOutreach} after outreach), ${plural(m.noShows, "no-show", "no-shows")}, ${m.cancelled} cancelled; held after outreach per 100 first touches: ${per100 === null ? "n/a" : per100}. ${product ? `${monthOutcomes(product.month)}` : `Sign-ups, activations and paid: ${NOT_MEASURED}`}`,
     );
   } else {
     lines.push(product ? `Convert, 30 days: ${monthOutcomes(product.month)}; meetings booked and held: ${NOT_MEASURED}` : `Convert, 30 days: meetings booked and held, sign-ups, activations and paid: ${NOT_MEASURED}`);

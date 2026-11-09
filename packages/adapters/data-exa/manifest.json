@@ -1,17 +1,28 @@
 {
   "name": "data-exa",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "ports": ["DiscoverySource"],
-  "capabilities": [],
+  "capabilities": ["watch", "find_similar", "news", "monitor"],
   "requiredSecrets": ["EXA_API_KEY"],
   "optionalSecrets": [],
-  "flags": ["discovery:enabled"],
-  "tools": {},
+  "flags": ["discovery:enabled", "signals:websets_enabled", "signals:monitors_enabled", "signals:news_enabled", "signals:lookalikes_enabled"],
+  "tools": {
+    "exa_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" },
+    "exa_webset_items": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" },
+    "exa_find_similar": { "taint": "full", "gate": "metadata", "egress": "url", "rateCategory": "exa" },
+    "exa_news_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" }
+  },
   "costs": {
     "search": { "usd": 0.005, "per": "request of up to 25 results" },
     "search_large": { "usd": 0.025, "per": "request of 26 to 100 results" },
-    "highlights": { "usd": 0.001, "per": "result" }
+    "highlights": { "usd": 0.001, "per": "result" },
+    "find_similar": { "usd": 0.005, "per": "request of up to 25 results" },
+    "news": { "usd": 0.005, "per": "request of up to 25 results" },
+    "webset_item": { "credits": 10, "per": "webset item that matches every criterion (dollars per credit set by the creditUsd option)" },
+    "webset_email": { "credits": 5, "per": "email enrichment returned on a webset item" },
+    "monitor_run": { "usd": 0.002, "per": "monitor run, billed by the provider on its own schedule" }
   },
   "limits": { "perSecond": 5 },
+  "webhook": { "path": "/api/webhooks/search/:key", "signature": "exa-signature-hmac-sha256" },
   "contract": "./contract.test.ts"
 }

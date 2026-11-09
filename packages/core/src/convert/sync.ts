@@ -13,8 +13,13 @@
 //     series counts once: only its first instance seen is a booking;
 //   - a known booking that is still unattributed is attributed again (someone may have accepted, or
 //     become a contact since);
-//   - a known meeting whose time changed is moved: reminders and the held question re-arm and the
-//     operator is told once per new time;
+//   - a known meeting whose time changed is moved: reminders and the held question re-arm, its open
+//     recap and post-demo drafts (which name the old day) are withdrawn and drafted again for the
+//     new time, and the operator is told once per new time;
+//   - a known meeting that no longer appears in the listing at all (moved past the window, or
+//     deleted without a cancelled marker) keeps its last time, but that time is stale: reminders and
+//     the held question wait until it is listed again (followups.ts reads calendar_sync_state), and
+//     the operator is told once;
 //   - a known meeting that was cancelled, declined by the operator, or lost the people it rests on
 //     (the contact it is attributed to by address declined or left the invite; for other
 //     attributions, every outside attendee did) before it started stops counting. A change of
@@ -23,7 +28,12 @@
 //     and the operator is told once. A meeting removed once it started is left as it was;
 //   - an event the operator unlinked (inert) is left alone, and a sync racing a command never
 //     moves an event out of inert or back from attributed;
-//   - booked effects that failed on an earlier run are retried.
+//   - booked effects that failed on an earlier run are retried, and so are credit withdrawals
+//     (booked.ts, retryCreditWithdrawals).
+// calendar_sync_state records when the last sync listed the calendar (every listed event's
+// last_seen_at is at least that), and the baseline: when the first sync ran. The first sync after
+// calendar sync is turned on does not count meetings that had already started as new bookings
+// (calendar_meetings.before_baseline; metrics/meetings.ts leaves them out).
 // Unmatched events are forgotten 3 days after they end, ambiguous ones after 14.
 // The listing itself failing throws: the run fails, and the job runner pages with the provider's
 // short error code (an unauthorized_client there usually means the calendar scope was not granted).
@@ -37,9 +47,9 @@ import { label } from "../reports/format.ts";
 import type { ShownStore } from "../security/approval-digest.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { attendeeFingerprint, attributeEvent, withoutErased, type AttributionResult } from "./attribution.ts";
-import { applyBooked, dealFor, withdrawBooked } from "./booked.ts";
+import { applyBooked, dealFor, retryCreditWithdrawals, withdrawBooked } from "./booked.ts";
 import { displayName, when } from "./brief.ts";
-import { createConvertDraft, withdrawConvertDrafts } from "./drafts.ts";
+import { OPEN_DRAFT_STATUSES, convertDraftKey, createConvertDraft, meetingDay, withdrawConvertDrafts, type ConvertDraftKind } from "./drafts.ts";
 import { CONVERT_LIMITS } from "./flags.ts";
 import { classifyEvent, meetingCode, meetingEffectKey, type CalendarEventState, type ClassifiedEvent } from "./state.ts";
 
@@ -69,6 +79,8 @@ export interface SyncResult {
   unmatched: number;
   moved: number;
   cancelled: number;
+  /** Attributed meetings that dropped out of the listing: their time is stale until they reappear. */
+  missing: number;
   failed: number;
   /** More events were listed than one run handles. */
   truncated: boolean;
@@ -95,6 +107,38 @@ export interface MeetingRecord {
   attribution: string | null;
   outcome: string | null;
   first_seen_at: string;
+  before_baseline?: number | null;
+}
+
+/** The one calendar_sync_state row's id. */
+export const SYNC_STATE_ID = "calendar";
+
+export interface SyncState {
+  baseline_at: string;
+  last_synced_at: string;
+}
+
+/** The sync state, or null before the first sync. Throws on a database error. */
+export async function readSyncState(db: D1Database): Promise<SyncState | null> {
+  return db.prepare("SELECT baseline_at, last_synced_at FROM calendar_sync_state WHERE id = ?1").bind(SYNC_STATE_ID).first<SyncState>();
+}
+
+/**
+ * The baseline a sync at `now` works under: the stored one, or now on the very first sync. It never
+ * moves after that, so a sync outage or a pause never drops the real bookings made meanwhile. Pure.
+ */
+export function baselineAt(state: SyncState | null, now: Date): string {
+  return state?.baseline_at ?? now.toISOString();
+}
+
+/**
+ * True for a meeting first seen in the current run of syncing that had already started when that
+ * run began: booked before anyone was watching, so not a new booking. Pure.
+ */
+export function startedBeforeBaseline(startsAt: string | null, firstSeenAt: string, baseline: string | null | undefined): boolean {
+  if (!startsAt || !baseline) return false;
+  const base = Date.parse(baseline);
+  return Date.parse(startsAt) < base && Date.parse(firstSeenAt) >= base;
 }
 
 /** The sync window at `now`: 3 days back to 60 days ahead. */
@@ -207,20 +251,26 @@ function contactIdList(text: string | null | undefined): string[] {
 }
 
 /** Record an attributed meeting and run its booked effects. Throws on a database error before the effects. */
-async function attach(deps: SyncDeps, event: CalendarEventSummary, code: string, result: Extract<AttributionResult, { kind: "attributed" }>, firstSeenAt: string): Promise<void> {
+async function attach(deps: SyncDeps, event: CalendarEventSummary, code: string, result: Extract<AttributionResult, { kind: "attributed" }>, firstSeenAt: string, baseline: string): Promise<void> {
   const [contactId, ...others] = result.contactIds;
   if (!contactId) return;
   if ((await currentState(deps.db, event.id)) !== "attributed") return;
   const at = deps.now.toISOString();
+  // A meeting that had already started when this run of syncing began was booked before anyone was
+  // watching: it still stops outreach, but it is not a new booking.
+  const beforeBaseline = startedBeforeBaseline(event.start, firstSeenAt, baseline) ? 1 : 0;
   await deps.db
     .prepare(
-      `INSERT INTO calendar_meetings (event_id, contact_id, starts_at, ends_at, status, attribution, first_seen_at, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+      `INSERT INTO calendar_meetings (event_id, contact_id, starts_at, ends_at, status, attribution, first_seen_at, before_baseline, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?9, ?8, ?8)
        ON CONFLICT (event_id) DO NOTHING`,
     )
-    .bind(event.id, contactId, event.start, event.end, event.status, result.method, firstSeenAt, at)
+    .bind(event.id, contactId, event.start, event.end, event.status, result.method, firstSeenAt, at, beforeBaseline)
     .run();
-  const stored = await deps.db.prepare("SELECT contact_id, attribution, status, first_seen_at, starts_at, ends_at FROM calendar_meetings WHERE event_id = ?1").bind(event.id).first<MeetingRecord>();
+  const stored = await deps.db
+    .prepare("SELECT contact_id, attribution, status, first_seen_at, starts_at, ends_at, before_baseline FROM calendar_meetings WHERE event_id = ?1")
+    .bind(event.id)
+    .first<MeetingRecord>();
   if (!stored) return;
   await applyBooked(
     { db: deps.db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now: deps.now, log: deps.log },
@@ -266,16 +316,122 @@ export async function cancelMeeting(
   return true;
 }
 
+const MEETING_DRAFT_STEPS: ReadonlyArray<{ kind: ConvertDraftKind; step: number }> = [
+  { kind: "recap", step: 1 },
+  { kind: "step2", step: 2 },
+  { kind: "step3", step: 3 },
+];
+
+/**
+ * A meeting moved to another day: its recap and post-demo drafts name the old day. Withdraw the ones still waiting
+ * (an approved one was sent from the mail client already), step the follow-up sequence back to the
+ * last draft kept, and, when the new time has already passed, draft the recap again right away; the
+ * follow-up job drafts the rest on the new schedule. Returns how many were withdrawn. Throws on a
+ * database error.
+ */
+async function redraftForMove(deps: SyncDeps, meeting: MeetingRecord, code: string, previousStart: string): Promise<number> {
+  const { db, now } = deps;
+  // The drafts name the meeting's day in the contact's time zone: a move within the day (or a longer
+  // meeting) leaves them right.
+  const zone = (await db.prepare("SELECT timezone FROM contacts WHERE id = ?1").bind(meeting.contact_id).first<{ timezone: string | null }>())?.timezone ?? null;
+  if (meetingDay(previousStart, zone) === meetingDay(meeting.starts_at, zone)) return 0;
+  const keys = JSON.stringify(MEETING_DRAFT_STEPS.map((d) => convertDraftKey(code, d.kind)));
+  const waiting = OPEN_DRAFT_STATUSES.filter((s) => s !== "approved");
+  const { results: open } = await db
+    .prepare(`SELECT idempotency_key FROM drafts WHERE idempotency_key IN (SELECT value FROM json_each(?1)) AND status IN (SELECT value FROM json_each(?2))`)
+    .bind(keys, JSON.stringify(waiting))
+    .all<{ idempotency_key: string }>();
+  if (open.length === 0) return 0;
+  await db
+    .prepare(`UPDATE drafts SET status = 'rejected', updated_at = ?3 WHERE idempotency_key IN (SELECT value FROM json_each(?1)) AND status IN (SELECT value FROM json_each(?2))`)
+    .bind(keys, JSON.stringify(waiting), now.toISOString())
+    .run();
+  const withdrawn = new Set(open.map((r) => r.idempotency_key));
+  const { results: kept } = await db
+    .prepare(`SELECT idempotency_key FROM drafts WHERE idempotency_key IN (SELECT value FROM json_each(?1)) AND status IN ('approved', 'sent')`)
+    .bind(keys)
+    .all<{ idempotency_key: string }>();
+  const keptKeys = new Set(kept.map((r) => r.idempotency_key));
+  const step = Math.max(0, ...MEETING_DRAFT_STEPS.filter((d) => keptKeys.has(convertDraftKey(code, d.kind))).map((d) => d.step));
+  await db
+    .prepare("UPDATE calendar_meetings SET sequence_step = ?2, sequence_next_at = NULL, updated_at = ?3 WHERE event_id = ?1")
+    .bind(meeting.event_id, step > 0 ? step : null, now.toISOString())
+    .run();
+  if (withdrawn.has(convertDraftKey(code, "recap")) && Date.parse(meeting.ends_at) <= now.getTime()) {
+    const contact = await db.prepare("SELECT id, email, first_name, timezone, account_key FROM contacts WHERE id = ?1").bind(meeting.contact_id).first<{ id: string; email: string; first_name: string | null; timezone: string | null; account_key: string | null }>();
+    if (contact) {
+      const deal = await dealFor(db, contact.id, contact.account_key).catch(() => null);
+      const draft = await createConvertDraft(
+        { db, config: deps.config, operator: deps.operator, shown: deps.shown, chatId: deps.chatId, now, log: deps.log },
+        { code, kind: "recap", contact, dealId: deal?.id ?? null, meetingStart: meeting.starts_at, attribution: meeting.attribution },
+      );
+      if (draft.status === "created") {
+        await db.prepare("UPDATE calendar_meetings SET sequence_step = MAX(COALESCE(sequence_step, 0), 1), updated_at = ?2 WHERE event_id = ?1").bind(meeting.event_id, now.toISOString()).run();
+      }
+    }
+  }
+  return withdrawn.size;
+}
+
+/**
+ * Attributed meetings in the window that the listing no longer returns. Their time stays as it was
+ * but is stale (followups.ts holds their reminders and held question back); the operator is told
+ * once per meeting and time. Returns how many. Never throws.
+ */
+async function noticeMissing(deps: SyncDeps, window: { start: string; end: string }, listedIds: string): Promise<number> {
+  const { db, log } = deps;
+  // An hour inside each edge, so an event the window only grazes is not taken for a missing one.
+  const from = new Date(Date.parse(window.start) + 3_600_000).toISOString();
+  const to = new Date(Date.parse(window.end) - 3_600_000).toISOString();
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT cm.event_id, ce.code, cm.contact_id, cm.starts_at FROM calendar_meetings cm
+           JOIN calendar_events ce ON ce.event_id = cm.event_id AND ce.state = 'attributed'
+          WHERE cm.status <> 'cancelled' AND cm.ends_at > ?1 AND cm.starts_at < ?2
+            AND cm.event_id NOT IN (SELECT value FROM json_each(?3))
+          ORDER BY cm.starts_at LIMIT ?4`,
+      )
+      .bind(from, to, listedIds, deps.maxRows)
+      .all<{ event_id: string; code: string; contact_id: string; starts_at: string }>();
+    for (const m of results) {
+      const name = await contactLine(db, m.contact_id);
+      await noticeOnce(
+        deps,
+        meetingEffectKey(m.code),
+        `meeting_missing:${m.starts_at}`,
+        `The meeting with ${name} on ${when(m.starts_at)} [${m.code}] is no longer in the calendar (moved more than ${CONVERT_LIMITS.syncAheadDays} days out, or deleted). Reminders and the held question are paused until it shows up again. If it is off, meeting-unlink-${m.code} makes it inert.`,
+      );
+    }
+    return results.length;
+  } catch (error) {
+    log.warn("meetings missing from the calendar could not be checked", { error: sanitizeErrorMessage(error) });
+    return 0;
+  }
+}
+
 /** One sync run. Throws only when the calendar cannot be listed or read at all. */
 export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
   const { db, now, log } = deps;
-  const result: SyncResult = { listed: 0, handled: 0, booked: 0, ambiguous: 0, unmatched: 0, moved: 0, cancelled: 0, failed: 0, truncated: false };
-  const listed = await deps.calendar.listEvents(syncWindow(now));
+  const result: SyncResult = { listed: 0, handled: 0, booked: 0, ambiguous: 0, unmatched: 0, moved: 0, cancelled: 0, missing: 0, failed: 0, truncated: false };
+  const window = syncWindow(now);
+  const state = await readSyncState(db);
+  const baseline = baselineAt(state, now);
+  const listed = await deps.calendar.listEvents(window);
   result.listed = listed.length;
+  const listedIds = JSON.stringify(listed.map((e) => e.id));
+  // Every listed event was seen now, handled this run or not: a meeting whose event is older than
+  // the last sync dropped out of the listing. If this cannot be written, those times read as stale,
+  // which only holds reminders back.
+  try {
+    await db.prepare("UPDATE calendar_events SET last_seen_at = ?2 WHERE event_id IN (SELECT value FROM json_each(?1))").bind(listedIds, now.toISOString()).run();
+  } catch (error) {
+    log.warn("the listed events could not be marked seen; their reminders wait for the next sync", { error: sanitizeErrorMessage(error) });
+  }
   // Events already known come first, so a cut never drops a cancellation of a booked meeting.
   const { results: knownIds } = await db
     .prepare("SELECT event_id FROM calendar_events WHERE event_id IN (SELECT value FROM json_each(?1))")
-    .bind(JSON.stringify(listed.map((e) => e.id)))
+    .bind(listedIds)
     .all<{ event_id: string }>();
   const isKnown = new Set(knownIds.map((r) => r.event_id));
   const events = [...listed].sort(
@@ -292,7 +448,7 @@ export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
       .bind(ids)
       .all<EventRow>(),
     db
-      .prepare("SELECT event_id, contact_id, starts_at, ends_at, status, attribution, outcome, first_seen_at FROM calendar_meetings WHERE event_id IN (SELECT value FROM json_each(?1))")
+      .prepare("SELECT event_id, contact_id, starts_at, ends_at, status, attribution, outcome, first_seen_at, before_baseline FROM calendar_meetings WHERE event_id IN (SELECT value FROM json_each(?1))")
       .bind(ids)
       .all<MeetingRecord>(),
   ]);
@@ -362,8 +518,10 @@ export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
         if (restored) await withdrawConvertDrafts(db, code, ["rebook"], now);
         if (moved && !restored) {
           result.moved += 1;
+          const redrafted = await redraftForMove(deps, { ...meeting, starts_at: start, ends_at: end }, code, meeting.starts_at);
           const name = await contactLine(db, meeting.contact_id);
-          await noticeOnce(deps, meetingEffectKey(code), `meeting_moved:${start}`, `The meeting with ${name} [${code}] moved to ${when(start)}. Reminders are reset.`);
+          const drafts = redrafted > 0 ? ` ${redrafted} open draft${redrafted === 1 ? " named" : "s named"} the old day, so ${redrafted === 1 ? "it was" : "they were"} withdrawn and will be drafted again for the new time.` : "";
+          await noticeOnce(deps, meetingEffectKey(code), `meeting_moved:${start}`, `The meeting with ${name} [${code}] moved to ${when(start)}. Reminders are reset.${drafts}`);
         }
         await applyBooked(
           { db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now, log },
@@ -408,7 +566,7 @@ export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
       const attribution = await attributeEvent(db, classified, new Date(firstSeenAt));
       if (attribution.kind === "attributed") {
         await saveEvent(deps, event, classified, code, "attributed", firstSeenAt, attribution.contactIds.slice(1));
-        await attach(deps, event, code, attribution, firstSeenAt);
+        await attach(deps, event, code, attribution, firstSeenAt, baseline);
         result.booked += 1;
       } else if (attribution.kind === "ambiguous") {
         await saveEvent(deps, event, classified, code, "ambiguous", firstSeenAt);
@@ -426,6 +584,28 @@ export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
       result.failed += 1;
       log.warn("a calendar event could not be handled; the next sync tries again", { error: sanitizeErrorMessage(error) });
     }
+  }
+
+  result.missing = await noticeMissing(deps, window, listedIds);
+
+  try {
+    await retryCreditWithdrawals(deps, CONVERT_LIMITS.withdrawRetries);
+  } catch (error) {
+    log.warn("failed credit withdrawals could not be read; the next sync tries again", { error: sanitizeErrorMessage(error) });
+  }
+
+  // The listing is complete even when handling was cut short, so every listed event is marked seen
+  // now: this run's time is the freshness mark, and the baseline carries on.
+  try {
+    await db
+      .prepare(
+        `INSERT INTO calendar_sync_state (id, baseline_at, last_synced_at, created_at, updated_at) VALUES (?1, ?2, ?3, ?3, ?3)
+         ON CONFLICT (id) DO UPDATE SET baseline_at = excluded.baseline_at, last_synced_at = excluded.last_synced_at, updated_at = excluded.updated_at`,
+      )
+      .bind(SYNC_STATE_ID, baseline, now.toISOString())
+      .run();
+  } catch (error) {
+    log.warn("the sync state could not be written; reminders wait for the next sync", { error: sanitizeErrorMessage(error) });
   }
 
   try {

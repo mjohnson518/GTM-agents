@@ -99,6 +99,33 @@ export async function pruneRunRows(db: D1Database, options: PruneOptions): Promi
   return { deleted, total, complete };
 }
 
+/** Days a scheduled job's per-minute run claim is kept: far past any queue redelivery or cron health rerun. */
+export const JOB_RUN_CLAIM_DAYS = 30;
+
+/**
+ * Delete per-minute job run claims (event_effects rows the job queue writes, keyed
+ * `job-run:<job>:<minute>` with effect "run") older than JOB_RUN_CLAIM_DAYS, in batches. No other
+ * claim is touched. Throws on a database error. Returns the rows deleted.
+ */
+export async function pruneJobRunClaims(db: D1Database, options: PruneOptions): Promise<number> {
+  const cutoff = new Date(options.now.getTime() - JOB_RUN_CLAIM_DAYS * 86_400_000).toISOString();
+  const limit = Math.max(1, Math.min(options.batchRows ?? RETENTION_BATCH_ROWS, options.maxRows));
+  let total = 0;
+  while (total < options.maxRows && !options.signal?.aborted) {
+    const result = await db
+      .prepare(
+        `DELETE FROM event_effects WHERE rowid IN (
+           SELECT rowid FROM event_effects WHERE effect = 'run' AND substr(event_id, 1, 8) = 'job-run:' AND created_at < ?1 LIMIT ?2)`,
+      )
+      .bind(cutoff, Math.min(limit, options.maxRows - total))
+      .run();
+    const changes = Number(result.meta?.changes ?? 0);
+    total += changes;
+    if (changes < limit) break;
+  }
+  return total;
+}
+
 export interface RetentionJobOptions {
   /** When the job runs, as a job schedule. Defaults to 03:40 UTC every day. */
   schedule: string;
@@ -128,8 +155,10 @@ export function createRetentionJob<E extends { DB: D1Database }>(options: Partia
       if (!on) return { summary: "flag off" };
       const result = await pruneRunRows(ctx.env.DB, { now: ctx.now, maxRows: ctx.ceilings.maxRows ?? RETENTION_MAX_ROWS, signal: ctx.signal });
       const { skipped, completed, failed } = result.deleted;
+      const room = Math.max(0, (ctx.ceilings.maxRows ?? RETENTION_MAX_ROWS) - result.total);
+      const claims = room > 0 ? await pruneJobRunClaims(ctx.env.DB, { now: ctx.now, maxRows: room, signal: ctx.signal }) : 0;
       const rest = result.complete ? "" : "; older rows remain for the next run";
-      return { summary: `deleted ${result.total} run rows (${skipped} skipped, ${completed} completed, ${failed} failed)${rest}`, rows: result.total };
+      return { summary: `deleted ${result.total} run rows (${skipped} skipped, ${completed} completed, ${failed} failed) and ${claims} old job run claims${rest}`, rows: result.total + claims };
     },
   });
 }

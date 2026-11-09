@@ -130,7 +130,12 @@ export interface NewCandidate {
   jobTitle?: string | null;
   accountName?: string | null;
   accountKey?: string | null;
-  status: Extract<CandidateStatus, "raw" | "rejected">;
+  /**
+   * raw or rejected. qualified is only for a source whose rows carry their own fixed score (a
+   * webset row with a clean work address); promotion still runs every check on it.
+   */
+  status: Extract<CandidateStatus, "raw" | "rejected" | "qualified">;
+  qualificationScore?: number | null;
   notes?: string | null;
   attributes?: CandidateAttributes;
 }
@@ -141,8 +146,8 @@ export async function insertCandidate(db: D1Database, c: NewCandidate, now: Date
   const result = await db
     .prepare(
       `INSERT OR IGNORE INTO candidates (id, source, source_ref, query_id, search_type, url, result_title, snippet, category, first_name, last_name,
-         email, email_source, job_title, account_name, account_key, status, qualification_notes, attributes, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20)`,
+         email, email_source, job_title, account_name, account_key, status, qualification_notes, attributes, created_at, updated_at, qualification_score)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -165,6 +170,7 @@ export async function insertCandidate(db: D1Database, c: NewCandidate, now: Date
       c.notes ?? null,
       JSON.stringify(c.attributes ?? {}),
       stamp,
+      c.status === "qualified" ? (c.qualificationScore ?? null) : null,
     )
     .run();
   return (result.meta.changes ?? 0) > 0;

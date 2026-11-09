@@ -4,7 +4,8 @@
 //   1. checks the system halt (fail closed), the job's flag (fail closed) and, for a job that
 //      declares ceilings.maxSpendCents or has a budget:job:<job>:daily_cents cap, the budget gate
 //      (fail closed). A job held by any of them is not run, and leaves a "skipped" run row saying
-//      why; a hold caused by state that could not be read says "unreadable";
+//      why; a hold caused by state that could not be read says "unreadable". A fire the jobs queue
+//      delivered after the job's next fire had already come (ctx.superseded) is skipped the same way;
 //   2. skips a job whose previous run is still going (a "running" row younger than the job's ceiling;
 //      an older one is stale and does not block), so the same job does not run twice at once. The
 //      check reads run rows, which are bookkeeping, so it fails open: when they cannot be read, the
@@ -115,6 +116,29 @@ async function finishRun(db: D1Database, row: RunRow): Promise<void> {
     )
     .bind(row.id, row.task, row.trigger, row.status, row.startedAt, row.finishedAt ?? null, row.durationMs ?? null, row.summary ?? null, row.error ?? null, row.errorClass ?? null)
     .run();
+}
+
+/**
+ * Record a finished run row for a job that never reached the runner (a dead-lettered queue message).
+ * Bookkeeping: throws on a database error, and the caller logs and drops it.
+ */
+export async function recordJobRun(
+  db: D1Database,
+  row: { job: string; trigger?: JobTrigger; status: "failed" | "skipped"; at: Date; summary?: string; error?: string },
+): Promise<void> {
+  const at = row.at.toISOString();
+  const error = row.error !== undefined ? sanitizeErrorMessage(row.error) : undefined;
+  await insertRun(db, {
+    id: crypto.randomUUID(),
+    task: row.job,
+    trigger: row.trigger ?? "cron",
+    status: row.status,
+    startedAt: at,
+    finishedAt: at,
+    durationMs: 0,
+    ...(row.summary !== undefined ? { summary: row.summary } : {}),
+    ...(error !== undefined ? { error, errorClass: classifyJobError(error) } : {}),
+  });
 }
 
 /** Failures today, and the number of consecutive days (ending today) with a failure and no success. */
@@ -274,6 +298,8 @@ export function createJobRunner<E extends RunnerEnv>(options: JobRunnerOptions<E
       }
       if (!isFlagOn(value)) return skip("flag off");
     }
+    // A fire the queue delivered after the job's next fire had come: the later fire runs it.
+    if (ctx.superseded) return skip(ctx.superseded);
     const notStarted = ctx.notStarted;
     if (!notStarted) {
       // No overlapping runs: a previous run younger than the ceiling is still going.

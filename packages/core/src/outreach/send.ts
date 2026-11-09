@@ -61,6 +61,11 @@ export interface StoredDraft {
   /** Measurement bookkeeping set at composition: the template file's SHA-256 and the send's cohort. */
   template_sha256?: string | null;
   cohort?: string | null;
+  /** The experiment arm the cold batch pinned the contact to (campaign_contacts), credited on the ledger. */
+  experiment_id?: string | null;
+  experiment_arm?: string | null;
+  /** The send-time test's slot for this draft (send_slot_schedules), applied by the send function. */
+  send_slot?: string | null;
 }
 
 /** Load drafts with their contact, in the order given. Throws on a database error. */
@@ -71,10 +76,13 @@ export async function loadDrafts(db: D1Database, ids: readonly string[]): Promis
       .prepare(
         `SELECT d.id, d.contact_id, d.campaign_id, d.template_id, d.kind, d.recipient_email, d.recipient_name, d.subject, d.body,
                 d.status, d.approved_digest, d.created_at, d.idempotency_key, d.template_sha256, d.cohort,
-                c.email AS contact_email, c.warmth, c.account_key, c.job_title, c.last_contacted_at, l.state AS lifecycle_state
+                c.email AS contact_email, c.warmth, c.account_key, c.job_title, c.last_contacted_at, l.state AS lifecycle_state,
+                cc.experiment_id, cc.experiment_arm, ss.slot AS send_slot
            FROM drafts d
            LEFT JOIN contacts c ON c.id = d.contact_id
            LEFT JOIN contact_lifecycle l ON l.contact_id = d.contact_id
+           LEFT JOIN campaign_contacts cc ON cc.campaign_id = d.campaign_id AND cc.contact_id = d.contact_id AND cc.draft_id = d.id
+           LEFT JOIN send_slot_schedules ss ON ss.draft_id = d.id
           WHERE d.id IN (${placeholders(chunk.length)})`,
       )
       .bind(...chunk)
@@ -223,6 +231,8 @@ function toItem(draft: StoredDraft, approvedDigest: string): OutreachItem | null
     approvedDigest,
     ...(draft.template_sha256 ? { templateSha256: draft.template_sha256 } : {}),
     ...(draft.cohort ? { cohort: draft.cohort } : {}),
+    ...(draft.experiment_id && draft.experiment_arm ? { experimentId: draft.experiment_id, experimentArm: draft.experiment_arm } : {}),
+    ...(draft.send_slot === "early" || draft.send_slot === "afternoon" ? { sendSlot: draft.send_slot } : {}),
   };
 }
 

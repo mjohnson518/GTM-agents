@@ -8,6 +8,7 @@ export const INLINE_VARIABLES = [
   "account_name",
   "angle_opener",
   "angle_age",
+  "angle_headline",
   "persona_hint",
   "proven_insight",
   "original_subject",

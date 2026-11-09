@@ -11,7 +11,8 @@
 //   5. it is not suppressed, tombstoned or opted out (checkSuppression). A check that cannot be
 //      read holds the candidate and stops the stage, because the check fails closed;
 //   6. it has no unresolved evidence conflict: a conflict is held for a person, never guessed at;
-//   7. the person fit, recomputed from the current brain, is keep, and nothing is on the never list;
+//   7. the person fit, recomputed from the current brain, is keep, nothing is on the never list, and
+//      the account is not scored below the fit floor (a source may insert rows already qualified);
 //   8. a fresh verification passes the promotion policy (verification:promotion_policy): only
 //      deliverable under the default `strict`, risky too under `allow_risky`. Unknown results are
 //      retried on later runs and rejected after three; anything else is rejected.
@@ -20,11 +21,13 @@
 // move to promoted, its evidence linked to the contact, the persona seat and the fit verdict. The
 // contact insert and the candidate update are both guarded on the candidate still being qualified,
 // so two runs cannot promote one candidate twice. A missing first name is allowed: drafting holds
-// such a contact later rather than greet a guessed name.
+// such a contact later rather than greet a guessed name. After the batch, a signal held at the
+// account for its first contacts is carried to the new contact (signals/carry.ts).
 import { accountKey } from "../data/keys.ts";
 import { contactEmailFields } from "../data/contacts.ts";
 import { checkSuppression } from "../sending/suppression.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
+import { LOW_FIT_SCORE } from "../scoring/fit.ts";
 import { classifyTitle } from "../scoring/titles.ts";
 import { hasOpenConflict } from "../enrichment/evidence.ts";
 import { MAX_UNKNOWN_ATTEMPTS, emailConfidence, passesPromotionPolicy, verifyAddress } from "../enrichment/verification.ts";
@@ -33,6 +36,7 @@ import { candidateUpdate, fitAttribute, loadTitleReviews, parseAttributes, updat
 import type { StageContext } from "./context.ts";
 import type { PromotionPolicy } from "./flags.ts";
 import { isRoleAddress, matchNeverList } from "./identity.ts";
+import { carrySignals } from "../signals/carry.ts";
 
 export interface PromoteStats {
   processed: number;
@@ -128,6 +132,8 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
   if (fit.decision !== "keep") return reject(`person fit is ${fit.decision}: ${fit.reason}`);
   const never = matchNeverList(ctx.brain.never, { domain: account, accountName: row.account_name, title: row.job_title });
   if (never) return reject(never);
+  const accountFit = await db.prepare("SELECT fit_score FROM account_fit WHERE account_key = ?1 AND status = 'scored'").bind(account).first<{ fit_score: number | null }>();
+  if (accountFit?.fit_score !== null && accountFit?.fit_score !== undefined && accountFit.fit_score < LOW_FIT_SCORE) return reject(`the account's fit score is below ${LOW_FIT_SCORE}`);
 
   // 8: verification and the policy.
   const verification = await verifyAddress(fields.email, { db, verifier: options.verifier, gate: ctx.gate, now, log: ctx.log });
@@ -215,5 +221,12 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
     return "held";
   }
   const created = await db.prepare("SELECT 1 AS hit FROM contacts WHERE id = ?1").bind(contactId).first();
-  return created ? "promoted" : "held";
+  if (!created) return "held";
+  // Signal carry is bookkeeping on this path: an error is logged and dropped.
+  try {
+    await carrySignals(db, contactId, now);
+  } catch (error) {
+    ctx.log.warn("signal carry failed; the contact is promoted without it", { contact: contactId, error: sanitizeErrorMessage(error) });
+  }
+  return "promoted";
 }

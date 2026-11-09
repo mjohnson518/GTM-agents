@@ -14,11 +14,12 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 4. Replies | Done (behind `inbox:enabled` and the `replies:*` flags; no reply is sent automatically yet) |
 | 5. Measurement | Done (the scorecard and digests behind the `ops:*` flags) |
 | 6. Sequences | Done (behind `sequences:enabled`) |
-| 7. Experiments | Planned |
+| 7. Experiments | Done (behind `experiments:enabled`; Thompson sampling behind `outreach:allocation_mode`) |
 | 8. Convert | Done (calendar sync behind `convert:calendar_enabled`; post-meeting messages are drafts, and proof of value is not built yet) |
 | 9. Lifecycle | Done (behind `lifecycle:enabled` and `billing:enabled`; billing through the port, with no vendor adapter yet) |
 | 10. Autonomy | Done (levels raised only by a confirmed operator command; the weekly review behind `autonomy_review:enabled`; automatic replies behind `inbound:auto_send_tier` and level 2) |
-| 11 to 14 | Planned |
+| 11. Signals and scale | Done (each source behind its own `signals:*` flag; the intent score in shadow until enforced) |
+| 12 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -43,13 +44,15 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - replies ([REPLIES.md](REPLIES.md)): model triage, routing by intent, the meeting qualifier, drafts from approved facts, approved sends from the warm mailbox with freshness checks, reply-owed reminders, mailbox draft mirroring, and the one definition of a positive reply;
 - measurement ([MEASUREMENT.md](MEASUREMENT.md)): one definition of each metric in one module (sends, matured samples, replies and positive replies, first-touch attribution, bounce and complaint rates, reply SLA, spend, failed jobs, measurement health, holdout lift), the daily scorecard, the funnel and cost digests and the conversion report, all reading the same definitions;
 - meetings ([CONVERT.md](CONVERT.md)): read-only Google Calendar sync with privacy-limited fields, attribution without click tracking, the one "meeting booked" definition, a booking that stops outreach and writes a prep brief, reminders, held and no-show handling, and post-meeting drafts;
+- experiments ([EXPERIMENTS.md](EXPERIMENTS.md)): Thompson sampling with a protected control, account-clustered assignment, template, subject and send-time tests, pre-registration with two-step approval, conclusions only on the pre-registered metric with healthy measurement, the copy-change gate, and a weekly rule-based self-review;
+- signals ([SIGNALS.md](SIGNALS.md)): Exa websets, search monitors and dated news, public hiring boards, responder lookalikes and coverage fill, signal carry to new contacts, an intent score, and openers built only from real, dated signals;
 - earned autonomy ([AUTONOMY.md](AUTONOMY.md)): one level reader that fails closed, permanently human-only classes capped by code and by the database, evidence from every decision point, weekly promotion proposals only a person confirms, immediate demotion after incidents, an outbound writer registry with evals, and narrow, rule-checked automatic replies;
 - lifecycle ([LIFECYCLE.md](LIFECYCLE.md)): the host SDK, the event spine, signed product and billing webhooks, the lifecycle state machine with one writer, the deal mirror, nightly reconciliation, MRR snapshots, and one definition each of sign-ups, activations and new paying customers;
 - run-row retention and one definition of the bounce rate, shared by the ramp, the bounce monitor, readiness and the reports;
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
 - the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail`, `email-cloudflare` and `calendar-google`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. Experiments (milestone 7), signals (11), self-improvement (12), the ship loop (13) and the dashboard (14) remain.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. Self-improvement (12), the dashboard (14) and the optional ship loop module (13) remain.
 
 ## Milestones
 

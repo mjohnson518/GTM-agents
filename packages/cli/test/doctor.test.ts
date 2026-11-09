@@ -2,7 +2,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { doctorCommand, triggerCheck } from "../src/commands/doctor.ts";
+import { doctorCommand, jobsQueueCheck, triggerCheck } from "../src/commands/doctor.ts";
 import type { CommandRunner } from "../src/lib/io.ts";
 import { ADAPTERS_DIR, makeDeployment, setUpDeployment } from "./deployment.ts";
 import { FakeAccount } from "./fake-wrangler.ts";
@@ -101,6 +101,33 @@ describe("gtm doctor", () => {
     expect(extra.status).toBe("FAIL");
     expect(extra.detail).toContain('"0 9 * * MON-FRI"');
     expect(triggerCheck(["* * * * *", "* * * * *"]).status).toBe("FAIL");
+  });
+
+  it("checks the jobs queue: optional, but once bound it needs a consumer, one job per batch and a watched dead-letter queue", () => {
+    const producers = [{ binding: "JOBS_QUEUE", queue: "acme-gtm-jobs" }];
+    const good = { queues: { producers, consumers: [
+      { queue: "acme-gtm-jobs", max_batch_size: 1, max_retries: 1, dead_letter_queue: "acme-gtm-jobs-dlq" },
+      { queue: "acme-gtm-jobs-dlq", max_batch_size: 10, max_retries: 0 },
+    ] } };
+    expect(jobsQueueCheck(good).status).toBe("PASS");
+    expect(jobsQueueCheck({ queues: { producers: [] } })).toMatchObject({ status: "INFO" });
+    expect(jobsQueueCheck({ queues: { producers, consumers: [] } })).toMatchObject({ status: "FAIL" });
+    const batched = jobsQueueCheck({ queues: { producers, consumers: [{ queue: "acme-gtm-jobs", max_batch_size: 10, max_retries: 5 }] } });
+    expect(batched.status).toBe("WARN");
+    expect(batched.detail).toContain("max_batch_size to 1");
+    expect(batched.detail).toContain("max_retries is 5");
+    expect(batched.detail).toContain("dead_letter_queue");
+    const unwatched = jobsQueueCheck({ queues: { producers, consumers: [{ queue: "acme-gtm-jobs", max_batch_size: 1, max_retries: 0, dead_letter_queue: "acme-gtm-jobs-dlq" }] } });
+    expect(unwatched).toMatchObject({ status: "WARN" });
+    expect(unwatched.detail).toContain("consumer for its dead-letter queue");
+  });
+
+  it("passes the template's jobs queue, in production and staging", async () => {
+    for (const args of [[], ["--env", "staging"]]) {
+      const io = captureIo();
+      await doctorCommand(["--config", "apps/worker", ...args], io, { runner: noRemote });
+      expect(io.text()).toMatch(/PASS\s+jobs queue\s+due jobs go to \$\{(STAGING_)?JOBS_QUEUE_NAME\}/);
+    }
   });
 
   it("checks the trigger an environment inherits from the top level", async () => {

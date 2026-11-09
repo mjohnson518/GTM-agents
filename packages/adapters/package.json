@@ -9,6 +9,8 @@
     "./_contract/*": "./_contract/*",
     "./data-exa": "./data-exa/index.ts",
     "./data-exa/manifest.json": "./data-exa/manifest.json",
+    "./data-jobboards": "./data-jobboards/index.ts",
+    "./data-jobboards/manifest.json": "./data-jobboards/manifest.json",
     "./data-hunter": "./data-hunter/index.ts",
     "./data-hunter/manifest.json": "./data-hunter/manifest.json",
     "./operator-telegram": "./operator-telegram/index.ts",

@@ -135,6 +135,15 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - The existing `calendar_meetings` hold booked meetings, `meetings.summary` the operator's notes (keyed `calendar:<code>:<contact>`), and `deal_handoffs` the static briefs (`trigger` `meeting_booked:<code>` or `stage:<stage>`). Indexes on `calendar_meetings (first_seen_at)` and `deal_handoffs (deal_id, trigger)`.
 - 0022 indexes `execution_runs (task_name, status, started_at)` for the retention job.
 
+### Experiments and calendar baseline (0024, 0026)
+
+- `experiments.control_template_sha256` and `treatment_template_sha256` (0024): both templates' copy hashes, recorded at start, so edited copy puts an experiment on hold rather than mixing versions. Experiments otherwise use the 0009 tables (`experiments`, `experiment_assignments` pinned per account, subject tests and variants, proposals).
+- 0026 records calendar sync's first-sync baseline, so meetings that had started before it are never counted as new bookings ([CONVERT.md](CONVERT.md)).
+
+### Signals (0025)
+
+- `discovery_queries.provider_ref` (the provider's id for a webset or monitor), `monitor_items.result_id` and `monitor_items.payload` (a hit, as data), with unique indexes on a monitor's result id and URL so a redelivered hit is stored once. Signals stay in `signal_events` (0010), each with a source type, category, severity, source URL, event date, evidence (data only), expiry, and a contact or account; the intent score lives in `contacts.attributes.intent`.
+
 ### Autonomy (0023)
 
 - `autonomy_level_changes`: every level change, by an operator's confirmed command or by a demotion; a class acts at the lower of its stored flag level and its latest recorded change. `autonomy_proposals`: level changes waiting for a confirm (from `autonomy-set` or the weekly review). Both refuse a permanently human-only class above level 1 with a CHECK. An index on `suppression (created_at)` serves the hourly opt-out rate check. Evidence stays in `autonomy_events` (0012).

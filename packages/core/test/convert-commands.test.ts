@@ -104,6 +104,8 @@ describe("meeting commands in the operator chat", () => {
   });
 
   it("unlinks a meeting: inert, credit and drafts withdrawn, and calendar sync leaves it alone", async () => {
+    // Calendar sync has been running for a day, so a meeting that started an hour ago is a real booking.
+    await db.prepare("INSERT INTO calendar_sync_state (id, baseline_at, last_synced_at) VALUES ('calendar', ?1, ?1)").bind(new Date(NOW.getTime() - 86_400_000).toISOString()).run();
     const code = await ambiguousMeeting("evu", NOW.getTime() - 3_600_000);
     await say(`meeting-link-${code} ${jane}`);
     expect(await db.prepare("SELECT positive_reply_at FROM outreach_sends WHERE contact_id = ?1").bind(jane).first()).toEqual({ positive_reply_at: NOW.toISOString() });

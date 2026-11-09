@@ -74,6 +74,7 @@ import { DEFAULT_TIMEZONE, recipientTimezone } from "./timezone.ts";
 import type { DeferReason, OutreachItem, OutreachOutcome, SendOutreach, SendRefusal } from "./types.ts";
 import { isUsableSigningKey, publicOrigin, signUnsubscribeToken, unsubscribeUrl } from "./unsubscribe-token.ts";
 import { isWithinWindow, nextAllowedTime, windowForPath } from "./window.ts";
+import { slotWindow } from "../experiments/send-time.ts";
 
 export interface OutreachSenderOptions {
   /** The zone for a contact with no timezone and a location that is not recognized. */
@@ -466,7 +467,9 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         const zone = recipientTimezone(w.contact, options.defaultTimezone).timezone;
         w.timezone = zone;
         zones.set(w.index, zone);
-        const window = windowForPath(w.path, deps.config.sending);
+        const configured = windowForPath(w.path, deps.config.sending);
+        // The send-time test narrows the window to the item's slot; it never widens it.
+        const window = configured && w.item.sendSlot ? slotWindow(configured, w.item.sendSlot) : configured;
         if (!window || isWithinWindow(now, zone, window)) return true;
         defer(w, "outside_window", nextAllowedTime(now, zone, window));
         return false;
@@ -892,6 +895,7 @@ export function deferredItemJson(item: OutreachItem): string {
     ...(item.approvedDigest !== undefined ? { approvedDigest: item.approvedDigest } : {}),
     ...(item.templateSha256 !== undefined ? { templateSha256: item.templateSha256 } : {}),
     ...(item.cohort !== undefined ? { cohort: item.cohort } : {}),
+    ...(item.sendSlot !== undefined ? { sendSlot: item.sendSlot } : {}),
   });
 }
 

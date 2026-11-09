@@ -84,6 +84,7 @@ export async function resetConvertTables(db: D1Database): Promise<void> {
   const tables = [
     "calendar_events",
     "calendar_meetings",
+    "calendar_sync_state",
     "meetings",
     "deal_handoffs",
     "deal_stage_history",

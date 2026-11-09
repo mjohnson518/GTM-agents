@@ -78,11 +78,11 @@ describe("the convert gate", () => {
     expect(deal).toMatchObject({ stage: "demo_scheduled", contact_id: jane, name: "Globex Corporation" });
     expect(await db.prepare("SELECT from_stage, to_stage FROM deal_stage_history WHERE deal_id = ?1").bind(deal?.id).first()).toEqual({ from_stage: "prospecting", to_stage: "demo_scheduled" });
 
-    // The meeting counts as positive for the first touch that earned it, and against its template.
+    // The meeting counts as positive for the first touch that earned it. No second counter is kept on the template.
     expect(await db.prepare("SELECT positive_reply_at FROM outreach_sends WHERE contact_id = ?1").bind(jane).first()).toEqual({ positive_reply_at: NOW.toISOString() });
-    expect(await db.prepare("SELECT times_meeting FROM templates WHERE id = 'cold-intro'").first()).toEqual({ times_meeting: 1 });
+    expect(await db.prepare("SELECT times_meeting FROM templates WHERE id = 'cold-intro'").first()).toEqual({ times_meeting: 0 });
     const week = { from: new Date(NOW.getTime() - 7 * DAY).toISOString(), to: new Date(NOW.getTime() + DAY).toISOString() };
-    expect(await countMeetings(db, week)).toEqual({ booked: 1, held: 0, noShows: 0, cancelled: 0 });
+    expect(await countMeetings(db, week)).toEqual({ booked: 1, bookedAfterOutreach: 1, held: 0, heldAfterOutreach: 0, noShows: 0, cancelled: 0 });
     expect((await countReplies(db, week)).positiveReplies).toBe(1);
 
     // The prep brief is stored and sent to the operator with the booking notice.
@@ -106,7 +106,7 @@ describe("the convert gate", () => {
     expect(operator.messages).toHaveLength(1);
     expect(await db.prepare("SELECT COUNT(*) AS n FROM deals").first()).toEqual({ n: 1 });
     expect(await db.prepare("SELECT COUNT(*) AS n FROM deal_handoffs").first()).toEqual({ n: 1 });
-    expect(await db.prepare("SELECT times_meeting FROM templates WHERE id = 'cold-intro'").first()).toEqual({ times_meeting: 1 });
+    expect(await db.prepare("SELECT times_meeting FROM templates WHERE id = 'cold-intro'").first()).toEqual({ times_meeting: 0 });
   });
 
   it("retries a booked step that failed, on the next sync", async () => {

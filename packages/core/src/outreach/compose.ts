@@ -10,9 +10,14 @@
 //   - persona_hint: the persona playbook's value frame for the contact's persona;
 //   - booking_url, sender_name: the config;
 //   - attributes.<key>: the contact's attributes, over the account's, when short single-line text
-//     with no link; a template that uses them is reviewed by a person for every draft.
-// angle_opener, angle_age, proven_insight, original_subject and company_context have no source in
-// the cold batch yet, so a template that uses them is held for every contact.
+//     with no link; a template that uses them is reviewed by a person for every draft;
+//   - angle_opener, angle_age, angle_headline: the contact's angle (signals/angles.ts), built only
+//     from a real, unexpired, dated signal: a fixed opener with the account's name and the event's
+//     dated age. The caller loads the angles (loadAngles) into ComposeContext.angles; a contact with
+//     no angle has no value for them, so a template that uses them is held for that contact. The
+//     headline is set only for whitelisted sources, and a template that uses it is reviewed per draft.
+// proven_insight, original_subject and company_context have no source in the cold batch yet, so a
+// template that uses them is held for every contact.
 //
 // Skip rather than guess: renderTemplate reports every variable with no value, and the draft is held
 // (MISSING_VARIABLE) instead of falling back to "there" or "your company". A contact no template
@@ -23,6 +28,7 @@ import type { ServedTemplate } from "../templates/store.ts";
 import { checkOutboundQuality, heldResult, isUsableAccountName, usableFirstName, withFinding, type LinkPolicy, type QualityResult } from "../quality/gate.ts";
 import { eligibleTemplates, type Rotation, type TargetFacts } from "./allocate.ts";
 import type { SelectionRow } from "./select.ts";
+import type { Angle } from "../signals/angles.ts";
 
 export interface CopyLines {
   segment: ReadonlyMap<string, string>;
@@ -38,6 +44,8 @@ export interface ComposeContext {
   links: LinkPolicy;
   /** Approved claims beyond the template and copy lines: the brain's facts and message pillars. */
   approvedClaims: readonly string[];
+  /** Contact id to its angle (signals/angles.ts loadAngles). Absent: no contact has an angle. */
+  angles?: ReadonlyMap<string, Angle>;
 }
 
 export type ComposeOutcome =
@@ -74,6 +82,7 @@ export function contactValues(row: SelectionRow, ctx: ComposeContext): TemplateV
     const k = lineKey(key);
     return k ? map.get(k) : undefined;
   };
+  const angle = ctx.angles?.get(row.id);
   return {
     first_name: usableFirstName(row.first_name) ?? undefined,
     last_name: clean(row.last_name, 60),
@@ -83,6 +92,9 @@ export function contactValues(row: SelectionRow, ctx: ComposeContext): TemplateV
     team_size_line: lookup(ctx.copyLines.team_size, row.team_size),
     persona_line: lookup(ctx.copyLines.persona, row.persona),
     persona_hint: lookup(ctx.playbooks, row.persona),
+    angle_opener: angle?.opener,
+    angle_age: angle?.age,
+    angle_headline: angle?.headline,
     booking_url: ctx.config.sending.bookingUrl,
     sender_name: ctx.config.agent.name,
     attributes: copyableAttributes({ ...parseJsonObject(row.account_attributes), ...parseJsonObject(row.attributes) }),
@@ -96,7 +108,8 @@ export function contactValues(row: SelectionRow, ctx: ComposeContext): TemplateV
  * never a source: providers write them, so a figure or offer they carry is held.
  */
 export function claimSources(template: ServedTemplate, values: TemplateValues, ctx: ComposeContext): string[] {
-  const own = [values.first_name, values.last_name, values.title, values.account_name].map((v) => (typeof v === "string" ? v : ""));
+  // The opener and age are fixed text and a date; the headline is provider text and never a source.
+  const own = [values.first_name, values.last_name, values.title, values.account_name, values.angle_opener, values.angle_age].map((v) => (typeof v === "string" ? v : ""));
   const lines = [...ctx.copyLines.segment.values(), ...ctx.copyLines.team_size.values(), ...ctx.copyLines.persona.values(), ...ctx.playbooks.values()];
   return [template.subject, template.body, ...own, ...lines, ctx.config.company.name, ctx.config.agent.name, ...ctx.approvedClaims].filter((s) => s.length > 0);
 }
@@ -113,6 +126,7 @@ export function copyableAttributes(record: Record<string, unknown>): Record<stri
 }
 
 const USES_ATTRIBUTES = /\{\{\s*attributes\./;
+const USES_HEADLINE = /\{\{\s*angle_headline\s*\}\}/;
 
 /** Compose one contact's first touch with the template the rotation picks, then gate it. */
 export function composeColdDraft(row: SelectionRow, templates: readonly ServedTemplate[], rotation: Rotation, ctx: ComposeContext): ComposeOutcome {
@@ -133,8 +147,8 @@ export function composeColdDraft(row: SelectionRow, templates: readonly ServedTe
     claimSources: claimSources(template, values, ctx),
   });
   // Site text and provider-written attributes differ in every draft, so a sampled review cannot cover them.
-  const perDraftReview = rendered.perDraftReview || USES_ATTRIBUTES.test(`${template.subject}\n${template.body}`);
-  if (perDraftReview) result = withFinding(result, "PER_DRAFT_REVIEW", "the template uses per-contact text from outside (site text or attributes), so a person reviews each draft");
+  const perDraftReview = rendered.perDraftReview || USES_ATTRIBUTES.test(`${template.subject}\n${template.body}`) || USES_HEADLINE.test(`${template.subject}\n${template.body}`);
+  if (perDraftReview) result = withFinding(result, "PER_DRAFT_REVIEW", "the template uses per-contact text from outside (site text, attributes or a quoted headline), so a person reviews each draft");
   return { status: "composed", template, subject: rendered.subject, body: rendered.body, perDraftReview, result };
 }
 

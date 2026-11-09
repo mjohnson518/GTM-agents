@@ -37,7 +37,9 @@ describe("gtm setup", () => {
       "vectorize create acme-gtm-memory",
       "queues create acme-gtm-events",
       "queues create acme-gtm-chat",
+      "queues create acme-gtm-jobs",
       "queues create acme-gtm-events-dlq",
+      "queues create acme-gtm-jobs-dlq",
     ]);
     // Wrangler is never allowed to edit the config itself, and KV titles are not prefixed with an env.
     for (const c of account.calls.filter((c) => c.args.includes("create") && c.args[0] !== "queues")) expect(c.args).toContain("--update-config=false");
@@ -53,8 +55,13 @@ describe("gtm setup", () => {
     expect((config.kv_namespaces as Array<Record<string, string>>)[0]?.id).toBe(account.kvNamespaces.get("acme-gtm-kv"));
     expect((config.vars as Record<string, string>).AGENT_BASE_URL).toBe("https://agent.acme.example");
     const queues = config.queues as { producers: Array<Record<string, string>>; consumers: Array<Record<string, string>> };
-    expect(queues.producers.map((p) => p.queue)).toEqual(["acme-gtm-events", "acme-gtm-chat"]);
+    expect(queues.producers.map((p) => p.queue)).toEqual(["acme-gtm-events", "acme-gtm-chat", "acme-gtm-jobs"]);
     expect(queues.consumers[0]).toMatchObject({ queue: "acme-gtm-events", dead_letter_queue: "acme-gtm-events-dlq" });
+    // The jobs queue, its dead-letter queue and the dead-letter queue's own consumer share two names.
+    expect(queues.consumers.slice(2).map((c) => [c.queue, c.dead_letter_queue])).toEqual([
+      ["acme-gtm-jobs", "acme-gtm-jobs-dlq"],
+      ["acme-gtm-jobs-dlq", undefined],
+    ]);
 
     // Staging keeps its placeholders, and every comment and line outside the filled values is untouched.
     expect(placeholderPaths(config.env.staging)).not.toEqual([]);
@@ -64,6 +71,7 @@ describe("gtm setup", () => {
     for (const [line] of changed) expect(line).toContain("${");
 
     expect(text).toContain("The chat queue is acme-gtm-chat");
+    expect(text).toContain("The jobs queue is acme-gtm-jobs, with dead-letter queue acme-gtm-jobs-dlq; list them in scheduler.jobsQueue and scheduler.deadLetterQueue");
     expect(text).toContain("npx wrangler secret put UNSUBSCRIBE_SIGNING_KEY");
     expect(text).toContain("npx wrangler secret put EXAMPLE_EMAIL_KEY");
   });
@@ -141,7 +149,7 @@ describe("gtm setup", () => {
     expect(code).toBe(0);
     expect(text).toMatch(/reuse\s+D1 database\s+acme-gtm-db.*already in this account/);
     expect(text).toMatch(/reuse\s+R2 bucket\s+acme-gtm-bucket \(named in wrangler\.jsonc and already in this account/);
-    expect(creates(account)).toEqual(["vectorize create acme-gtm-memory", "queues create acme-gtm-chat", "queues create acme-gtm-events-dlq"]);
+    expect(creates(account)).toEqual(["vectorize create acme-gtm-memory", "queues create acme-gtm-chat", "queues create acme-gtm-jobs", "queues create acme-gtm-events-dlq", "queues create acme-gtm-jobs-dlq"]);
     const config = parse(read(dir));
     expect((config.d1_databases as Array<Record<string, string>>)[0]?.database_id).toBe("existing-db-id");
     expect((config.kv_namespaces as Array<Record<string, string>>)[0]?.id).toBe("e".repeat(32));
@@ -153,6 +161,8 @@ describe("gtm setup", () => {
     expect((await setup(dir, account, ["--yes", "--env", "staging"])).code).toBe(0);
     expect(account.d1.has("acme-gtm-staging-db")).toBe(true);
     expect(account.queues.has("acme-gtm-staging-chat")).toBe(true);
+    expect(account.queues.has("acme-gtm-staging-jobs")).toBe(true);
+    expect(account.queues.has("acme-gtm-staging-jobs-dlq")).toBe(true);
     const config = parse(read(dir));
     expect(placeholderPaths(config.env.staging).filter((p) => !p.startsWith("vars"))).toEqual([]);
     expect((config.d1_databases as Array<Record<string, string>>)[0]?.database_id).toBe("${DB_ID}");
@@ -186,7 +196,7 @@ describe("gtm setup", () => {
       return true;
     });
     expect(accepted.code).toBe(0);
-    expect(asked).toMatch(/^Create 7 resource\(s\) and write \d+ value\(s\) to wrangler\.jsonc\?$/);
+    expect(asked).toMatch(/^Create 9 resource\(s\) and write \d+ value\(s\) to wrangler\.jsonc\?$/);
     expect(account.d1.size).toBe(1);
   });
 
@@ -203,7 +213,14 @@ describe("gtm setup", () => {
     account.intercept = undefined;
     account.calls = [];
     expect((await setup(dir, account)).code).toBe(0);
-    expect(creates(account)).toEqual(["vectorize create acme-gtm-memory", "queues create acme-gtm-events", "queues create acme-gtm-chat", "queues create acme-gtm-events-dlq"]);
+    expect(creates(account)).toEqual([
+      "vectorize create acme-gtm-memory",
+      "queues create acme-gtm-events",
+      "queues create acme-gtm-chat",
+      "queues create acme-gtm-jobs",
+      "queues create acme-gtm-events-dlq",
+      "queues create acme-gtm-jobs-dlq",
+    ]);
   });
 
   it("does not overwrite wrangler.jsonc when it changed while setup ran, and prints the values instead", async () => {

@@ -203,6 +203,10 @@ Automation may add a critical pause when none stands (the bounce monitor does, o
 
 **`checkSendGates`** must be called inside every send function, so no caller can skip it. In order: the halt (every path), the kill switch (the `cold` and `sequence` paths; an unknown path counts as cold), then suppression for every recipient. A refusal is a message starting with `[SEND BLOCKED:<reason>]`. On success it returns the normalized recipient addresses, and the send function sends to exactly those, never to the raw strings it was given. The rest of the send path (content lint, verification policy, send window, per-domain and per-account caps, the provider circuit breaker) runs after these ([ARCHITECTURE.md](ARCHITECTURE.md#the-send-path)).
 
+## Signal sources
+
+News, posts, monitor hits and job listings are full taint: stored as evidence data only, never instructions, and a signal without a date and a source URL is dropped. The hiring-board adapter fetches only the documented public board hosts and paths of three vendors, refuses redirects, and keeps role-kind counts, never titles. Search monitor deliveries are verified against each monitor's own secret before anything is read. Openers come from fixed text per signal category; only whitelisted sources may have a sanitized, length-capped headline quoted. Product-derived signals are never carried to colleagues.
+
 ## Suppression
 
 The suppression list holds addresses the system never emails: opt-outs, bounces, complaints, erasures, and manual or do-not-contact entries. Entries are keyed by the SHA-256 of the normalized address, and the plaintext address is optional, so an erasure can keep someone suppressed without keeping their address.

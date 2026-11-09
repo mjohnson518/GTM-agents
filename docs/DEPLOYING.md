@@ -55,6 +55,7 @@ One Cloudflare Worker per environment (production and staging), each with its ow
 | `FOLLOWUP_AGENT` | Durable Object `FollowupAgent` | (declared in the file) | Per-contact lifecycle timers |
 | `EVENTS_QUEUE` | Queue | `<worker>-events`, with `<worker>-events-dlq` as its dead-letter queue | The event spine |
 | `CHAT_QUEUE` | Queue | `<worker>-chat` | Operator chat turns, moved off the webhook path |
+| `JOBS_QUEUE` | Queue | `<worker>-jobs`, with `<worker>-jobs-dlq` as its dead-letter queue | Optional. With `scheduler:queue_enabled` on, each due job runs in its own consumer invocation with a 15-minute wall time. Each message costs about 3 queue operations, so the default jobs use about 9,000 a day |
 | `ASSETS` | Static assets | (the `public/` folder) | The admin dashboard at `/admin` |
 
 `<worker>` is the environment's Worker name: `acme-agent` for production and `acme-agent-staging` for staging. `MEMORY`, `AI`, `EVENTS_QUEUE` and the two Durable Objects are bound now so later capabilities need no new resources; the capabilities in this guide barely touch them, so they add little or nothing to your bill today. [ARCHITECTURE.md](ARCHITECTURE.md#bindings) describes each binding.
@@ -630,6 +631,14 @@ Reports need only the operator chat, so you can turn them on as early as stage 1
 - **Run rows:** `event_sweep` every 5 minutes, `lifecycle_checks` hourly, `mrr_snapshot` and `event_retention` nightly, `lifecycle_reconcile` nightly when on.
 - **Check:** send a test `user.signed_up` for a synthetic contact from your host's staging; the push answers 200, the contact moves to signed up, its sequences stop and its deal steps to trial. The scorecard's sign-up line starts counting.
 
+### Experiments
+
+Experiments need volume: each arm needs hundreds of matured sends before anything concludes. Turn on evaluation with `experiments:enabled`, and the weekly rule-based self-review with `experiments:self_review_enabled`; set `outreach:allocation_mode` to `thompson` once templates have 50 matured sends each. Create, start (two-step), stop and approve from the operator chat ([EXPERIMENTS.md](EXPERIMENTS.md)). Jobs: `experiments_cycle` at 09:00 and 21:00 daily, `experiments_self_review` Sundays at 14:00; neither calls a model.
+
+### Signals
+
+Signal sources need only what sourcing already has (`EXA_API_KEY` and `HUNTER_API_KEY`), plus the `data-jobboards` adapter, which needs no key. Turn each on with its flag (`signals:news_enabled`, `signals:hiring_boards_enabled`, `signals:websets_enabled`, `signals:monitors_enabled`, `signals:lookalikes_enabled`, `signals:coverage_fill_enabled`); each spends within its own daily cap. A search monitor you create at the provider is added to `monitors` in `src/index.ts`, with a Worker secret named in its `secretName` (it must start with `MONITOR_`, so no other setting or credential can sign deliveries) that signs its deliveries to `/api/webhooks/search/<key>`. The intent score runs in shadow behind `scoring:intent_enabled` until `intent_score:enforce`. [SIGNALS.md](SIGNALS.md) has each source's rules and costs.
+
 ### Stage 11: earned autonomy
 
 Nothing here is required: at the default level a person approves every send. When the evidence supports it:
@@ -918,6 +927,13 @@ Every job the template registers, its schedule (UTC), the flag that gates it and
 | `event_retention` | 03:50 daily | `lifecycle:enabled` | | 2 min, 500 rows | Nothing |
 | `autonomy_review` | 06:00, Mondays | `autonomy_review:enabled` | | Proposals only | Nothing |
 | `autonomy_watch` | 15 past each hour | none (demotion always runs) | | Incidents, rate checks, notices | Nothing |
+| `signal_news` | 07:00, Monday to Friday | `signals:news_enabled` | | 4 searches, 50 cents a day | Search |
+| `signal_hiring_boards` | 06:00, Monday to Friday | `signals:hiring_boards_enabled` | | 20 accounts | Nothing |
+| `signal_websets` | 10:00, Monday to Friday | `signals:websets_enabled` | | 200 rows, 200 cents a day | Websets |
+| `signal_monitor_drain` | Every 30 minutes | `signals:monitors_enabled` | | 500 hits | Nothing |
+| `signal_lookalikes` | 11:00, Tuesdays and Thursdays | `signals:lookalikes_enabled` | | 30 inserts, 50 cents a day | Search |
+| `signal_coverage_fill` | 12:00, Monday to Friday | `signals:coverage_fill_enabled` | | 5 accounts, 2 people each, 100 cents a day | People lookups |
+| `intent_scoring` | 02:30 daily | `scoring:intent_enabled` | | 5,000 contacts | Nothing |
 | `run_retention` | 03:40 daily | `ops:retention_enabled` | | 2 min, 20,000 rows | Nothing |
 | `cron_health` | 10:30 and 15:30 daily (`cronHealth.schedule`) | none | | 2 min | Nothing |
 

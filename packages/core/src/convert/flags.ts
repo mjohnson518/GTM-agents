@@ -38,4 +38,6 @@ export const CONVERT_LIMITS = Object.freeze({
   noteMaxChars: 2000,
   /** Operator messages list at most this many rows by name. */
   listed: 10,
+  /** Failed credit withdrawals one sync retries, at most. */
+  withdrawRetries: 50,
 });

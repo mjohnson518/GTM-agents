@@ -54,7 +54,33 @@ describe("a meeting booked", () => {
     await meeting("m3", c, { firstSeen: iso(-4), start: iso(-1), outcome: "no_show" });
     await meeting("m4", c, { firstSeen: iso(-2), start: iso(-1), status: "cancelled", outcome: "cancelled" });
     await meeting("m5", c, { firstSeen: iso(-1), attribution: null });
-    expect(await countMeetings(db, { from: iso(-7), to: iso(0) })).toEqual({ booked: 2, held: 1, noShows: 1, cancelled: 1 });
+    expect(await countMeetings(db, { from: iso(-7), to: iso(0) })).toEqual({ booked: 2, bookedAfterOutreach: 0, held: 1, heldAfterOutreach: 0, noShows: 1, cancelled: 1 });
+  });
+
+  it("counts every attributed booking as booked, and only those first seen after a first touch in 60 days as after outreach", async () => {
+    const prospect = await seedContact(db, { first: "Jane", email: "jane@globex.example" });
+    const customer = await seedContact(db, { first: "Omar", email: "omar@initech.example" });
+    const stale = await seedContact(db, { first: "Lena", email: "lena@umbrella.example" });
+    await seedFirstTouch(db, { campaignId: "cb", contactId: prospect, provider: "fake-esp", sentAt: new Date(NOW.getTime() - 10 * DAY) });
+    await seedFirstTouch(db, { campaignId: "cb", contactId: stale, provider: "fake-esp", sentAt: new Date(NOW.getTime() - 70 * DAY) });
+    await meeting("m-prospect", prospect, { firstSeen: iso(-2), start: iso(-1), outcome: "held" });
+    // A call with an existing customer nobody wrote to, and one first seen 70 days after the send.
+    await meeting("m-customer", customer, { firstSeen: iso(-2), start: iso(-1), outcome: "held" });
+    await meeting("m-stale", stale, { firstSeen: iso(-2), start: iso(-1) });
+    // A meeting first seen before the send it would follow.
+    await meeting("m-before-send", prospect, { firstSeen: iso(-11), start: iso(-1) });
+    const counts = await countMeetings(db, { from: iso(-30), to: iso(0) });
+    expect(counts).toMatchObject({ booked: 4, bookedAfterOutreach: 1, held: 2, heldAfterOutreach: 1 });
+  });
+
+  it("does not count a meeting that had already started when calendar sync began watching as booked, or as positive", async () => {
+    const c = await seedContact(db, { first: "Jane", email: "jane@globex.example" });
+    await seedFirstTouch(db, { campaignId: "cb", contactId: c, provider: "fake-esp", sentAt: new Date(NOW.getTime() - 10 * DAY) });
+    const m = await meeting("m-pre", c, { firstSeen: iso(-1), start: iso(-2) });
+    await db.prepare("UPDATE calendar_meetings SET before_baseline = 1 WHERE event_id = 'm-pre'").run();
+    expect(await countMeetings(db, { from: iso(-7), to: iso(0) })).toMatchObject({ booked: 0, bookedAfterOutreach: 0 });
+    expect(isMeetingBooked({ ...m, before_baseline: 1 })).toBe(false);
+    expect(await creditMeeting(db, c, { ...m, before_baseline: 1 })).toBeNull();
   });
 });
 
@@ -117,8 +143,8 @@ describe("the scorecard's meeting lines", () => {
     expect(off).toContain("meetings and quotas: not measured yet.");
     expect(off).toContain("Convert, 30 days: meetings booked and held, sign-ups, activations and paid: not measured yet");
     const on = renderScorecard(await loadScorecard(db, flagReader({ "convert:calendar_enabled": "true" }), NOW));
-    expect(on).toContain("0 first touches, 0 positive replies, 1 meeting booked. Sign-ups, activations, new paying customers and quotas: not measured yet.");
-    expect(on).toContain("Convert, 30 days: 1 meeting booked, 1 held, 0 no-shows, 0 cancelled; held per 100 first touches: 100. Sign-ups, activations and paid: not measured yet");
+    expect(on).toContain("0 first touches, 0 positive replies, 1 meeting booked (1 after outreach). Sign-ups, activations, new paying customers and quotas: not measured yet.");
+    expect(on).toContain("Convert, 30 days: 1 meeting booked (1 after outreach), 1 held (1 after outreach), 0 no-shows, 0 cancelled; held after outreach per 100 first touches: 100. Sign-ups, activations and paid: not measured yet");
     const unreadable = renderScorecard(await loadScorecard(db, flagReader({}, ["convert:calendar_enabled"]), NOW));
     expect(unreadable).toContain("- the meetings section could not be read");
   });

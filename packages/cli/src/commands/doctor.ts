@@ -1,5 +1,5 @@
 // GTM-agents: `gtm doctor`, a health report for a deployment: bindings, the per-minute cron trigger,
-// configuration, adapter manifests, required secrets, webhook registration, the email footer and
+// the jobs queue, configuration, adapter manifests, required secrets, webhook registration, the email footer and
 // unsubscribe secret, the halt flag and kill switch, and every feature flag. Offline by default;
 // --remote also asks Cloudflare (through Wrangler) for the deployed secrets and flag values.
 import { relative, resolve } from "node:path";
@@ -73,6 +73,35 @@ export function triggerCheck(crons: readonly string[]): Check {
   return { status: "PASS", name: "cron trigger", detail: "one per-minute trigger; each minute runs the jobs whose schedule matches it" };
 }
 
+const asArray = (v: unknown): Array<Record<string, unknown>> => (Array.isArray(v) ? (v as Array<Record<string, unknown>>) : []);
+const asObject = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+/**
+ * The jobs queue check. Without a JOBS_QUEUE producer, due jobs run inside the cron invocation
+ * (that is fine, and said so). With one, its queue needs a consumer, or no scheduled job would ever
+ * run; one job per batch, a dead-letter queue and a consumer on that dead-letter queue are expected.
+ */
+export function jobsQueueCheck(config: Record<string, unknown>): Check {
+  const queues = asObject(config.queues);
+  const producer = asArray(queues.producers).find((p) => p.binding === "JOBS_QUEUE");
+  if (!producer) {
+    return { status: "INFO", name: "jobs queue", detail: "no JOBS_QUEUE binding, so due jobs run inside the cron invocation (4 at a time, a 14-minute budget per minute); add it so each job runs in its own invocation" };
+  }
+  const name = typeof producer.queue === "string" ? producer.queue : "";
+  const consumers = asArray(queues.consumers);
+  const consumer = consumers.find((c) => c.queue === name);
+  if (!consumer) return { status: "FAIL", name: "jobs queue", detail: `JOBS_QUEUE sends to ${name}, but no consumer reads it, so no scheduled job would ever run; add a consumer for it` };
+  const problems: string[] = [];
+  if (consumer.max_batch_size !== 1) problems.push("set max_batch_size to 1, so each job gets its own invocation and wall time");
+  const retries = typeof consumer.max_retries === "number" ? consumer.max_retries : 3;
+  if (retries > 1) problems.push(`max_retries is ${retries}; 0 or 1 is enough, because a delivered job is claimed per minute and never runs twice`);
+  const dlq = typeof consumer.dead_letter_queue === "string" ? consumer.dead_letter_queue : "";
+  if (dlq === "") problems.push("add a dead_letter_queue, so a job that could not be claimed is recorded and paged instead of dropped");
+  else if (!consumers.some((c) => c.queue === dlq)) problems.push(`add a consumer for its dead-letter queue ${dlq}, so dead-lettered jobs are recorded and paged`);
+  if (problems.length) return { status: "WARN", name: "jobs queue", detail: `${name}: ${problems.join("; ")}` };
+  return { status: "PASS", name: "jobs queue", detail: `due jobs go to ${name} once scheduler:queue_enabled is on, one job per consumer invocation, with dead-letter queue ${dlq}` };
+}
+
 async function runChecks(dir: string, env: string | undefined, remote: boolean, deps: Required<DoctorOptions>): Promise<Check[]> {
   const checks: Check[] = [];
   const wrangler: Wrangler = wranglerAt(deps.runner, dir);
@@ -92,6 +121,7 @@ async function runChecks(dir: string, env: string | undefined, remote: boolean, 
         : { status: "PASS", name: "bindings", detail: `all ${REQUIRED_BINDINGS.length} required bindings are declared` },
     );
     checks.push(triggerCheck(cronTriggers(loaded.config, loaded.root)));
+    checks.push(jobsQueueCheck(loaded.config));
     const unmigrated = unmigratedClasses(loaded.config, loaded.root);
     if (unmigrated.length) checks.push({ status: "FAIL", name: "durable objects", detail: `no migration creates: ${unmigrated.join(", ")}` });
     const orphans = queuesWithoutConsumers(loaded.config);

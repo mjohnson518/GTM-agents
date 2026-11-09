@@ -73,6 +73,8 @@ Writing evidence is bookkeeping: it never throws, and a lost row never changes w
 
 ## Promotion: the weekly review (proposals only)
 
+Experiments make proposals of their own beside these (a template weight, a subject winner, a larger holdout), through the copy-change gate and the weekly rule-based self-review; they too are applied only by a person, and only if the setting still holds the value the proposal was made against ([EXPERIMENTS.md](EXPERIMENTS.md)).
+
 With `autonomy_review:enabled` on, the `autonomy_review` job (Mondays at 06:00 UTC) checks each class with an automatic path against these rules and proposes the step it qualifies for. It changes nothing.
 
 - **Level 1 to 2:** at least 30 decisions in 60 days (a batch is one decision, so the cold batch needs 4), at least 90% approved as written, at most 5% rejected, and no incident in 30 days.

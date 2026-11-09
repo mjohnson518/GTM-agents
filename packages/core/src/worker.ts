@@ -16,14 +16,18 @@
 //   - POST /api/webhooks/product (the host's signed events; 503 until PRODUCT_WEBHOOK_SECRET and the
 //     `lifecycle` wiring are set) and POST /api/webhooks/billing (through the billing adapter; 503
 //     until `lifecycle.billing` is given), and the EVENTS_QUEUE consumer that routes what they
-//     record. docs/LIFECYCLE.md covers them.
+//     record. docs/LIFECYCLE.md covers them;
+//   - the JOBS_QUEUE consumer and its dead-letter consumer, when the binding is declared: each due
+//     job runs in its own queue invocation (packages/core/src/jobs/queue.ts).
+import type { TemplateFile } from "./templates/index.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
 import type { Env } from "./env.ts";
 import { bearerAuth } from "./http/auth.ts";
 import { normalizeCron } from "./jobs/cron.ts";
-import { inRunOrder, runJobsConcurrently, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
+import { inRunOrder, isFlagOn, runJobsConcurrently, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
+import { JOBS_QUEUE_FLAG, createJobsConsumer, createJobsDeadLetterConsumer, enqueueDueJobs, isJobMessage, runClaimedJobs } from "./jobs/queue.ts";
 import { MAX_JOB_DURATION_MS, SCHEDULER_CRON, createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
 import { createInboundEmailHandler, type InboundEmailHandler, type InboundEmailOptions } from "./inbox/email-handler.ts";
 import { MAIL_WEBHOOK_PATH, createInboxPushWebhook } from "./inbox/webhook.ts";
@@ -59,6 +63,22 @@ export const DEFAULT_CHAT_QUEUE = "gtm-chat";
 /** The events queue's name when `lifecycle.eventsQueue` is not set. `gtm setup` names it `<worker>-events`. */
 export const DEFAULT_EVENTS_QUEUE = "gtm-events";
 
+/** The jobs queue's name when `scheduler.jobsQueue` is not set. `gtm setup` names it `<worker>-jobs`. */
+export const DEFAULT_JOBS_QUEUE = "gtm-jobs";
+
+/** The jobs dead-letter queue's name when `scheduler.deadLetterQueue` is not set. `gtm setup` names it `<worker>-jobs-dlq`. */
+export const DEFAULT_JOBS_DEAD_LETTER_QUEUE = "gtm-jobs-dlq";
+
+export interface SchedulerOptions {
+  /**
+   * The name of the queue bound as JOBS_QUEUE, as declared in wrangler.jsonc, or a list when each
+   * environment uses its own. Defaults to "gtm-jobs".
+   */
+  jobsQueue?: string | readonly string[];
+  /** The jobs queue's dead-letter queue, or a list. Defaults to "gtm-jobs-dlq". */
+  deadLetterQueue?: string | readonly string[];
+}
+
 export interface OperatorAgentWorkerOptions {
   /**
    * The name of the queue bound as CHAT_QUEUE, as declared in wrangler.jsonc, or a list when each
@@ -69,6 +89,8 @@ export interface OperatorAgentWorkerOptions {
   maxRounds?: number;
   /** Output tokens per model call. Defaults to 8192. */
   maxTokens?: number;
+  /** Templates bundled with the Worker, for the experiment commands; without them templates come from KV. */
+  templates?: readonly TemplateFile[];
   /** The reply window given to createReplyJobs, so /scorecard counts owed replies the same way. */
   owedWindowDays?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
@@ -121,6 +143,8 @@ export interface CreateWorkerOptions<E extends Env = Env> {
   inboundEmail?: InboundEmailOptions<E>;
   /** Limits and wiring for the operator chat agent. */
   agent?: OperatorAgentWorkerOptions;
+  /** The jobs queue's names, so its batches and its dead-letter batches reach the right consumer. */
+  scheduler?: SchedulerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
   cronHealth?: { schedule: string; graceMs?: number };
   /**
@@ -130,8 +154,9 @@ export interface CreateWorkerOptions<E extends Env = Env> {
    */
   lifecycle?: LifecycleWiring<E>;
   /**
-   * Called after every scheduled invocation with the trigger's cron string and the outcomes of the
-   * jobs that were due (empty when nothing was due that minute), for observability.
+   * Called with the trigger's cron string and the outcomes of the jobs that ran, for observability:
+   * after every scheduled invocation (empty when nothing was due that minute, or when every due job
+   * went to the jobs queue), and, with the jobs queue, once per job its consumer ran.
    */
   onScheduled?: (cron: string, outcomes: JobOutcome[]) => void;
 }
@@ -211,6 +236,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
     ...(options.agent?.owedWindowDays !== undefined ? { owedWindowDays: options.agent.owedWindowDays } : {}),
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
+    ...(options.agent?.templates ? { templates: options.agent.templates } : {}),
     logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
   };
   app.post(OPERATOR_WEBHOOK_PATH, createOperatorWebhook<E>(agentOptions));
@@ -242,7 +268,53 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
 
   const chatQueues = [options.agent?.chatQueue ?? DEFAULT_CHAT_QUEUE].flat();
   const chatConsumer = createChatConsumer<E>(agentOptions);
+
+  // `now` is when the job starts (never before its scheduled minute), not the trigger's scheduled
+  // time: a job may wait for a free slot or in the queue before it starts, and a send window must be
+  // checked against the real clock.
+  const makeContext = (env: E, at: Date) => (job: RegisteredJob<E>, signal: AbortSignal): JobContext<E> => ({
+    env,
+    config,
+    job: job.name,
+    now: new Date(Math.max(Date.now(), at.getTime())),
+    signal,
+    ceilings: job.ceilings,
+    flags: kvFlagReader(env.KV),
+    log: consoleLogger({ service: "gtm-agents", job: job.name }),
+  });
+  const report = (cron: string, outcomes: JobOutcome[]) => {
+    for (const o of outcomes) if (o.status === "failed") log.error("scheduled job failed", { cron, job: o.job, error: o.error ?? "unknown error" });
+    try {
+      options.onScheduled?.(cron, outcomes);
+    } catch (err) {
+      log.error("onScheduled failed", { cron, error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  // The jobs queue: one job per invocation, claimed per (job, minute); and its dead-letter queue,
+  // which records and pages what never ran.
+  const schedulerLog = consoleLogger({ service: "gtm-agents", scope: "scheduler" });
+  const jobsQueues = [options.scheduler?.jobsQueue ?? DEFAULT_JOBS_QUEUE].flat();
+  const jobsDeadLetterQueues = [options.scheduler?.deadLetterQueue ?? DEFAULT_JOBS_DEAD_LETTER_QUEUE].flat();
+  const jobsConsumer = createJobsConsumer<E>({
+    registry,
+    runner,
+    db: (env) => env.DB,
+    makeContext,
+    log: schedulerLog,
+    onOutcome: (outcome) => report(SCHEDULER_CRON, [outcome]),
+  });
+  const jobsDeadLetterConsumer = createJobsDeadLetterConsumer<E>({
+    registry,
+    db: (env) => env.DB,
+    kv: (env) => env.KV,
+    ...(options.operator ? { operator: options.operator } : {}),
+    log: schedulerLog,
+  });
+
   const queueConsumers: Record<string, QueueConsumer<E>> = {
+    ...Object.fromEntries(jobsQueues.map((name) => [name, jobsConsumer])),
+    ...Object.fromEntries(jobsDeadLetterQueues.map((name) => [name, jobsDeadLetterConsumer])),
     ...(eventConsumer ? Object.fromEntries(eventQueues.map((name) => [name, eventConsumer])) : {}),
     ...Object.fromEntries(chatQueues.map((name) => [name, chatConsumer])),
     // A consumer the deployment registers under the same name replaces the built-in one.
@@ -257,20 +329,6 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     return c.json({ error: "internal_error" }, 500);
   });
 
-  // `now` is when the job starts (never before its scheduled minute), not the trigger's scheduled
-  // time: a job may wait for a free slot before it starts, and a send window must be checked
-  // against the real clock.
-  const makeContext = (env: E, at: Date) => (job: RegisteredJob<E>, signal: AbortSignal): JobContext<E> => ({
-    env,
-    config,
-    job: job.name,
-    now: new Date(Math.max(Date.now(), at.getTime())),
-    signal,
-    ceilings: job.ceilings,
-    flags: kvFlagReader(env.KV),
-    log: consoleLogger({ service: "gtm-agents", job: job.name }),
-  });
-
   return {
     app,
     registry,
@@ -280,8 +338,12 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     // schedule matches the minute of scheduledTime (UTC); controller.cron is logged, never matched,
     // so a manual or extra trigger cannot pick a different set of jobs. They run concurrently
     // (DUE_JOB_CONCURRENCY at a time, longest ceiling first), each under its own ceiling, and a job
-    // that could not finish within SCHEDULED_WALL_BUDGET_MS is recorded as not started. A minute
-    // with nothing due returns before any binding is touched.
+    // that could not finish within SCHEDULED_WALL_BUDGET_MS is recorded as not started. With a
+    // JOBS_QUEUE binding and scheduler:queue_enabled on (an unreadable flag counts as off, which is
+    // the in-process path above), the due jobs are sent to the queue instead, one message each, and its
+    // consumer runs each in its own invocation; jobs the queue would not take run here, claimed per
+    // (job, minute) so a half-sent batch never runs a job twice. A minute with nothing due returns
+    // before any binding is touched.
     scheduled: (controller, env, ctx) => {
       const at = new Date(controller.scheduledTime);
       const due = registry.dueAt(at);
@@ -295,16 +357,31 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
       }
       const ordered = inRunOrder(due);
       const jobs = ordered.map((j) => j.name);
+      const binding = env.JOBS_QUEUE;
       if (normalizeCron(controller.cron) !== SCHEDULER_CRON) {
-        log.warn("scheduled invocation from a trigger other than the per-minute one; due jobs run by scheduled time, so an extra trigger runs them again", { cron: controller.cron, jobs });
+        log.warn(
+          binding
+            ? "scheduled invocation from a trigger other than the per-minute one; with the jobs queue on, queued jobs are claimed per minute, so its duplicates do nothing"
+            : "scheduled invocation from a trigger other than the per-minute one; due jobs run by scheduled time, so an extra trigger runs them again",
+          { cron: controller.cron, jobs },
+        );
       }
-      log.info("running due jobs", { cron: controller.cron, at: at.toISOString(), jobs });
       const deadline = Date.now() + SCHEDULED_WALL_BUDGET_MS;
-      const run = runJobsConcurrently(ordered, makeContext(env, at), runner, (settled) => ctx.waitUntil(settled), { deadline })
-        .then((outcomes) => {
-          for (const o of outcomes) if (o.status === "failed") log.error("scheduled job failed", { cron: controller.cron, job: o.job, error: o.error ?? "unknown error" });
-          options.onScheduled?.(controller.cron, outcomes);
-        })
+      const track = (settled: Promise<unknown>) => ctx.waitUntil(settled);
+      const dispatch = async (): Promise<JobOutcome[]> => {
+        const queue = binding && isFlagOn(await kvFlagReader(env.KV).get(JOBS_QUEUE_FLAG).catch(() => null)) ? binding : undefined;
+        if (!queue) {
+          log.info("running due jobs", { cron: controller.cron, at: at.toISOString(), jobs });
+          return runJobsConcurrently(ordered, makeContext(env, at), runner, track, { deadline });
+        }
+        const sent = await enqueueDueJobs(queue, ordered, at);
+        if (sent.enqueued.length > 0) log.info("due jobs sent to the jobs queue", { cron: controller.cron, at: at.toISOString(), jobs: sent.enqueued.map((j) => j.name) });
+        if (sent.failed.length === 0) return [];
+        log.error("the jobs queue did not take these jobs; running them in this invocation", { cron: controller.cron, jobs: sent.failed.map((j) => j.name), error: sent.error ?? "unknown error" });
+        return runClaimedJobs(sent.failed, at, { db: env.DB, makeContext: makeContext(env, at), runner, track, log, deadline });
+      };
+      const run = dispatch()
+        .then((outcomes) => report(controller.cron, outcomes))
         .catch((err: unknown) => log.error("scheduled handler failed", { cron: controller.cron, error: err instanceof Error ? err.message : String(err) }));
       ctx.waitUntil(run);
     },
@@ -316,6 +393,14 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
       if (!consumer && batch.messages.length > 0 && batch.messages.every((m) => isChatMessage(m.body))) {
         log.warn("chat messages arrived on a queue not listed in agent.chatQueue; handling them as chat", { queue: batch.queue });
         consumer = chatConsumer;
+      }
+      // Likewise a jobs queue renamed in wrangler.jsonc. Its dead-letter queue carries the same
+      // messages; `gtm setup` names it with a -dlq suffix, and a dead-letter batch is only recorded
+      // and paged, never run.
+      if (!consumer && batch.messages.length > 0 && batch.messages.every((m) => isJobMessage(m.body))) {
+        const deadLetter = batch.queue.endsWith("-dlq");
+        log.warn("job messages arrived on a queue not listed in scheduler; handling them by the queue's name", { queue: batch.queue, as: deadLetter ? "dead letters" : "jobs" });
+        consumer = deadLetter ? jobsDeadLetterConsumer : jobsConsumer;
       }
       // Likewise an events queue renamed in wrangler.jsonc: event messages carry only a row id, which
       // the spine re-reads from the database before acting.

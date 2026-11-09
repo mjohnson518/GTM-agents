@@ -6,7 +6,8 @@
 // for a run row since then:
 //   - a completed run is healthy;
 //   - a run skipped on purpose (halted, flag off, over budget) was held, not missed. A run skipped
-//     because state could not be read ("unreadable") is reported as failed;
+//     because state could not be read ("unreadable"), or superseded in a backed-up jobs queue, is
+//     reported as failed;
 //   - a failed run is reported with its sanitized error;
 //   - a run still marked running past its ceiling and the grace period is reported as abandoned;
 //   - no row at all is reported as missed.
@@ -15,8 +16,11 @@
 // rerun is claimed in the effects ledger first. Reruns that would not finish before the check's
 // own deadline are left for the next check. Each rerun gets the time it actually starts as its
 // `now`, never the check's own start time, so a send window or a daily claim is judged on the real
-// clock even after earlier reruns took minutes.
+// clock even after earlier reruns took minutes. A missed fire is rerun only if it also wins that
+// fire's (job, minute) claim, the one the jobs queue consumer takes before it runs a job: so a queued
+// run still waiting behind a busy queue and the rerun never both run.
 import { claimEffect } from "../events/effects.ts";
+import { JOB_RUN_EFFECT, jobRunKey } from "../jobs/queue.ts";
 import { previousFire } from "../jobs/cron.ts";
 import { runOneJob, type ContextFactory, type JobOutcome, type JobRunner } from "../jobs/loop.ts";
 import type { JobDefinition, JobRegistry } from "../jobs/registry.ts";
@@ -78,7 +82,9 @@ export async function checkCronHealth<E>(options: CronHealthOptions<E>): Promise
         .bind(job.name, expectedAt)
         .all<{ status: string; error: string | null; summary: string | null; started_at: string }>();
       const latest = results[0];
-      const unreadable = (summary: string | null) => (summary ?? "").includes("unreadable");
+      // A hold on unreadable state, or a fire superseded in a backed-up jobs queue, is not a hold on
+      // purpose: a job superseded every time never runs, so it must not read as healthy.
+      const unreadable = (summary: string | null) => (summary ?? "").includes("unreadable") || (summary ?? "").startsWith("superseded");
       const heldOnPurpose = results.find((r) => r.status === "skipped" && !unreadable(r.summary));
       const heldUnreadable = results.find((r) => r.status === "skipped" && unreadable(r.summary));
       const stale = results.find((r) => r.status === "running" && r.started_at <= cutoff.toISOString());
@@ -105,6 +111,20 @@ export async function rerunUnhealthy<E>(findings: CronHealthFinding[], registry:
     if (rerun.deadline !== undefined && Date.now() + job.ceilings.maxDurationMs > rerun.deadline) {
       finding.rerunDeferred = "the rerun could take longer than the time left in this check";
       continue;
+    }
+    // A missed fire wins its (job, minute) claim first; when a queued run holds it, the rerun claim
+    // stays free, so a check after that run fails can still rerun it.
+    if (finding.status === "missed") {
+      let fire: boolean | null;
+      try {
+        fire = await claimEffect(db, jobRunKey(job.name, finding.expectedAt), JOB_RUN_EFFECT);
+      } catch {
+        fire = null;
+      }
+      if (fire !== true) {
+        finding.rerunDeferred = fire === false ? "its queued run for that minute was already claimed" : "its run for that minute could not be claimed";
+        continue;
+      }
     }
     let claimed: boolean;
     try {

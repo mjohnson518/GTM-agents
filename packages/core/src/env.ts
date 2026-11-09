@@ -1,5 +1,8 @@
 // GTM-agents: the Worker environment: bindings declared in wrangler.jsonc, plus vars and secrets.
 // docs/ARCHITECTURE.md describes what each binding is for. Secrets come from `wrangler secret put`.
+import type { JobMessage } from "./jobs/queue.ts";
+
+export type { JobMessage };
 
 export interface EventMessage {
   /** The event row id; the consumer loads the payload from the database and blob storage. */
@@ -27,6 +30,12 @@ export interface Env {
   FOLLOWUP_AGENT: DurableObjectNamespace;
   EVENTS_QUEUE: Queue<EventMessage>;
   CHAT_QUEUE: Queue<ChatMessage>;
+  /**
+   * Optional. With it, the scheduled handler sends each due job to this queue and its consumer runs
+   * one job per invocation (packages/core/src/jobs/queue.ts); without it, due jobs run inside the
+   * cron invocation itself.
+   */
+  JOBS_QUEUE?: Queue<JobMessage>;
   ASSETS: Fetcher;
 
   /** Public base URL of this deployment, used in unsubscribe and booking links. */

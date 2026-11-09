@@ -156,6 +156,8 @@ Replies and follow-ups add their own commands, documented with them:
 | `meeting-link-<code> <contact>`, `meeting-unlink-<code>` | Attribute an ambiguous meeting to a contact, or make a meeting inert |
 | `autonomy-status` | Every action class with its level and evidence ([AUTONOMY.md](AUTONOMY.md)) |
 | `autonomy-set <class> <0-3>`, then `autonomy-confirm-<id>-<code>` | Propose a level change, then confirm it within 30 minutes; permanently human-only classes stay at 1 or below |
+| `experiment-create`, `experiment-show`, `experiment-list`, `experiment-stop`, then `experiment-start <id>` and `experiment-start-<id>-<code>` | Pre-register, start (two-step) and stop experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) |
+| `exp-list`, `exp-approve-<id>`, `exp-reject-<id>`, `ab-dashboard`, `sample-size` | Copy-change and self-review proposals, the A/B report, and the sample-size helper |
 | `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
 | `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 

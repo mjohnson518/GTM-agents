@@ -104,6 +104,10 @@ Up to `discovery:promote_per_cycle` qualified candidates with an address, best s
 
 A candidate that passes becomes a contact in one D1 batch, all or nothing: the account is upserted, the contact is inserted with its normalized address and both hashes, warmth `cold`, the verification status and confidence, the source and the query; the candidate moves to `promoted`; its evidence is linked to the contact; and the persona seat and the fit verdict are recorded. Both the insert and the status change are guarded on the candidate still being qualified, so two runs can never promote it twice. A missing first name is allowed: drafting holds such a contact later rather than greet a guessed name.
 
+## Signals and other sources
+
+Beyond the discovery cycle, signal sources find dated reasons to write and new people: Exa websets and search monitors, dated funding and leadership news, public hiring boards, responder lookalikes and coverage fill at high-fit accounts. Each has its own `signals:*` flag, every candidate it finds still passes promotion (including the account-fit check), and a signal found before an account had contacts is carried to up to two newly promoted contacts. [SIGNALS.md](SIGNALS.md) covers each source.
+
 ## Identity rules
 
 - **Work email only.** Personal mailbox domains and shared hosts are never collected, enriched or emailed. `accountKey` returns null for them, and null always means skip ([DATA-MODEL.md](DATA-MODEL.md)).

@@ -11,8 +11,9 @@
 //   3. deal: the contact's open deal (else the account's newest) steps to demo_scheduled
 //      (transitionDeal, forward only); with none, one is created. A contact or account that already
 //      has a won deal gets no new one;
-//   4. credit: the meeting is credited to the first touch that earned it (ledger.ts), and counted
-//      against that send's template (templates.times_meeting);
+//   4. credit: the meeting is credited to the first touch that earned it (ledger.ts). Nothing else
+//      counts it: meetings per template come from the ledger and metrics/meetings.ts, and the
+//      templates.times_meeting column is not written;
 //   5. brief: the static prep brief (brief.ts) is stored as a deal handoff and sent to the operator
 //      with the booking notice;
 //   6. lifecycle: the contact and every other attributed contact on the invite who has not signed
@@ -22,10 +23,13 @@
 // When all have worked, a final claim marks the meeting done, so later syncs skip it.
 //
 // withdrawBooked runs when a meeting stops counting (cancelled, unlinked, the outside person
-// declined): the ledger credit and the template count are taken back, and the credit claim is
-// released so a meeting that counts again is credited again. Warmth, the deal stage and stopped
-// sequences only move forward and are not reversed; the operator can resume a sequence by hand.
-// Neither is the lifecycle state, which never moves backwards either.
+// declined): the ledger credit is taken back, and the credit claim is released so a meeting that
+// counts again is credited again. The withdrawal is recorded in the effects ledger first
+// (`calendar-withdraw:<code>:<contact id>`, effect: the meeting's first sighting) and that record is
+// cleared only once it has worked, so a withdrawal that failed is retried by the next calendar sync
+// (retryCreditWithdrawals), unless the meeting counts again by then. Warmth, the deal stage and
+// stopped sequences only move forward and are not reversed; the operator can resume a sequence by
+// hand. Neither is the lifecycle state, which never moves backwards either.
 import type { GtmConfig } from "../config/schema.ts";
 import { advanceWarmth } from "../data/contacts.ts";
 import { canTransitionDeal, transitionDeal } from "../data/deals.ts";
@@ -39,7 +43,7 @@ import { label } from "../reports/format.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { stopSequences } from "../sequences/state.ts";
 import { displayName, loadContactBrief, renderPrepBrief, when } from "./brief.ts";
-import { creditMeeting, creditedSend, withdrawMeetingCredit } from "./ledger.ts";
+import { creditMeeting, withdrawMeetingCredit } from "./ledger.ts";
 
 export const BOOKED_STEPS = ["warmth", "stop", "deal", "credit", "brief", "lifecycle"] as const;
 export type BookedStep = (typeof BOOKED_STEPS)[number];
@@ -195,14 +199,11 @@ export async function applyBooked(deps: BookedDeps, meeting: BookedMeeting): Pro
 
   await step("deal", () => ensureDemoDeal(db, booked, meeting.code, now));
 
+  // The stored row decides whether the meeting predates the baseline: every caller then credits by
+  // the one definition, whatever fields it passed.
   await step("credit", async () => {
-    const sendId = await creditMeeting(db, booked.id, meeting);
-    if (sendId) {
-      await db
-        .prepare("UPDATE templates SET times_meeting = times_meeting + 1, updated_at = ?2 WHERE id = (SELECT template_id FROM outreach_sends WHERE id = ?1)")
-        .bind(sendId, now.toISOString())
-        .run();
-    }
+    const stored = await db.prepare("SELECT before_baseline FROM calendar_meetings WHERE event_id = ?1").bind(meeting.event_id).first<{ before_baseline: number | null }>();
+    return creditMeeting(db, booked.id, { ...meeting, before_baseline: stored?.before_baseline ?? meeting.before_baseline ?? 0 });
   });
 
   await step("brief", async () => {
@@ -250,27 +251,94 @@ export async function applyBooked(deps: BookedDeps, meeting: BookedMeeting): Pro
   return result;
 }
 
-/**
- * Take back a meeting's ledger credit and template count after it stopped counting. Run it after
- * the meeting row was cancelled or deleted. Never throws.
- */
-export async function withdrawBooked(deps: Pick<BookedDeps, "db" | "log" | "now">, meeting: { event_id: string; code: string; contact_id: string; first_seen_at: string }): Promise<void> {
+/** The effects-ledger event id that records a credit withdrawal still to do. The effect is the meeting's first sighting. */
+export const withdrawPendingKey = (code: string, contactId: string): string => `calendar-withdraw:${code}:${contactId}`;
+const WITHDRAW_PREFIX = "calendar-withdraw:";
+
+interface WithdrawMeeting {
+  event_id: string;
+  code: string;
+  contact_id: string;
+  first_seen_at: string;
+}
+
+/** Take back the credit and release its claims. True when nothing is left to do. Never throws. */
+async function withdrawCredit(deps: Pick<BookedDeps, "db" | "log">, meeting: WithdrawMeeting): Promise<boolean> {
   const { db, log } = deps;
   const key = bookedKey(meeting.code, meeting.contact_id);
   try {
-    const credited = await hasEffect(db, key, stepEffect("credit"));
-    if (!credited) return;
-    // The same send the credit step counted against, by the same rule.
-    const send = await creditedSend(db, meeting.contact_id, meeting.first_seen_at);
-    const counted = send !== null && Date.parse(meeting.first_seen_at) > Date.parse(send.sent_at);
+    if (!(await hasEffect(db, key, stepEffect("credit")))) return true;
     const changed = await withdrawMeetingCredit(db, meeting.contact_id, meeting);
-    if (counted && send?.template_id) {
-      await db.prepare("UPDATE templates SET times_meeting = MAX(0, times_meeting - 1), updated_at = ?2 WHERE id = ?1").bind(send.template_id, deps.now.toISOString()).run();
-    }
-    await releaseEffect(db, key, stepEffect("credit"));
-    await releaseEffect(db, key, DONE);
+    // A claim left behind would stop a meeting that counts again from being credited again.
+    const released = (await releaseEffect(db, key, stepEffect("credit"))) && (await releaseEffect(db, key, DONE));
+    if (!released) throw new Error("the credit claim could not be released");
     log.info("a meeting's credit was withdrawn", { code: meeting.code, ledgerChanged: changed });
+    return true;
   } catch (error) {
-    log.warn("a meeting's credit could not be withdrawn", { code: meeting.code, error: sanitizeErrorMessage(error) });
+    log.warn("a meeting's credit could not be withdrawn; the next calendar sync retries it", { code: meeting.code, error: sanitizeErrorMessage(error) });
+    return false;
   }
+}
+
+/**
+ * Take back a meeting's ledger credit after it stopped counting. Run it after the meeting row was
+ * cancelled or deleted. The withdrawal is recorded first and cleared once it worked, so one that
+ * fails is retried by retryCreditWithdrawals. True when it is done now. Never throws.
+ */
+export async function withdrawBooked(deps: Pick<BookedDeps, "db" | "log" | "now">, meeting: WithdrawMeeting): Promise<boolean> {
+  const { db, log } = deps;
+  const pending = withdrawPendingKey(meeting.code, meeting.contact_id);
+  let recorded = false;
+  try {
+    await claimEffect(db, pending, meeting.first_seen_at);
+    recorded = true;
+  } catch (error) {
+    log.warn("a credit withdrawal could not be recorded for retry; trying it now", { code: meeting.code, error: sanitizeErrorMessage(error) });
+  }
+  const done = await withdrawCredit(deps, meeting);
+  if (done && recorded) await releaseEffect(db, pending, meeting.first_seen_at);
+  return done;
+}
+
+/**
+ * Retry the credit withdrawals that failed earlier, oldest first, at most `limit`. A meeting that
+ * counts again (attributed, not cancelled) keeps its credit and its record is cleared. Returns how
+ * many were finished. Throws only when the records cannot be read.
+ */
+export async function retryCreditWithdrawals(deps: Pick<BookedDeps, "db" | "log" | "now">, limit: number): Promise<number> {
+  const { db } = deps;
+  const { results } = await db
+    .prepare("SELECT event_id, effect FROM event_effects WHERE event_id >= ?1 AND event_id < ?2 ORDER BY created_at LIMIT ?3")
+    .bind(WITHDRAW_PREFIX, `${WITHDRAW_PREFIX.slice(0, -1)};`, limit)
+    .all<{ event_id: string; effect: string }>();
+  let finished = 0;
+  for (const row of results) {
+    const rest = row.event_id.slice(WITHDRAW_PREFIX.length);
+    const split = rest.indexOf(":");
+    if (split < 1) continue;
+    const code = rest.slice(0, split);
+    const contactId = rest.slice(split + 1);
+    try {
+      const current = await db
+        .prepare(
+          `SELECT ce.event_id, ce.state, cm.status FROM calendar_events ce
+             LEFT JOIN calendar_meetings cm ON cm.event_id = ce.event_id AND cm.contact_id = ?2
+            WHERE ce.code = ?1`,
+        )
+        .bind(code, contactId)
+        .first<{ event_id: string; state: string; status: string | null }>();
+      const countsAgain = current?.state === "attributed" && current.status !== null && current.status !== "cancelled";
+      // Counting again: its credit may have gone with a withdrawal that half worked, so its credit
+      // claim is released and the next sync's booked effects credit it again (crediting is
+      // idempotent: the earliest sighting wins).
+      const key = bookedKey(code, contactId);
+      const done = countsAgain
+        ? (await releaseEffect(db, key, stepEffect("credit"))) && (await releaseEffect(db, key, DONE))
+        : await withdrawCredit(deps, { event_id: current?.event_id ?? "", code, contact_id: contactId, first_seen_at: row.effect });
+      if (done && (await releaseEffect(db, row.event_id, row.effect))) finished += 1;
+    } catch (error) {
+      deps.log.warn("a credit withdrawal retry failed; the next calendar sync tries again", { code, error: sanitizeErrorMessage(error) });
+    }
+  }
+  return finished;
 }

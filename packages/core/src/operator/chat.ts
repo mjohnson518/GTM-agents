@@ -17,6 +17,10 @@
 //   - an autonomy command (`autonomy-status`, `autonomy-set <class> <0-3>`,
 //     `autonomy-confirm-<id>-<code>`) runs once per message, without the model. These are the only
 //     way a level is raised from the chat, and only an allowlisted operator reaches them;
+//   - an experiment command (`experiment-create`, `experiment-start <id>`,
+//     `experiment-start-<id>-<code>`, `exp-approve-<id>`, `ab-dashboard` and the rest in
+//     experiments/commands.ts) runs once per message, without the model. Experiments start and
+//     proposals apply only from here;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -48,6 +52,10 @@ import { isReportCommand, runReportCommand } from "../reports/commands.ts";
 import { parseConvertCommand, runConvertCommand } from "../convert/commands.ts";
 // Autonomy: the level commands (docs/AUTONOMY.md).
 import { parseAutonomyCommand, runAutonomyCommand } from "../autonomy/commands.ts";
+// Experiments: create, start (two steps), stop, proposals and the A/B dashboard (docs/EXPERIMENTS.md).
+import { parseExperimentCommand, runExperimentCommand } from "../experiments/commands.ts";
+import { servedTemplates } from "../experiments/jobs.ts";
+import type { TemplateFile } from "../templates/store.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
@@ -55,6 +63,7 @@ export const SEQUENCE_COMMAND_EFFECT = "operator_sequence_command";
 export const REPORT_COMMAND_EFFECT = "operator_report_command";
 export const CONVERT_COMMAND_EFFECT = "operator_convert_command";
 export const AUTONOMY_COMMAND_EFFECT = "operator_autonomy_command";
+export const EXPERIMENT_COMMAND_EFFECT = "operator_experiment_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -81,6 +90,12 @@ export interface OperatorAgentOptions<E extends Env = Env> {
   owedWindowDays?: number;
   /** The fetch web_fetch uses. Defaults to the global fetch. */
   fetch?: typeof fetch;
+  /**
+   * Templates bundled with the Worker, when the deployment bundles them for the cold batch, so the
+   * experiment commands check against the same copy the batch sends. Without them, templates are
+   * served from KV.
+   */
+  templates?: readonly TemplateFile[];
   now?: () => Date;
   logger?: AgentLogger;
 }
@@ -227,6 +242,25 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       let text: string;
       try {
         text = await runAutonomyCommand({ db: env.DB, kv: env.KV, flags, config: options.config, userId: message.userId, ...(options.now ? { now: options.now } : {}) }, autonomyCommand);
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing changed; send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
+    // Experiments: experiments start in two steps and proposals apply only from here; once per message.
+    const experimentCommand = parseExperimentCommand(message.text);
+    if (experimentCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, EXPERIMENT_COMMAND_EFFECT))) {
+        log.warn("redelivered experiment command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let text: string;
+      try {
+        text = await runExperimentCommand(
+          { db: env.DB, kv: env.KV, flags, templates: servedTemplates(env.KV, options.config, flags, options.templates), userId: message.userId, ...(options.now ? { now: options.now } : {}) },
+          experimentCommand,
+        );
       } catch (error) {
         text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing changed; send it again to retry.`;
       }

@@ -24,6 +24,7 @@ import { applyBooked, dealFor, withdrawBooked } from "./booked.ts";
 import { displayName, loadContactBrief, renderPrepBrief, when } from "./brief.ts";
 import { CONVERT_DRAFT_KINDS, createConvertDraft, withdrawConvertDrafts, type ConvertDraftResult } from "./drafts.ts";
 import { CONVERT_FLAGS, CONVERT_LIMITS } from "./flags.ts";
+import { readSyncState, startedBeforeBaseline } from "./sync.ts";
 
 export type ConvertCommand =
   | { kind: "held" | "noshow" | "unlink"; code: string }
@@ -229,15 +230,20 @@ export async function runConvertCommand(deps: ConvertCommandDeps, command: Conve
     if (!contact) return `No contact matches ${label(command.contact, 80)}. Nothing was linked.`;
     const at = now.toISOString();
     const firstSeen = row.first_seen_at;
+    // The same baseline rule as calendar sync: a meeting that had started before this run of syncing
+    // began is linked, but is not a new booking.
+    const baseline = (await readSyncState(db).catch(() => null))?.baseline_at;
+    const beforeBaseline = startedBeforeBaseline(row.starts_at, firstSeen, baseline) ? 1 : 0;
     await db.batch([
       db
         .prepare(
-          `INSERT INTO calendar_meetings (event_id, contact_id, starts_at, ends_at, status, attribution, first_seen_at, created_at, updated_at)
-           VALUES (?1, ?2, ?3, ?4, ?5, 'operator_link', ?6, ?7, ?7)
+          `INSERT INTO calendar_meetings (event_id, contact_id, starts_at, ends_at, status, attribution, first_seen_at, before_baseline, created_at, updated_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, 'operator_link', ?6, ?8, ?7, ?7)
            ON CONFLICT (event_id) DO UPDATE SET contact_id = excluded.contact_id, attribution = excluded.attribution, status = excluded.status,
-             starts_at = excluded.starts_at, ends_at = excluded.ends_at, first_seen_at = excluded.first_seen_at, updated_at = excluded.updated_at`,
+             starts_at = excluded.starts_at, ends_at = excluded.ends_at, first_seen_at = excluded.first_seen_at, before_baseline = excluded.before_baseline,
+             updated_at = excluded.updated_at`,
         )
-        .bind(row.event_id, contact.id, row.starts_at, row.ends_at, row.status, firstSeen, at),
+        .bind(row.event_id, contact.id, row.starts_at, row.ends_at, row.status, firstSeen, at, beforeBaseline),
       db.prepare("UPDATE calendar_events SET state = 'attributed', updated_at = ?2 WHERE event_id = ?1").bind(row.event_id, at),
     ]);
     const applied = await applyBooked(

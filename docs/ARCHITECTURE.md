@@ -66,6 +66,7 @@ Core never imports a vendor SDK. Every third party (email providers, mailboxes, 
 | `FOLLOWUP_AGENT` | Durable Object `FollowupAgent` | Per-contact lifecycle timers |
 | `EVENTS_QUEUE` | Queue (`gtm-events` by default) | Event spine dispatch |
 | `CHAT_QUEUE` | Queue (`gtm-chat` by default) | Long chat turns, moved off the webhook path |
+| `JOBS_QUEUE` | Queue (optional) | One message per due job, so each runs in its own invocation |
 | `ASSETS` | Static assets | The admin dashboard |
 
 Optional modules add their own bindings, for example a container and a Workflow for `ship`.
@@ -111,6 +112,7 @@ defineJob({
 ```
 
 - The Worker has one cron trigger, `* * * * *`. Each minute the scheduled handler asks the registry which jobs are due at that minute (UTC, from each job's own schedule) and runs them concurrently, at most four at a time, longest ceiling first, each under its own ceiling. It is a loop, not a switch statement, and changing a schedule never touches `wrangler.jsonc`. A minute with nothing due touches no binding. A job whose ceiling would not fit in the invocation's remaining wall time is not started: it gets a failed run row and the normal failure page, rather than being cut off. A job whose previous run is still going is skipped.
+- With `JOBS_QUEUE` bound and `scheduler:queue_enabled` on, the handler sends each due job to the queue instead. The consumer runs one job per invocation, claimed per (job, minute) in the effects ledger, so a redelivered message or a duplicate trigger is a no-op. Dead-lettered fires get a failed run row and one page a day. The retention job prunes those claims after 30 days.
 - A ceiling is not a hard stop. At its ceiling a job's AbortSignal fires and its run is recorded as failed, but JavaScript cannot cancel a promise, so a body that ignores the signal keeps running. The scheduler keeps that job's slot taken until it settles, the invocation's wall budget runs out, or no job is left waiting to start, so a stuck job costs the minute one slot instead of running beside the jobs after it. Long work should check `ctx.signal` between steps.
 - A daily retention job (`run_retention`, behind `ops:retention_enabled`) deletes old run rows, always keeping the newest row of each job and status, which cron health and the follow-up intake gate read.
 - Schedules use named days. On Cloudflare, numeric day-of-week `1` is Sunday, so `MON-FRI` is the only unambiguous form. The registry rejects numeric days.

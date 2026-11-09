@@ -15,7 +15,9 @@
 //      suppression check, which fails closed;
 //   7. the campaign row is inserted, which is the daily key; a run that loses that race stops;
 //   8. an atomic claim per contact in the effects ledger, then the holdout split;
-//   9. compose and gate each draft (compose.ts), then the model reviewer when it is on;
+//   9. plan each contact's template, experiment arm, subject line and send slot, pinned before any
+//      draft exists (experiments/plan.ts), then compose and gate each draft (compose.ts), then the
+//      model reviewer when it is on;
 //  10. store the drafts: approved with their digest only when auto-approve applies and the draft
 //      passed the whole gate, otherwise pending_approval. Blocked copy is never stored as a draft;
 //  11. readiness over the passing drafts, salvaged once when only suppression or the account cap
@@ -25,6 +27,11 @@
 //      batches by half (at least five), deferring the rest 24 hours.
 // Every write outside the database is claimed first. Bookkeeping (quality rows, the templates
 // table, holdout rows, operator messages) fails open; every gate fails closed.
+import { isFlagOn } from "../jobs/loop.ts";
+import { intentAllowsFirstTouch } from "../scoring/intent.ts";
+import { loadAngles } from "../signals/angles.ts";
+
+const INTENT_ENFORCE_FLAG = "intent_score:enforce";
 import { returnAutomaticApprovals } from "../autonomy/incidents.ts";
 import { loadBrain } from "../brain/load.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -46,12 +53,13 @@ import type { SendOutreach } from "../sending/types.ts";
 import { loadSourcingBrain } from "../sourcing/brain.ts";
 import { createSpendGate } from "../sourcing/spend.ts";
 import { loadTemplates, serveTemplateFiles, type ServedTemplate, type TemplateFile } from "../templates/store.ts";
-import { batchTemplates, createRotation } from "./allocate.ts";
+import { planAllocation, withWeightOverrides } from "../experiments/plan.ts";
+import { readAllocation } from "../experiments/flags.ts";
+import { batchTemplates } from "./allocate.ts";
 import { composeColdDraft, loadCopy, type ComposeContext } from "./compose.ts";
 import {
   OUTREACH_FLAGS,
   OUTREACH_LIMITS,
-  readAllocationMode,
   readAutoApprove,
   readConfidenceFloor,
   readDailyLimit,
@@ -409,7 +417,8 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
 
   const companyDomain = config.company.domain;
   const load = deps.templates ? await serveTemplateFiles(deps.templates, { companyDomain }) : await loadTemplates(deps.kv, { companyDomain });
-  const templates = batchTemplates(load.templates);
+  // Approved weight overrides (experiments/proposals.ts) replace a template file's volume_weight.
+  const templates = batchTemplates(await withWeightOverrides(load.templates, deps.flags));
   if (templates.length === 0) {
     const why = load.error ?? (load.skipped.length ? `no approved cold_intro template is servable (${load.skipped.map((s) => `${s.file}: ${s.reason}`).join("; ")})` : "no approved cold_intro template is uploaded");
     await notifyOnce(deps, `${campaignId}:templates`, NOTICE_EFFECT, `Cold batch ${campaignId} did not run: ${why}.`);
@@ -460,16 +469,26 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
 
   // The daily key.
   const seed = `${day}:${crypto.randomUUID()}`;
-  const allocation = await readAllocationMode(deps.flags);
+  const allocation = await readAllocation(deps.flags);
   const created = await db
     .prepare("INSERT OR IGNORE INTO campaigns (id, name, description, status, target_count, notes, created_at, updated_at) VALUES (?1, ?2, ?3, 'draft', ?4, ?5, ?6, ?6)")
-    .bind(campaignId, `Cold batch ${day}`, "The daily cold batch: first touches assembled from approved templates.", picked.length, `seed ${seed}; holdout rate ${holdoutRate}; allocation ${allocation.used}`, now.toISOString())
+    .bind(campaignId, `Cold batch ${day}`, "The daily cold batch: first touches assembled from approved templates.", picked.length, `seed ${seed}; holdout rate ${holdoutRate}; allocation ${allocation.mode}`, now.toISOString())
     .run();
   if ((created.meta.changes ?? 0) === 0) return empty("resumed", `another run started today's batch ${campaignId}`, { campaignId });
 
+  // The intent score filters selection only while intent_score:enforce is on; an unreadable switch
+  // counts as on, so a read error writes fewer first touches, never more.
+  let intentEnforced: boolean;
+  try {
+    intentEnforced = isFlagOn(await deps.flags.get(INTENT_ENFORCE_FLAG));
+  } catch {
+    intentEnforced = true;
+  }
+  const eligible = picked.filter((r) => intentAllowsFirstTouch(r.attributes, intentEnforced));
+
   // Claims, then the holdout.
-  const claimedKeys = await claimMany(db, picked.map((r) => `${PICK_EFFECT}:${day}:${r.id}`), PICK_EFFECT, now);
-  const claimed = picked.filter((r) => claimedKeys.has(`${PICK_EFFECT}:${day}:${r.id}`));
+  const claimedKeys = await claimMany(db, eligible.map((r) => `${PICK_EFFECT}:${day}:${r.id}`), PICK_EFFECT, now);
+  const claimed = eligible.filter((r) => claimedKeys.has(`${PICK_EFFECT}:${day}:${r.id}`));
   // Walk in rank order and stop once the batch is full, so held and treated contacts come from the
   // same ranked range and the control never includes a tail the treatment did not reach.
   const held = pickHoldout(claimed.map((r) => r.id), holdoutRate, seededRng(seed));
@@ -485,15 +504,25 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
   // Compose and gate.
   const judgeSlice = await loadBrain({ KV: deps.kv ?? { get: () => Promise.resolve(null) } }, "judge");
   const copy = await loadCopy(db);
-  const ctx: ComposeContext = { config, ...copy, links: linkPolicy(config, deps.appUrl), approvedClaims: approvedClaimLines(judgeSlice.text) };
-  const rotation = createRotation();
+  // Angles come only from each contact's own real, unexpired signal. A failed read gives none, so a
+  // template that needs one is held rather than sent without its reason.
+  let angles: Awaited<ReturnType<typeof loadAngles>> = new Map();
+  try {
+    angles = await loadAngles(db, toWrite.map((r) => ({ contactId: r.id, accountKey: r.account_key, accountName: r.account_name })), now);
+  } catch (error) {
+    log.warn("signal angles could not be read; templates that need one are held", { error: error instanceof Error ? error.message : String(error) });
+  }
+  const ctx: ComposeContext = { config, ...copy, links: linkPolicy(config, deps.appUrl), approvedClaims: approvedClaimLines(judgeSlice.text), angles };
+  // Templates, experiment arms, subject lines and send slots are planned and pinned before any
+  // draft is composed (experiments/plan.ts); weighted rotation by volume_weight is the default.
+  const plan = await planAllocation({ db, flags: deps.flags, now, seed, campaignId, rows: toWrite, templates, sending: config.sending, log });
   // Measurement bookkeeping: which contacts had a recent signal, for each draft's cohort. A failed
   // read records no cohort; it never stops the batch.
   const signalled = await signalledContacts(db, toWrite.map((r) => ({ contactId: r.id, accountKey: r.account_key })), now);
   const composed: Composed[] = [];
   for (const row of toWrite) {
     if (deps.signal?.aborted) break;
-    const outcome = composeColdDraft(row, templates, rotation, ctx);
+    const outcome = composeColdDraft(row, templates, plan.rotationFor(row), ctx);
     composed.push({
       row,
       draftId: newDraftId(),
@@ -543,10 +572,12 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
       statements.push(storeDraftStatement(deps, campaignId, c, mode, digest));
       stored.push(c);
     }
+    // The experiment arm the contact was pinned to rides on its campaign row to the send ledger.
+    const arm = hasCopy ? plan.experimentFor(c.row.id) : undefined;
     statements.push(
       db
-        .prepare("INSERT OR IGNORE INTO campaign_contacts (campaign_id, contact_id, draft_id, status, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5)")
-        .bind(campaignId, c.row.id, hasCopy ? c.draftId : null, hasCopy ? "pending" : "skipped", at),
+        .prepare("INSERT OR IGNORE INTO campaign_contacts (campaign_id, contact_id, draft_id, status, experiment_id, experiment_arm, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)")
+        .bind(campaignId, c.row.id, hasCopy ? c.draftId : null, hasCopy ? "pending" : "skipped", arm?.experimentId ?? null, arm?.arm ?? null, at),
     );
   }
   const results = await batchWrite(db, statements);
@@ -558,6 +589,7 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
     if (hasCopy && (results[r]?.meta.changes ?? 0) > 0) insertedDrafts.add(c.draftId);
     r += hasCopy ? 2 : 1;
   }
+  await plan.record(stored.filter((c) => insertedDrafts.has(c.draftId)).map((c) => ({ contactId: c.row.id, draftId: c.draftId })));
   const qualityRecords: QualityRecord[] = composed.map((c) => ({ subjectType: "draft", subjectId: stored.includes(c) ? c.draftId : c.idempotencyKey, result: c.result, review: c.review }));
   await recordQualityChecks(db, qualityRecords, now);
   try {
@@ -579,7 +611,7 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
     `Quality: ${quality}${reviewNote ? `; ${reviewNote}` : ""}.`,
     ...(counts.held > 0 ? [`${counts.held} held draft(s) wait for individual review and are not part of this batch.`] : []),
     ...(counts.heldOut > 0 ? [`Holdout: ${counts.heldOut} contact(s) held out as the no-send control.`] : []),
-    `Allocation: weighted rotation by volume_weight${allocation.requested !== "weighted" ? ` (${OUTREACH_FLAGS.allocationMode} is "${allocation.requested}"; every mode runs as weighted rotation for now)` : ""}.`,
+    ...plan.lines,
   ];
   // The campaign is marked active only when this run has finished with it, so a concurrent rerun
   // never resumes or recovers a batch that is still being written (see settledCampaignSql).

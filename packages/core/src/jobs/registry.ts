@@ -49,6 +49,12 @@ export interface JobContext<E = unknown> {
    * runner then records the run as failed with this reason, without running the job.
    */
   notStarted?: string;
+  /**
+   * Set by the jobs queue consumer when this fire arrived after the job's next scheduled fire had
+   * already come (a backed-up queue). The runner then records the run as skipped with this reason,
+   * without running the job: the later fire runs it instead.
+   */
+  superseded?: string;
   ceilings: JobCeilings;
   flags: FlagReader;
   log: JobLogger;

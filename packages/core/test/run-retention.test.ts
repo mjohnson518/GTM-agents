@@ -8,7 +8,7 @@ import { findFlag } from "../src/flags/registry.ts";
 import { POLL_LISTED_MARK } from "../src/inbox/jobs.ts";
 import { createJobRegistry, defineJob, type FlagReader, type JobContext } from "../src/jobs/registry.ts";
 import { checkCronHealth } from "../src/runtime/cron-health.ts";
-import { RUN_RETENTION_FLAG, RUN_RETENTION_JOB, createRetentionJob, pruneRunRows } from "../src/runtime/retention.ts";
+import { RUN_RETENTION_FLAG, RUN_RETENTION_JOB, createRetentionJob, pruneJobRunClaims, pruneRunRows } from "../src/runtime/retention.ts";
 import { checkReplyIntake } from "../src/sequences/intake.ts";
 import { acmeConfig } from "./fixtures.ts";
 import { defineConfig } from "../src/config/index.ts";
@@ -159,7 +159,23 @@ describe("the run_retention job", () => {
     expect(await job.run(context({ get: () => Promise.reject(new Error("KV unavailable")) }))).toEqual({ summary: "flag off" });
     expect(await left(task)).toHaveLength(2);
     const result = await job.run(context({ get: (key) => Promise.resolve(key === RUN_RETENTION_FLAG ? "true" : null) }));
-    expect(result).toEqual({ summary: "deleted 1 run rows (1 skipped, 0 completed, 0 failed)", rows: 1 });
+    expect(result).toEqual({ summary: "deleted 1 run rows (1 skipped, 0 completed, 0 failed) and 0 old job run claims", rows: 1 });
     expect(await left(task)).toEqual(["skipped 1d"]);
+  });
+
+  it("prunes only old per-minute job run claims, never other claims or recent ones", async () => {
+    const now = new Date("2026-12-31T00:00:00.000Z");
+    const old = "2026-11-01T00:00:00.000Z";
+    const recent = "2026-12-30T00:00:00.000Z";
+    const rows: Array<[string, string, string]> = [
+      ["job-run:inbox_poll:2026-11-01T00:00", "run", old],
+      ["job-run:inbox_poll:2026-12-30T00:00", "run", recent],
+      ["send:cold:abc", "run", old],
+      ["job-run:other:2026-11-01T00:00", "email_send", old],
+    ];
+    for (const [id, effect, at] of rows) await env.DB.prepare("INSERT OR IGNORE INTO event_effects (event_id, effect, created_at) VALUES (?1, ?2, ?3)").bind(id, effect, at).run();
+    expect(await pruneJobRunClaims(env.DB, { now, maxRows: 100 })).toBe(1);
+    const left = await env.DB.prepare("SELECT event_id FROM event_effects WHERE event_id IN (?1, ?2, ?3, ?4) ORDER BY event_id").bind(...rows.map((r) => r[0])).all<{ event_id: string }>();
+    expect(left.results.map((r) => r.event_id)).toEqual(["job-run:inbox_poll:2026-12-30T00:00", "job-run:other:2026-11-01T00:00", "send:cold:abc"]);
   });
 });

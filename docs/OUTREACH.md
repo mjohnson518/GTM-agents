@@ -52,7 +52,7 @@ Once a weekday the batch picks the best-fitting cold contacts, one per account, 
 
 The batch allocates among at most eight general (untargeted) and eight targeted approved `cold_intro` templates, highest `volume_weight` first. A template with `segments`, `personas` or `team_sizes` is offered only to a contact who matches every list it declares; a contact whose segment, persona or team size is unknown never gets a template that targets it. A `volume_weight` of 0 takes a template out of rotation.
 
-**Allocation is weighted rotation.** Among the templates a contact may get, the one furthest below its weighted share of the batch so far is chosen, so a batch splits by `volume_weight` exactly and deterministically. Choosing by measured reply rates (Thompson sampling) belongs to the experiments milestone; until then `outreach:allocation_mode` is read and reported, and every value runs as weighted rotation.
+**Allocation is weighted rotation.** Among the templates a contact may get, the one furthest below its weighted share of the batch so far is chosen, so a batch splits by `volume_weight` exactly and deterministically. With `outreach:allocation_mode` set to `thompson`, templates are instead chosen by measured positive-reply rates from matured samples, with a protected control and floors for every arm, once each arm has enough sends; templates, experiment arms, subject lines and send slots are planned and pinned per account before any draft is composed ([EXPERIMENTS.md](EXPERIMENTS.md)). Weighted rotation stays the default and the escape hatch.
 
 Each variable comes from your own records:
 
@@ -65,7 +65,8 @@ Each variable comes from your own records:
 | `{{persona_hint}}` | The `value_frame` of the persona's row in `persona_playbooks` |
 | `{{booking_url}}`, `{{sender_name}}` | `sending.bookingUrl` and `agent.name` in `gtm.config.ts` |
 | `{{attributes.<key>}}` | The contact's `attributes`, over the account's, when the value is a single line of at most 120 characters with no link, address or markup. Providers write attributes, so every draft from a template that uses them is held for a person (`PER_DRAFT_REVIEW`) |
-| `{{angle_opener}}`, `{{angle_age}}`, `{{proven_insight}}`, `{{original_subject}}`, `{{company_context}}` | No source in the cold batch yet: a template that uses them is held for every contact |
+| `{{angle_opener}}`, `{{angle_age}}`, `{{angle_headline}}` | From the contact's own real, unexpired signal ([SIGNALS.md](SIGNALS.md)): a fixed opener per signal category, its dated age, and, only for whitelisted sources, a sanitized headline. A template using them is held for a contact with no such signal, and one using the headline gets per-draft review |
+| `{{proven_insight}}`, `{{original_subject}}`, `{{company_context}}` | No source in the cold batch yet: a template that uses them is held for every contact |
 
 **Skip rather than guess.** If any variable a template uses has no value, nothing is filled in: no draft is stored for that contact, the decision is recorded as `MISSING_VARIABLE`, and the contact is skipped for the day. A contact no template may be offered to is recorded as `NO_TEMPLATE`. Nothing ever falls back to "Hi there" or "your company".
 
@@ -218,7 +219,8 @@ The batch hands over drafts; the send function owns delivery. It runs every boun
 | `quality:model_review_enabled` | `false` | The model reviewer |
 | `outreach:min_email_confidence` | `medium` | The verification floor for selection |
 | `outreach:holdout_rate` | `0.05` | The share held out as a no-send control (at most 0.2) |
-| `outreach:allocation_mode` | `weighted` | Reported only; every value runs as weighted rotation for now |
+| `outreach:allocation_mode` | `weighted` | `weighted` rotation, or `thompson` sampling with guardrails ([EXPERIMENTS.md](EXPERIMENTS.md)) |
+| `intent_score:enforce` | `false` | Only contacts in the intent score's first-touch band are selected ([SIGNALS.md](SIGNALS.md)); an unreadable value counts as on |
 | `delivery:domain_daily_cap` | `500` | Shared with the send function: today's room for the batch |
 | `delivery:account_weekly_cap` | `3` | Shared with the send function: the picker's weekly cap |
 

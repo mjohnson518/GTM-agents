@@ -46,6 +46,11 @@ export interface OutreachItem {
   templateSha256?: string;
   /** Bookkeeping only, never a gate: signalled, segment_routed or generic (metrics/cohort.ts), recorded on the send ledger. */
   cohort?: string;
+  /**
+   * The send-time test's slot (experiments/send-time.ts): early (08:00 to 10:00) or afternoon
+   * (13:00 to 15:00) recipient-local. It only narrows the send window, never widens it.
+   */
+  sendSlot?: "early" | "afternoon";
 }
 
 /** Why an item waits for later instead of going now. */

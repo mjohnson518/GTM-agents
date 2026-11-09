@@ -61,6 +61,7 @@ export async function defaultRunner<E>(job: RegisteredJob<E>, ctx: JobContext<E>
       return { job: job.name, status: "skipped", durationMs: Date.now() - started, summary: "flag off" };
     }
   }
+  if (ctx.superseded) return { job: job.name, status: "skipped", durationMs: Date.now() - started, summary: ctx.superseded };
   try {
     if (ctx.notStarted) throw new Error(ctx.notStarted);
     if (ctx.signal.aborted) throw new Error(`job ${job.name} exceeded its ${job.ceilings.maxDurationMs} ms ceiling before it started`);

@@ -8,7 +8,14 @@
 // environments, so staging repeats them. There is exactly one cron trigger, every minute: the
 // scheduled handler runs each registered job whose own schedule matches that minute (UTC), so a new
 // job never needs a new trigger. Keep it the only one; an extra trigger runs the jobs due in its
-// minutes a second time, and `gtm doctor` fails on it.
+// minutes a second time, and `gtm doctor` fails on it. With the JOBS_QUEUE producer and its
+// consumer, and the scheduler:queue_enabled flag on (it is off by default), the scheduled handler
+// sends each due job to the queue and the consumer runs one job per
+// invocation (max_batch_size 1), each with its own 15-minute wall time; remove all three JOBS lines
+// to run due jobs inside the cron invocation instead. max_concurrency 8 runs a busy minute's jobs
+// side by side, twice the in-process bound, without opening more D1 and provider connections than a
+// deployment's jobs need; one retry covers a claim that could not be written, and what still fails
+// lands on the dead-letter queue, whose consumer records it and pages once a day.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "gtm-agent",
@@ -45,11 +52,14 @@
   "queues": {
     "producers": [
       { "binding": "EVENTS_QUEUE", "queue": "${EVENTS_QUEUE_NAME}" },
-      { "binding": "CHAT_QUEUE", "queue": "${CHAT_QUEUE_NAME}" }
+      { "binding": "CHAT_QUEUE", "queue": "${CHAT_QUEUE_NAME}" },
+      { "binding": "JOBS_QUEUE", "queue": "${JOBS_QUEUE_NAME}" }
     ],
     "consumers": [
       { "queue": "${EVENTS_QUEUE_NAME}", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 5, "dead_letter_queue": "${EVENTS_DLQ_NAME}" },
-      { "queue": "${CHAT_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 1, "max_retries": 0 }
+      { "queue": "${CHAT_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 1, "max_retries": 0 },
+      { "queue": "${JOBS_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 8, "max_retries": 1, "retry_delay": 30, "dead_letter_queue": "${JOBS_DLQ_NAME}" },
+      { "queue": "${JOBS_DLQ_NAME}", "max_batch_size": 10, "max_batch_timeout": 30, "max_concurrency": 1, "max_retries": 0 }
     ]
   },
   "triggers": { "crons": ["* * * * *"] },
@@ -74,11 +84,14 @@
       "queues": {
         "producers": [
           { "binding": "EVENTS_QUEUE", "queue": "${STAGING_EVENTS_QUEUE_NAME}" },
-          { "binding": "CHAT_QUEUE", "queue": "${STAGING_CHAT_QUEUE_NAME}" }
+          { "binding": "CHAT_QUEUE", "queue": "${STAGING_CHAT_QUEUE_NAME}" },
+          { "binding": "JOBS_QUEUE", "queue": "${STAGING_JOBS_QUEUE_NAME}" }
         ],
         "consumers": [
           { "queue": "${STAGING_EVENTS_QUEUE_NAME}", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 5, "dead_letter_queue": "${STAGING_EVENTS_DLQ_NAME}" },
-          { "queue": "${STAGING_CHAT_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 1, "max_retries": 0 }
+          { "queue": "${STAGING_CHAT_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 1, "max_retries": 0 },
+          { "queue": "${STAGING_JOBS_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 8, "max_retries": 1, "retry_delay": 30, "dead_letter_queue": "${STAGING_JOBS_DLQ_NAME}" },
+          { "queue": "${STAGING_JOBS_DLQ_NAME}", "max_batch_size": 10, "max_batch_timeout": 30, "max_concurrency": 1, "max_retries": 0 }
         ]
       },
       "triggers": { "crons": ["* * * * *"] }

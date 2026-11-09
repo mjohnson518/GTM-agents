@@ -605,7 +605,8 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 | `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured. Available |
 | `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending. Available |
 | `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests. Available |
-| `data-exa` | DiscoverySource | `search` is available; `research` and `watch` (websets and monitors) are planned |
+| `data-exa` | DiscoverySource | `search`, `watch` (websets), search monitors (signed deliveries), `find_similar` and dated news. Available |
+| `data-jobboards` | Hiring board source | Public Greenhouse, Lever and Ashby board JSON from their documented hosts only; returns role-kind counts, never titles. No key. Available |
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Many providers behind one gateway; the allowlist and daily cap are core config |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
 | `data-xai` | SignalSource | Public-post signals with live search |

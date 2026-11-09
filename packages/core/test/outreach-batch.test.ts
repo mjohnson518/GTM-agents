@@ -13,7 +13,9 @@ import { draftDigest } from "../src/security/approval-digest.ts";
 import { addSuppression } from "../src/sending/suppression.ts";
 import { campaignIdFor, createOutreachJobs, runColdBatch, type ColdBatchDeps } from "../src/outreach/index.ts";
 import { fakeJudge, fakeSendOutreach, flagReader, resetOutreachTables, seedContact, silentLogger, templateFile, uploadOutreachBrain, uploadTemplates, type FakeSend } from "../src/outreach/testing.ts";
+import { recordSignal } from "../src/signals/record.ts";
 import { acmeConfig } from "./fixtures.ts";
+import { newSignal } from "./signals-fakes.ts";
 
 const OPERATOR = "7310001";
 const NOW = new Date("2026-11-09T13:00:00.000Z");
@@ -107,6 +109,34 @@ describe("the cold batch, manual mode", () => {
     await processChatMessage({ config, operator: () => operator.channel, sendOutreach: () => send.send, now: () => NOW }, env as unknown as Env, message(command, "rel-2"));
     expect(send.items()).toHaveLength(3);
     expect(operator.messages.at(-1)?.text).toMatch(/0 of 3 drafts released/);
+  });
+
+  it("fills a template's angle from the contact's own dated signal, and holds it for contacts without one", async () => {
+    const body = ["Hi {{first_name}},", "", "{{angle_opener}} Teams that grow {{angle_age}} usually find their test suite grows faster than their patience with reruns.", "", "Is flaky-test time something your team tracks at {{account_name}}, or does it mostly show up as frustration in standup?", "", "{{sender_name}}"].join("\n");
+    await uploadTemplates(env.KV, [templateFile("cold-angle", { body })]);
+    const day = 86_400_000;
+    await recordSignal(env.DB, newSignal("globex.example", { type: "hiring", source: "hiring_board", eventDate: new Date(NOW.getTime() - 9 * day).toISOString(), expiresAt: new Date(NOW.getTime() + 20 * day).toISOString(), eventKey: "globex-hiring" }), NOW);
+    await runColdBatch(deps(fakeSendOutreach(), {}));
+    const { results } = await env.DB.prepare("SELECT recipient_email, body FROM drafts").all<{ recipient_email: string; body: string }>();
+    const jane = results.find((d) => d.recipient_email === "jane@globex.example");
+    expect(jane?.body).toContain("Teams that grow last week");
+    expect(jane?.body).not.toContain("{{");
+    // Nobody else has a signal: their drafts are held, never written without the reason.
+    expect(results.map((d) => d.recipient_email)).toEqual(["jane@globex.example"]);
+  });
+
+  it("writes no first touch while the intent filter is on and nobody has a score, or when its switch cannot be read", async () => {
+    await runColdBatch(deps(fakeSendOutreach(), { "intent_score:enforce": "true" }));
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())?.n).toBe(0);
+    await seedWorld();
+    await runColdBatch(deps(fakeSendOutreach(), {}, { flags: flagReader({ "cold_batch:enabled": "true", "outreach:holdout_rate": "0" }, ["intent_score:enforce"]) }));
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())?.n).toBe(0);
+    // A contact in the first-touch band still gets a draft while the filter is on.
+    await seedWorld();
+    await env.DB.prepare("UPDATE contacts SET attributes = json_set(COALESCE(attributes, '{}'), '$.intent', json('{\"band\":\"first_touch\",\"score\":90}')) WHERE email = 'jane@globex.example'").run();
+    await runColdBatch(deps(fakeSendOutreach(), { "intent_score:enforce": "true" }));
+    const { results } = await env.DB.prepare("SELECT recipient_email FROM drafts").all<{ recipient_email: string }>();
+    expect(results.map((d) => d.recipient_email)).toEqual(["jane@globex.example"]);
   });
 
   it("does not start a second batch the same day", async () => {

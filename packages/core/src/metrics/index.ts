@@ -58,6 +58,7 @@ export {
   countMeetings,
   isMeetingAttribution,
   isMeetingBooked,
+  meetingAfterOutreachSql,
   meetingAttributedSql,
   meetingBookedSql,
   meetingEvidence,
@@ -67,3 +68,32 @@ export type { MeetingAttribution, MeetingCounts, MeetingOutcome, MeetingRow } fr
 // Product outcomes: the one definition of a sign-up, an activation, a new paying customer and MRR.
 export { PRODUCT_OUTCOMES, PRODUCT_OUTCOME_SOURCES, countProductOutcomes, currentMrr, experimentArmForOutcome, firstTouchForOutcome, productOutcomeSql, signupSql } from "./product.ts";
 export type { FirstTouchCredit, Mrr, ProductOutcome, ProductOutcomeCounts } from "./product.ts";
+// Accounts that responded (a positive reply, a meeting booked, a sign-up or subscription): lookalike seeds and coverage fill.
+export { respondedAccounts } from "./accounts.ts";
+// Experiments: the per-arm, per-cell, per-variant and per-slot samples, and the statistics over them.
+export {
+  EXPERIMENT_ARMS,
+  EXPERIMENT_METRICS,
+  PRODUCT_EXPERIMENT_METRICS,
+  experimentArmSamples,
+  isExperimentMetric,
+  isProductMetric,
+  sendSlotSamples,
+  subjectVariantSamples,
+  templateCellSamples,
+  verifiedReadyContacts,
+} from "./experiments.ts";
+export type { ArmSample, CellSample, ExperimentArm, ExperimentMetric, ExperimentSamples, SlotSample, SubjectTestSamples, VariantSample } from "./experiments.ts";
+export {
+  MONTE_CARLO_DRAWS,
+  betaDraw,
+  normalCdf,
+  posterior,
+  probabilityBest,
+  probabilityBetterMonteCarlo,
+  probabilityBetterNormal,
+  sampleSizePerArm,
+  shuffled,
+  systematicCounts,
+} from "./experiment-stats.ts";
+export type { ArmCounts, Uniform } from "./experiment-stats.ts";

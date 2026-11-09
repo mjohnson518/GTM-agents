@@ -1,0 +1,17 @@
+{
+  "name": "data-jobboards",
+  "version": "1.0.0",
+  "ports": ["SignalSource"],
+  "capabilities": ["hiring_boards"],
+  "requiredSecrets": [],
+  "optionalSecrets": [],
+  "flags": ["signals:hiring_boards_enabled"],
+  "tools": {
+    "job_board_openings": { "taint": "structured", "gate": "metadata", "rateCategory": "job_boards" }
+  },
+  "costs": {
+    "board_read": { "usd": 0, "per": "public board read (Greenhouse, Lever or Ashby)" }
+  },
+  "limits": { "perSecond": 2 },
+  "contract": "./contract.test.ts"
+}

@@ -8,9 +8,11 @@
 //
 // Allocation is weighted rotation: among the templates a contact may get, the one furthest below
 // its weighted share of the batch so far is chosen, so a batch splits by volume_weight exactly and
-// deterministically. Thompson sampling (choosing by measured reply rates) belongs to the
-// experiments milestone; until then outreach:allocation_mode is read but every mode runs as this
-// rotation.
+// deterministically. It is the default and the escape hatch: with outreach:allocation_mode set to
+// thompson, the cold batch's plan (experiments/plan.ts) splits contacts among general templates by
+// Thompson sampling with guardrails once every template has enough matured sends, and running
+// experiments give their enrolled accounts the arm's template; every other contact still goes
+// through this rotation.
 import type { ServedTemplate } from "../templates/store.ts";
 
 export const MAX_BATCH_TEMPLATES = 8;

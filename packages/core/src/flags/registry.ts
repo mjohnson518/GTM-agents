@@ -29,11 +29,17 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "outreach:ramp_level", kind: "number", default: "0", description: "Warm-up ramp level index." },
   { key: "outreach:min_email_confidence", kind: "string", default: "medium", description: "Verification floor for cold sends." },
   { key: "outreach:holdout_rate", kind: "number", default: "0.05", description: "Share of the ready window held out as a no-send control." },
-  { key: "outreach:allocation_mode", kind: "string", default: "weighted", description: "Template allocation. Only weighted rotation by volume_weight exists today; thompson is reserved for the experiments milestone, and every value runs as weighted rotation until then." },
+  { key: "outreach:allocation_mode", kind: "string", default: "weighted", description: "Template allocation (docs/EXPERIMENTS.md). weighted: rotation by volume_weight. thompson: Thompson sampling with guardrails among general templates once every arm has 50 matured sends (a protected control of at least 20%, other arms at least 15%). Any other value, or a read error, is weighted." },
   { key: "quality:model_review_enabled", kind: "boolean", default: "false", description: "The model reviewer (judge role) in the quality gate. Off, or unavailable, nothing is approved automatically: drafts that would auto-send are held with REVIEW_UNAVAILABLE." },
-  { key: "outreach:send_time_experiment", kind: "boolean", default: "false", description: "Run the send-time experiment." },
+  { key: "outreach:send_time_experiment", kind: "boolean", default: "false", description: "The send-time test (docs/EXPERIMENTS.md): each cold first touch's account gets a recipient-local slot, early (08 to 10) or afternoon (13 to 15), balanced within its time zone, and the send function narrows the window to it. Unreadable counts as off." },
   { key: "outreach:seed_inboxes", kind: "json", default: null, description: "Seed inboxes for placement checks." },
   { key: "outreach:ref_tokens_enabled", kind: "boolean", default: "false", description: "Attribution tokens on product links." },
+
+  // Experiments (docs/EXPERIMENTS.md). No model calls; nothing applies a copy change without a person.
+  { key: "experiments:enabled", kind: "boolean", default: "false", description: "Template experiments and subject tests enroll accounts in the cold batch, and the experiments_cycle job evaluates them twice a day and proposes copy changes through the copy-change gate. Off, or unreadable, nobody is enrolled and nothing is evaluated or proposed." },
+  { key: "experiments:self_review_enabled", kind: "boolean", default: "false", description: "The weekly self-review (experiments_self_review, Sundays 14:00 UTC): at most three rule-based proposals a week (template weights, the holdout rate, the next signal source, the send-time test), each applied only by exp-approve-<id>." },
+  { key: "experiments:control_template", kind: "string", default: null, description: "The protected control template for Thompson allocation and the copy-change gate. Unset, or not an active general template, the general template with the highest volume weight is the control." },
+  { key: "experiments:template_weight:<template>", kind: "number", default: null, description: "State: a template's volume weight, written only when the operator approves a weight or promotion proposal. Unset, unreadable or malformed, the template file's volume_weight applies." },
 
   // Delivery: the provider boundary, the deferred queue, the warm-up ramp and the bounce monitor (docs/SENDING.md).
   { key: "delivery:enabled", kind: "boolean", default: "false", description: "Master switch for the send function's actual send. Off, or unreadable, nothing is sent: every item comes back as a retryable failure ([SEND BLOCKED:disabled]). Also gates the deferred replay and the bounce monitor jobs." },
@@ -45,7 +51,7 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "delivery:last_auto_resume", kind: "string", default: null, description: "State: when the bounce monitor last lifted a warning pause, kept 14 days. A spike inside that time pauses at critical." },
 
   // Scoring and sourcing.
-  { key: "intent_score:enforce", kind: "boolean", default: "false", description: "Use the intent score to filter cold selection." },
+  { key: "intent_score:enforce", kind: "boolean", default: "false", description: "Use the intent score to filter cold selection: only contacts in the first_touch band (80 and up) pass, and a missing score does not. Needs scoring:intent_enabled to compute the score." },
   { key: "fit:scoring_enabled", kind: "boolean", default: "false", description: "Model fit scoring for accounts." },
   { key: "fit:score_top_n", kind: "number", default: "1000", description: "Accounts in scope for fit scoring." },
   { key: "fit:score_per_run", kind: "number", default: "20", description: "Accounts scored per run." },
@@ -60,6 +66,14 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "verification:promotion_policy", kind: "string", default: "strict", description: "strict promotes only deliverable addresses; allow_risky also promotes risky (accept-all) ones. Any other value, or a read error, is strict." },
   { key: "discovery:email_waterfall_enabled", kind: "boolean", default: "false", description: "Email waterfall steps beyond the first finder." },
   { key: "discovery:<source>_enabled", kind: "boolean", default: "false", description: "Reserved for additional sourcing paths (signals, lookalikes, job boards), one flag each. The search sources a deployment wires in run whenever discovery:enabled is on." },
+  // Signals and scale (docs/SIGNALS.md): one flag per source, all off by default; none of these jobs calls a model.
+  { key: "signals:websets_enabled", kind: "boolean", default: "false", description: "Weekly websets (signal_websets): standing person searches with natural-language criteria, created weekly and polled on weekdays. Rows with a clean work address are inserted qualified at a fixed score; promotion still runs every check." },
+  { key: "signals:monitors_enabled", kind: "boolean", default: "false", description: "Search monitors: POST /api/webhooks/search/:key records signed hits, and signal_monitor_drain turns up to 500 a run into raw candidates. Off, or unreadable, the webhook verifies the signature, then answers 503 and records nothing." },
+  { key: "signals:news_enabled", kind: "boolean", default: "false", description: "Funding and leadership news (signal_news): fixed dated news searches over 30 days; a hit becomes a signal only with a published date and a URL, at a known account its title names." },
+  { key: "signals:hiring_boards_enabled", kind: "boolean", default: "false", description: "Public job boards for high-fit accounts (signal_hiring_boards): open roles kept as counts per role kind, never titles; a hiring signal at most once per 90 days per account." },
+  { key: "signals:lookalikes_enabled", kind: "boolean", default: "false", description: "Responder lookalikes (signal_lookalikes): companies similar to accounts that replied positively, booked meetings, signed up or pay; 30 raw candidates a run." },
+  { key: "signals:coverage_fill_enabled", kind: "boolean", default: "false", description: "Coverage fill (signal_coverage_fill): up to 2 more people at fit 7+ accounts with fewer than 2 seats and a recent signal, reply or sign-up; 5 accounts a run, 30-day cooldown per account." },
+  { key: "scoring:intent_enabled", kind: "boolean", default: "false", description: "The nightly intent score (intent_scoring), written to each cold contact's attributes. Shadow: it filters nothing unless intent_score:enforce is on." },
   { key: "enrichment:second_provider_enabled", kind: "boolean", default: "false", description: "The second-provider step of the email waterfall." },
   { key: "enrichment:job_check_enabled", kind: "boolean", default: "false", description: "Job-change checks for stale contacts." },
   { key: "enrichment:job_check_required", kind: "boolean", default: "false", description: "Hold stale contacts that have not been job-checked." },
@@ -98,6 +112,7 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "ops:funnel_digest", kind: "boolean", default: "false", description: "The weekly funnel digest, Mondays at 09:00 UTC: sends, replies, delivery, the matured reply rate and holdout lift, flagging a reply rate under 3% or hard bounces over 2% at 50 or more sends. No model call." },
   { key: "ops:cost_digest", kind: "boolean", default: "false", description: "The daily cost digest, weekdays at 14:00 UTC: spend per job since the previous report. Skipped while ops:daily_scorecard is on. No model call." },
   { key: "ops:target_accounts_page", kind: "boolean", default: "false", description: "The weekly target-accounts page." },
+  { key: "scheduler:queue_enabled", kind: "boolean", default: "false", description: "Send each due job to JOBS_QUEUE, whose consumer runs one job per invocation with its own wall time. Needs the JOBS_QUEUE binding and its consumers in wrangler.jsonc. Off, unreadable, or without the binding, due jobs run inside the cron invocation (4 at a time, a 14-minute budget per minute)." },
   { key: "ops:retention_enabled", kind: "boolean", default: "false", description: "Daily run-row retention (run_retention, 03:40 UTC): deletes execution_runs rows that are skipped and over 7 days old, completed and over 30, or failed and over 90, always keeping the newest row of each job and status and never touching running rows. Off, or unreadable, nothing is deleted. The deployment must register createRetentionJob() in its jobs." },
   { key: "runs:durable", kind: "boolean", default: "false", description: "Journaled, resumable delegated runs." },
   { key: "security:structured_taint", kind: "boolean", default: "false", description: "The structured-taint extractor." },

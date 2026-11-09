@@ -1,5 +1,5 @@
 // GTM-agents: the scoring module's public surface: the one title classifier, the free account
-// prescore and the optional model fit score.
+// prescore, the optional model fit score and the intent score.
 export { SENIORITY_RANK, classifyTitle, compareTitleClasses, seniorityOf, titleKey } from "./titles.ts";
 export type { ClassifyOptions, PersonFitDecision, TitleClass } from "./titles.ts";
 export { PRESCORE_SIGNAL_DAYS, computePrescore, runPrescore } from "./prescore.ts";
@@ -16,3 +16,5 @@ export {
   runFitScoring,
 } from "./fit.ts";
 export type { FitOutput, FitScoringOptions, FitScoringResult } from "./fit.ts";
+export { INTENT_BANDS, intentAllowsFirstTouch, intentBand, intentScore, runIntentScoring, signalFreshness } from "./intent.ts";
+export type { IntentBand, IntentInput, IntentScore } from "./intent.ts";
