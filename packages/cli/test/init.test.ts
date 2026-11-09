@@ -1,10 +1,10 @@
 // GTM-agents: tests for `gtm init`.
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { REQUIRED_BINDINGS } from "@gtm-agents/core/config";
 import { describe, expect, it } from "vitest";
-import { initCommand } from "../src/commands/init.ts";
+import { BUNDLED_TEMPLATE, TEMPLATE_FILES, cliVersion, initCommand } from "../src/commands/init.ts";
 import { main } from "../src/index.ts";
 import { parseJsonc } from "../src/lib/jsonc.ts";
 import { hasBinding } from "../src/lib/wrangler-config.ts";
@@ -35,10 +35,15 @@ describe("gtm init", () => {
 
   it("uses an explicit Worker name and local packages when asked", () => {
     const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
-    expect(initCommand(["agent", "--name", "acme-gtm", "--local", "/opt/gtm-agents"], captureIo(parent))).toBe(0);
-    const pkg = JSON.parse(readFileSync(join(parent, "agent", "package.json"), "utf8")) as { name: string; dependencies: Record<string, string> };
+    const checkout = REPO_ROOT.replace(/\/$/, "");
+    const io = captureIo(parent);
+    expect(initCommand(["agent", "--name", "acme-gtm", "--local", checkout], io)).toBe(0);
+    const pkg = readPackage(join(parent, "agent"));
     expect(pkg.name).toBe("acme-gtm");
-    expect(pkg.dependencies["@gtm-agents/core"]).toBe("file:/opt/gtm-agents/packages/core");
+    expect(pkg.dependencies["@gtm-agents/core"]).toBe(`file:${join(checkout, "packages", "core")}`);
+    expect(pkg.dependencies["@gtm-agents/adapters"]).toBe(`file:${join(checkout, "packages", "adapters")}`);
+    expect(pkg.devDependencies["@gtm-agents/cli"]).toBe(`file:${join(checkout, "packages", "cli")}`);
+    expect(io.text()).toContain("links the packages");
   });
 
   it("refuses a directory that is not empty, and an invalid Worker name", () => {
@@ -50,6 +55,97 @@ describe("gtm init", () => {
     expect(initCommand([], captureIo(parent))).toBe(2);
   });
 });
+
+describe("gtm init install modes", () => {
+  it("defaults to npm mode: every package pinned to exactly this CLI's version", () => {
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    const io = captureIo(parent);
+    expect(initCommand(["agent"], io)).toBe(0);
+    const pkg = readPackage(join(parent, "agent"));
+    const version = cliVersion();
+    expect(version).toBe((JSON.parse(readFileSync(join(REPO_ROOT, "packages/cli/package.json"), "utf8")) as { version: string }).version);
+    expect(pkg.dependencies["@gtm-agents/core"]).toBe(version);
+    expect(pkg.dependencies["@gtm-agents/adapters"]).toBe(version);
+    expect(pkg.devDependencies["@gtm-agents/cli"]).toBe(version);
+    expect(JSON.stringify(pkg)).not.toContain("file:");
+    // Run from this checkout, init says the version may not be published and how to link instead.
+    expect(io.text()).toContain(`at ${version} from npm`);
+    expect(io.text()).toContain("--local <checkout>");
+  });
+
+  it("pins a given release version and copies a given template, as the published CLI does", () => {
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    const template = fakeTemplate(mkdtempSync(join(tmpdir(), "gtm-template-")), "bundled");
+    const io = captureIo(parent);
+    expect(initCommand(["agent"], io, { templateDir: template, version: "1.2.3" })).toBe(0);
+    const dir = join(parent, "agent");
+    const pkg = readPackage(dir);
+    expect(pkg.dependencies["@gtm-agents/core"]).toBe("1.2.3");
+    expect(pkg.devDependencies["@gtm-agents/cli"]).toBe("1.2.3");
+    expect(readFileSync(join(dir, "gtm.config.ts"), "utf8")).toContain("template marker: bundled");
+    expect(readFileSync(join(dir, "public/admin/index.html"), "utf8")).toContain("built dashboard: bundled");
+    expect(io.text()).not.toContain("runs from a checkout");
+  });
+
+  it("takes the template from the --local checkout, not from wherever the CLI runs", () => {
+    const checkout = mkdtempSync(join(tmpdir(), "gtm-checkout-"));
+    mkdirSync(join(checkout, "packages", "core"), { recursive: true });
+    writeFileSync(join(checkout, "packages", "core", "package.json"), "{}\n");
+    fakeTemplate(join(checkout, "apps", "worker"), "checkout");
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    expect(initCommand(["agent", "--local", checkout], captureIo(parent))).toBe(0);
+    expect(readFileSync(join(parent, "agent", "gtm.config.ts"), "utf8")).toContain("template marker: checkout");
+  });
+
+  it("looks for the bundled template beside its compiled commands, where the release build puts it", () => {
+    // scripts/release/pack.mjs writes the template to dist/template; src/ and dist/ share a layout.
+    expect(BUNDLED_TEMPLATE).toBe(join(REPO_ROOT, "packages", "cli", "src", "template") + "/");
+    expect(existsSync(BUNDLED_TEMPLATE)).toBe(false);
+  });
+
+  it("refuses a --local path that is not a checkout", () => {
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    const io = captureIo(parent);
+    expect(initCommand(["agent", "--local", parent], io)).toBe(2);
+    expect(io.text()).toContain("not a checkout");
+    expect(existsSync(join(parent, "agent"))).toBe(false);
+  });
+
+  it("points migrations and assets at paths that exist after npm install, in both modes", () => {
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    expect(initCommand(["npm-agent"], captureIo(parent), { version: "1.2.3" })).toBe(0);
+    expect(initCommand(["local-agent", "--local", REPO_ROOT], captureIo(parent))).toBe(0);
+    for (const project of ["npm-agent", "local-agent"]) {
+      const dir = join(parent, project);
+      const config = parseJsonc(readFileSync(join(dir, "wrangler.jsonc"), "utf8")) as {
+        assets: { directory: string };
+        d1_databases: { migrations_dir: string }[];
+        env: { staging: { d1_databases: { migrations_dir: string }[] } };
+      };
+      // The installed core package carries its migrations at this path, whether linked or installed.
+      for (const db of [...config.d1_databases, ...config.env.staging.d1_databases]) expect(db.migrations_dir, project).toBe("node_modules/@gtm-agents/core/migrations");
+      expect(config.assets.directory, project).toBe("./public");
+      expect(existsSync(join(dir, "public", "admin", "index.html")), project).toBe(true);
+    }
+    expect(existsSync(join(REPO_ROOT, "packages", "core", "migrations", "0001_baseline.sql"))).toBe(true);
+  });
+});
+
+function readPackage(dir: string): { name: string; dependencies: Record<string, string>; devDependencies: Record<string, string> } {
+  return JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { name: string; dependencies: Record<string, string>; devDependencies: Record<string, string> };
+}
+
+/** A copy of the worker template with a marker in gtm.config.ts and a built dashboard. */
+function fakeTemplate(dir: string, marker: string): string {
+  for (const file of TEMPLATE_FILES) {
+    mkdirSync(dirname(join(dir, file)), { recursive: true });
+    cpSync(join(REPO_ROOT, "apps", "worker", file), join(dir, file));
+  }
+  writeFileSync(join(dir, "gtm.config.ts"), `// template marker: ${marker}\n${readFileSync(join(dir, "gtm.config.ts"), "utf8")}`);
+  mkdirSync(join(dir, "public", "admin"), { recursive: true });
+  writeFileSync(join(dir, "public", "admin", "index.html"), `<!doctype html><title>built dashboard: ${marker}</title>\n`);
+  return dir;
+}
 
 describe("gtm", () => {
   it("prints help and rejects unknown commands", async () => {

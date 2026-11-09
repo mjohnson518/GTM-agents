@@ -128,7 +128,7 @@ Follow-ups follow the cold batch's autonomy, read the same way ([OUTREACH.md](OU
   ```
 
   It is named so it cannot be confused with `batch-release`, and neither command releases the other's manifest. A step waiting in a manifest is not put up again while that manifest can still be released.
-- **With `cold_batch:auto_approve` on, or the `cold_batch` class at level 2 or above,** drafts that pass the gate and the model review are approved bound to their digest (`approved_by` `auto:flag` or `auto:autonomy_level`) and sent, with an `auto_sent` autonomy event. **The reviewer must be on** (`quality:model_review_enabled`): with it off, follow-ups are put up for your release even at a higher level.
+- **With `cold_batch:auto_approve` on, or the `cold_batch` class at level 2 or above,** drafts that pass the gate and the model review are approved bound to their digest (`approved_by` `auto:flag` or `auto:autonomy_level`) and sent, with an `auto_sent` autonomy event. **The reviewer must be on** (`quality:model_review_enabled`): with it off, follow-ups are put up for your release even at a higher level. A demotion standing against the class, or level 0, also puts them up for release, and the sweep re-reads the level right before it sends ([AUTONOMY.md](AUTONOMY.md)).
 
 Send the release command back in the operator chat (a leading `/` is accepted). It never reaches the model. In order:
 

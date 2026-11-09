@@ -200,7 +200,7 @@ Passing drafts are approved without you only when one of these holds, and the mo
 - `cold_batch:auto_approve` is on (your switch); or
 - the `cold_batch` action class is at level 2 or above: the stored `autonomy:cold_batch` value, or `autonomy.defaults.cold_batch` in `gtm.config.ts` when none is stored, through `effectiveLevel`. Any read or parse error is level 1.
 
-Levels are raised only by a person. Each automatic hand-over (including a resumed one) writes an `auto_sent` row in `autonomy_events`, and the first release of each manifest writes `approved_unchanged`, as evidence for promotion.
+A demotion standing against the class, or level 0, stops automatic approval even when `cold_batch:auto_approve` is on, and the batch re-reads the level right before it hands drafts to the send function, so a demotion during a run stops the rest ([AUTONOMY.md](AUTONOMY.md)). Levels are raised only by a person. Each automatic hand-over (including a resumed one) writes an `auto_sent` row in `autonomy_events`, and the first release of each manifest writes `approved_unchanged`, as evidence for promotion.
 
 ## What the send function does
 

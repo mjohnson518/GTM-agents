@@ -1,4 +1,14 @@
 // GTM-agents: `gtm init <dir>`, which creates a new deployment from the worker template.
+//
+// Two install modes:
+//   - npm (the default): the project depends on the published @gtm-agents packages at exactly this
+//     CLI's version, and the template comes from the copy bundled into the published CLI
+//     (dist/template, written by scripts/release/pack.mjs). Run from a checkout instead, the CLI
+//     uses that checkout's apps/worker.
+//   - --local <checkout>: the project links to the packages in a checkout of this repository
+//     (file: dependencies), and the template comes from that checkout's apps/worker.
+// Both produce the same wrangler.jsonc: migrations_dir points into node_modules/@gtm-agents/core,
+// which exists either way, and the assets directory is the project's own public/.
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,18 +19,31 @@ import { parseJsonc } from "../lib/jsonc.ts";
 import { hasBinding } from "../lib/wrangler-config.ts";
 
 export interface InitOptions {
-  /** The worker template to copy. Defaults to apps/worker in this repository. */
+  /** The worker template to copy. Defaults to the bundled template, or apps/worker in a checkout. */
   templateDir?: string;
+  /** The package version an npm-mode project depends on. Defaults to this CLI's own version. */
+  version?: string;
 }
 
 const USAGE = "Usage: gtm init <dir> [--name <worker-name>] [--local <path-to-gtm-agents-checkout>]";
-const DEFAULT_TEMPLATE = fileURLToPath(new URL("../../../../apps/worker/", import.meta.url));
+/** The template inside the published CLI package. Absent when the CLI runs from a checkout. */
+export const BUNDLED_TEMPLATE = fileURLToPath(new URL("../template/", import.meta.url));
+/** The template in the checkout this CLI runs from. */
+const CHECKOUT_TEMPLATE = fileURLToPath(new URL("../../../../apps/worker/", import.meta.url));
+const CLI_MANIFEST = new URL("../../package.json", import.meta.url);
 const WORKER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** Files copied from the template, relative to it. */
-const TEMPLATE_FILES = ["wrangler.jsonc", "src/index.ts", "gtm.config.ts", ".dev.vars.example", "brain/README.md", "templates/README.md"];
+/** Files copied from the template, relative to it. The release build bundles the same list, plus public/admin. */
+export const TEMPLATE_FILES = ["wrangler.jsonc", "src/index.ts", "gtm.config.ts", ".dev.vars.example", "brain/README.md", "templates/README.md"];
 
 const TOOLING = { wrangler: "4.152.0", "@cloudflare/workers-types": "5.20261024.1", typescript: "6.0.3" };
+
+/** This CLI's own version, from its package.json. */
+export function cliVersion(): string {
+  const manifest = JSON.parse(readFileSync(CLI_MANIFEST, "utf8")) as { version?: unknown };
+  if (typeof manifest.version !== "string" || !manifest.version) throw new Error(`${fileURLToPath(CLI_MANIFEST)} has no version`);
+  return manifest.version;
+}
 
 export function initCommand(args: string[], io: Io, options: InitOptions = {}): number {
   let parsed;
@@ -46,8 +69,20 @@ export function initCommand(args: string[], io: Io, options: InitOptions = {}): 
     io.err(`gtm init: "${name}" is not a valid Worker name; use lowercase letters, digits and hyphens, at most 48 characters (--name)`);
     return EXIT.usage;
   }
-  const templateDir = options.templateDir ?? DEFAULT_TEMPLATE;
   const local = parsed.values.local ? resolve(io.cwd, parsed.values.local) : undefined;
+  if (local && !existsSync(join(local, "packages", "core", "package.json"))) {
+    io.err(`gtm init: ${local} is not a checkout of GTM-agents (no packages/core/package.json); pass the checkout's root to --local`);
+    return EXIT.usage;
+  }
+  const templateDir = options.templateDir ?? (local ? join(local, "apps", "worker") : existsSync(BUNDLED_TEMPLATE) ? BUNDLED_TEMPLATE : CHECKOUT_TEMPLATE);
+  const fromCheckout = !local && !options.templateDir && templateDir === CHECKOUT_TEMPLATE;
+  let version: string;
+  try {
+    version = options.version ?? cliVersion();
+  } catch (err) {
+    io.err(`gtm init: ${(err as Error).message}`);
+    return EXIT.failed;
+  }
 
   mkdirSync(dir, { recursive: true });
   for (const file of TEMPLATE_FILES) {
@@ -67,7 +102,7 @@ export function initCommand(args: string[], io: Io, options: InitOptions = {}): 
     return EXIT.failed;
   }
 
-  writeFileSync(join(dir, "package.json"), `${JSON.stringify(packageJson(name, local), null, 2)}\n`);
+  writeFileSync(join(dir, "package.json"), `${JSON.stringify(packageJson(name, local ? { local } : { version }), null, 2)}\n`);
   writeFileSync(join(dir, "tsconfig.json"), `${JSON.stringify(TSCONFIG, null, 2)}\n`);
   writeFileSync(join(dir, ".gitignore"), "node_modules/\ndist/\n.wrangler/\n.dev.vars\n.dev.vars.*\n!.dev.vars.example\n");
   writePublicAssets(dir, templateDir);
@@ -77,10 +112,15 @@ export function initCommand(args: string[], io: Io, options: InitOptions = {}): 
   io.out("");
   io.out("Next steps:");
   io.out(`  cd ${shown}`);
-  io.out(local ? "  npm install" : "  npm install            (the @gtm-agents packages are not published yet; rerun init with --local <checkout> to install from a local copy)");
+  io.out(local ? `  npm install            (links the packages in ${local})` : `  npm install            (installs the @gtm-agents packages at ${version} from npm)`);
   io.out("  edit gtm.config.ts      your company, sending addresses, adapters and models");
   io.out("  add brain/ and templates/ files, then: npx gtm brain validate");
   io.out("  npx gtm doctor");
+  if (fromCheckout) {
+    io.out("");
+    io.out(`This gtm runs from a checkout, so version ${version} may not be on npm. To use the checkout's`);
+    io.out("packages instead, remove the directory and rerun init with --local <checkout>.");
+  }
   return EXIT.ok;
 }
 
@@ -106,8 +146,12 @@ function rewrite(file: string, content: string, name: string): string {
   return content;
 }
 
-function packageJson(name: string, local: string | undefined): Record<string, unknown> {
-  const dep = (pkg: string) => (local ? `file:${join(local, "packages", pkg)}` : "0.0.0");
+/** Where the project's @gtm-agents packages come from: a published version, or a checkout. */
+type PackageSource = { version: string } | { local: string };
+
+function packageJson(name: string, source: PackageSource): Record<string, unknown> {
+  // npm mode pins the exact version, so a deployment changes only when its owner upgrades it.
+  const dep = (pkg: string) => ("local" in source ? `file:${join(source.local, "packages", pkg)}` : source.version);
   return {
     name,
     version: "0.0.0",

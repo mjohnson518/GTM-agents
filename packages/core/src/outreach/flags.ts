@@ -8,7 +8,8 @@
 //   - the verification floor falls back to the strictest value, high, when it cannot be read or is
 //     not a known value.
 // The holdout rate is measurement, not a gate: an unreadable or malformed value uses the default.
-import { effectiveLevel, type AutonomyLevel } from "../autonomy/levels.ts";
+import type { AutonomyLevel } from "../autonomy/levels.ts";
+import { readAutonomyLevel } from "../autonomy/store.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { isFlagOn } from "../jobs/loop.ts";
 import type { FlagReader } from "../jobs/registry.ts";
@@ -125,21 +126,18 @@ export interface AutoApproveDecision {
 
 /**
  * Whether the cold batch approves its own passing drafts: the cold_batch:auto_approve switch, or the
- * cold_batch class at level 2 or above. The level is the stored autonomy:cold_batch value, or the
- * config's starting level when none is stored, passed through effectiveLevel; any read or parse
- * error is level 1.
+ * cold_batch class at level 2 or above. The level comes from the one autonomy reader
+ * (autonomy/store.ts): the stored autonomy:cold_batch value, or the config's starting level when
+ * none is stored, passed through effectiveLevel; any read or parse error is level 1. With the
+ * database, the latest recorded level change caps it, and a standing demotion (or a change record
+ * that cannot be read) also stops the auto-approve switch until a person sets the level again.
  */
-export async function readAutoApprove(flags: FlagReader, config: Pick<GtmConfig, "autonomy">): Promise<AutoApproveDecision> {
+export async function readAutoApprove(flags: FlagReader, config: Pick<GtmConfig, "autonomy">, db?: D1Database): Promise<AutoApproveDecision> {
   const flag = await readOn(flags, OUTREACH_FLAGS.autoApprove);
-  let stored: unknown;
-  try {
-    const raw = await flags.get(OUTREACH_FLAGS.coldBatchLevel);
-    if (raw === null || raw.trim() === "") stored = config.autonomy.defaults.cold_batch;
-    else stored = /^\d$/.test(raw.trim()) ? Number(raw.trim()) : undefined;
-  } catch {
-    stored = undefined;
-  }
-  const level = effectiveLevel("cold_batch", stored);
+  const reading = await readAutonomyLevel({ flags, config, ...(db ? { db } : {}) }, "cold_batch");
+  const level: AutonomyLevel = reading.level;
+  // A standing demotion, or observe only, stops the switch too.
+  if (reading.demoted || level === 0) return { auto: false, reason: null, level };
   if (flag) return { auto: true, reason: "flag", level };
   if (level >= 2) return { auto: true, reason: "autonomy_level", level };
   return { auto: false, reason: null, level };

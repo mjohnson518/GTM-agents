@@ -57,7 +57,15 @@ operator chat + dashboard -> OperatorGateway -> hub agent -> tools (taint-classi
 
 ## Quick start
 
-The packages are not published to npm yet, so start from a checkout of this repository (Node 24 or later):
+From a published release (Node 24 or later):
+
+```bash
+npx @gtm-agents/cli@<version> init my-agent   # every package pinned to that version
+cd my-agent && npm install
+npx gtm brain validate && npx gtm doctor && npx wrangler deploy --dry-run
+```
+
+To work on the toolkit itself, or to use code that is not released yet, start from a checkout of this repository:
 
 ```bash
 git clone <repository-url> gtm-agents

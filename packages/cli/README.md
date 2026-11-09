@@ -2,6 +2,8 @@
 
 The `gtm` command, for setting up and operating a deployment. This page is for deployers looking up a command's options and for contributors changing the CLI; [docs/DEPLOYING.md](../../docs/DEPLOYING.md) walks through a first deployment in order.
 
+Create a deployment from a published release with `npx @gtm-agents/cli@<version> init <dir>`; the new project lists `@gtm-agents/cli` as a dev dependency, so inside it the command is `npx gtm`. From a checkout of this repository, run `npx gtm init <dir> --local <checkout>` instead.
+
 | Command | What it does |
 |---|---|
 | `gtm init <dir>` | Creates a new deployment from the worker template |
@@ -16,7 +18,10 @@ Every command that talks to Cloudflare runs the deployment's installed Wrangler 
 
 ## Commands
 
-**`gtm init <dir> [--name <worker-name>] [--local <checkout>]`** copies the worker template into a new directory. It sets the Worker and bucket names, points migrations at the installed core package, and writes `package.json`, `tsconfig.json` and `.gitignore`. Until the packages are published, `--local` installs them from a checkout of this repository.
+**`gtm init <dir> [--name <worker-name>] [--local <checkout>]`** copies the worker template into a new, empty directory. It sets the Worker and bucket names, points migrations at the installed core package (`node_modules/@gtm-agents/core/migrations`), copies the built dashboard into `public/admin`, and writes `package.json`, `tsconfig.json` and `.gitignore`.
+- By default (npm mode) the template is the copy bundled in the CLI package, and `package.json` depends on `@gtm-agents/core`, `@gtm-agents/adapters` and `@gtm-agents/cli` at exactly the CLI's own version, so `npm install` fetches one matching release.
+- With `--local <checkout>`, the template is the checkout's `apps/worker` and the packages are `file:` links into the checkout's `packages/`. The path must be the checkout's root.
+- Both modes produce the same `wrangler.jsonc`. Run from a checkout without `--local`, init uses the checkout's template, pins the checkout's version, and says that version may not be on npm.
 
 **`gtm setup [--env] [--yes] [--reuse-existing] [--base-url <https-origin>] [--vector-dimensions <n>] [--vector-metric <metric>]`**
 - Reads `wrangler.jsonc` and plans a resource for every binding that still holds a `${...}` placeholder, plus the R2 bucket and any queue that does not exist yet: the D1 database, KV namespace, R2 bucket, Vectorize index and queues, named after the Worker and the binding (`my-agent-db`, `my-agent-kv`, `my-agent-memory`, `my-agent-events`, `my-agent-events-dlq`, `my-agent-chat`).
@@ -49,7 +54,7 @@ Every command that talks to Cloudflare runs the deployment's installed Wrangler 
 
 ## For contributors
 
-- Node 24 runs the CLI's TypeScript directly; there is no build step.
+- In this repository Node 24 runs the CLI's TypeScript directly; there is no build step. The published package is JavaScript, because Node does not strip types inside `node_modules`: the release build compiles `src/` to `dist/` with `tsconfig.build.json` and bundles the worker template and the built dashboard into `dist/template/`, which init finds next to its own compiled file. Keep paths that init and the other commands resolve from `import.meta.url` at the same depth in `src/` and `dist/`. [docs/RELEASING.md](../../docs/RELEASING.md) covers the build and the release smoke test.
 - Every Wrangler call goes through the injectable `CommandRunner` (`src/lib/io.ts`). Tests replace it with an in-memory account (`test/fake-wrangler.ts`), so no test touches Cloudflare.
 - `src/lib/jsonc-edit.ts` edits `wrangler.jsonc` by replacing string values at their exact source positions. Never re-serialize a deployer's config.
 - No command reads or prints a secret value. Secrets are listed by name and set with `wrangler secret put`, which prompts for the value.

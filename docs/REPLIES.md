@@ -55,7 +55,7 @@ For every human reply from a known contact (not opt-outs, automatic replies, spa
 
 **The send ledger.** A reply is credited to the contact's latest first touch sent in the 60 days before it. `replied_at` is the reply's own `received_at`, never the time the job ran, and out-of-order replies keep the earliest. `reply_after_step` is the highest step actually sent between the first touch and the reply. `positive_reply_at` is set from the reply's timestamp when the reply is positive.
 
-**A positive reply** has one definition, in `metrics/positive-reply.ts`, used by every report and experiment: a triage intent of interested, question or referral, or a non-cancelled, attributed meeting first seen after the send. Opt-outs, unsubscribes, automatic replies, spam and noise never count as replies; "not a fit" is a reply but never positive. Calendar sync and attribution are a later milestone, so for now only the intent half applies.
+**A positive reply** has one definition, in `metrics/positive-reply.ts`, used by every report and experiment: a triage intent of interested, question or referral, or a non-cancelled, attributed meeting first seen after the send. Opt-outs, unsubscribes, automatic replies, spam and noise never count as replies; "not a fit" is a reply but never positive. The meeting half applies while calendar sync is on ([CONVERT.md](CONVERT.md)).
 
 **Failures.** Every side effect is claimed in the effects ledger under the message, so a re-run never repeats one. Each is bookkeeping, logged and dropped on failure, except the opt-out: it is a compliance control, so when it fails routing is marked unfinished and the next run retries it (for 3 days) without repeating the effects that held.
 
@@ -165,7 +165,7 @@ Set a flag with `npx gtm flags set <key> <value>`; `npx gtm flags unset <key>` t
 | `replies:mirror_enabled` | off | Mailbox draft mirroring and reconciliation |
 | `replies:reminders_enabled` | off | The reply-owed reminders and quiet threads |
 
-`inbound:auto_send_tier` is reserved for automatic replies, a later milestone; nothing here reads it.
+`inbound:auto_send_tier` turns on automatic replies, together with the reply class at autonomy level 2 or above and the model reviewer ([AUTONOMY.md](AUTONOMY.md)).
 
 ## Jobs
 
@@ -197,7 +197,7 @@ export default createWorker(config, {
 ## Limits
 
 - **Erasure stops at the mailbox.** Erasing a person removes their rows and stored bodies here, but a reply draft already mirrored into your mailbox, and the mail itself, live in that mailbox: delete them there as well.
-- **No automatic replies yet.** Every reply waits for a person. The auto-send rules, and the `inbound:auto_send_tier` flag, are a later milestone.
+- **Automatic replies are narrow.** By default every reply waits for a person. A reply goes out on its own only when `inbound:auto_send_tier` is on, its class (`reply_send` or `reply_demo_link`) has been raised to level 2 by you, and it passes every auto-send rule and the quality gate ([AUTONOMY.md](AUTONOMY.md)). Questions are never sent automatically in this version.
 - **No booking.** The qualifier decides book, ask or pass; drafts offer your booking URL, but calendars and invites are a later milestone, so a proposed time is confirmed in words and the invite is yours to send.
 - **No curation screen for objections.** Filed objections wait in the `objections` table with an empty response; approving an answer means writing its response and setting `approved_digest` to `objectionAnswerDigest` of its pattern and response.
 - **Referrals need a mailbox that can read threads**, because colleagues come only from the message's headers. With Email Routing alone, referrals add nobody.

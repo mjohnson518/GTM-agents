@@ -15,7 +15,10 @@
 // The draft then passes the deterministic quality gate and content lint (quality/). A block means
 // no draft and an operator notice. Otherwise it is stored as kind 'reply', status
 // 'pending_approval', with its autonomy class, linked from inbound_emails.draft_id, and an approval
-// request bound to its digest goes to the operator (operator/approvals.ts). Nothing is sent here.
+// request bound to its digest goes to the operator (operator/approvals.ts). Nothing is sent here,
+// except through deps.autoSend: when the deployment wires the auto-send tier (autonomy/), a draft
+// that passes every auto-send rule goes out before any approval request, and anything else falls
+// through to the request as usual.
 import type { BrainSlice } from "../brain/assemble.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect } from "../events/effects.ts";
@@ -36,6 +39,7 @@ import { matchBrainObjections, matchStoredAnswers } from "./objections.ts";
 import type { Qualification } from "./qualify.ts";
 import { replyEventId, type ContactRow, type InboundRow, type StoredTriage } from "./rows.ts";
 import type { ReplyActionClass } from "./evidence.ts";
+import type { ReplyAutoSendCandidate } from "../autonomy/reply-auto-send.ts";
 import { replySubject } from "./text.ts";
 
 export const WRITER_TIMEOUT_MS = 45_000;
@@ -229,12 +233,18 @@ export interface DraftDeps extends ModelCallDeps {
   operator?: OperatorChannel;
   /** The chat approval requests go to: the option, else the first allowlisted chat. */
   approvalChatId?: string;
+  /**
+   * The auto-send tier (autonomy/reply-auto-send.ts), tried once the draft is stored and before the
+   * approval request. "not_sent" leaves the draft for a person; "uncertain" means it may have gone
+   * out, so nobody is asked to send it.
+   */
+  autoSend?: (candidate: ReplyAutoSendCandidate) => Promise<"sent" | "not_sent" | "uncertain">;
   now: Date;
   log: JobLogger;
 }
 
 export type DraftOutcome =
-  | { status: "drafted"; draftId: string; actionClass: ReplyActionClass; verdict: "pass" | "hold"; approvalRequested: boolean }
+  | { status: "drafted"; draftId: string; actionClass: ReplyActionClass; verdict: "pass" | "hold"; approvalRequested: boolean; autoSent?: boolean }
   | { status: "blocked"; codes: string[] }
   | { status: "failed"; reason: string; called: boolean };
 
@@ -358,6 +368,12 @@ export async function draftReply(
     log.warn("an inbound message could not be linked to its draft", { inboundId: row.id, draftId: id });
   }
   await recordQualityChecks(db, [{ subjectType: "reply", subjectId: id, result: quality }], now);
+
+  // Earned autonomy: a reply that passes every auto-send rule goes out now, and the operator is told after.
+  if (deps.autoSend) {
+    const auto = await deps.autoSend({ row, triage, contact, sender: input.sender, qualification: input.qualification, draftId: id, subject, body, actionClass, quality, assetUrls, brainText: context.brain.text });
+    if (auto !== "not_sent") return { status: "drafted", draftId: id, actionClass, verdict: quality.verdict, approvalRequested: false, autoSent: auto === "sent" };
+  }
 
   let approvalRequested = false;
   const chat = deps.approvalChatId ?? config.operator.allowedChatIds[0];

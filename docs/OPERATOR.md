@@ -154,6 +154,8 @@ Replies and follow-ups add their own commands, documented with them:
 | `/meetings`, `prep-<contact id or email>` | Meetings the calendar shows, and a one-page brief on any contact ([CONVERT.md](CONVERT.md)) |
 | `meeting-held-<code>`, `meeting-noshow-<code>`, `meeting-notes-<code> <notes>` | Record how a meeting went, and keep notes |
 | `meeting-link-<code> <contact>`, `meeting-unlink-<code>` | Attribute an ambiguous meeting to a contact, or make a meeting inert |
+| `autonomy-status` | Every action class with its level and evidence ([AUTONOMY.md](AUTONOMY.md)) |
+| `autonomy-set <class> <0-3>`, then `autonomy-confirm-<id>-<code>` | Propose a level change, then confirm it within 30 minutes; permanently human-only classes stay at 1 or below |
 | `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
 | `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 

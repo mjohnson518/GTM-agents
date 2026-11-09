@@ -16,7 +16,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 6. Sequences | Done (behind `sequences:enabled`) |
 | 7. Experiments | Planned |
 | 8. Convert | Done (calendar sync behind `convert:calendar_enabled`; post-meeting messages are drafts, and proof of value is not built yet) |
-| 9 to 14 | Planned |
+| 9. Lifecycle | Done (behind `lifecycle:enabled` and `billing:enabled`; billing through the port, with no vendor adapter yet) |
+| 10. Autonomy | Done (levels raised only by a confirmed operator command; the weekly review behind `autonomy_review:enabled`; automatic replies behind `inbound:auto_send_tier` and level 2) |
+| 11 to 14 | Planned |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -27,6 +29,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the worker template, which bundles from placeholders, and the admin shell;
 - the `gtm` CLI ([DEPLOYING.md](DEPLOYING.md)): `init`, `doctor`, `brain validate|upload|diff`, `setup` (creates the Cloudflare resources and fills in `wrangler.jsonc`), `migrate`, `flags` (validated against the flag registry) and `deploy`;
 - one per-minute cron trigger, from which the Worker runs every job whose schedule is due;
+- publishable packages ([RELEASING.md](RELEASING.md)): a build that ships JavaScript and types, `gtm init` that installs from npm at one pinned version, a CI check that installs the packed packages and dry-runs a deploy, and a release workflow that publishes only on a version tag;
 - `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it;
 - the safety spine ([SECURITY-MODEL.md](SECURITY-MODEL.md)):
   - for untrusted text: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run;
@@ -40,11 +43,13 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - replies ([REPLIES.md](REPLIES.md)): model triage, routing by intent, the meeting qualifier, drafts from approved facts, approved sends from the warm mailbox with freshness checks, reply-owed reminders, mailbox draft mirroring, and the one definition of a positive reply;
 - measurement ([MEASUREMENT.md](MEASUREMENT.md)): one definition of each metric in one module (sends, matured samples, replies and positive replies, first-touch attribution, bounce and complaint rates, reply SLA, spend, failed jobs, measurement health, holdout lift), the daily scorecard, the funnel and cost digests and the conversion report, all reading the same definitions;
 - meetings ([CONVERT.md](CONVERT.md)): read-only Google Calendar sync with privacy-limited fields, attribution without click tracking, the one "meeting booked" definition, a booking that stops outreach and writes a prep brief, reminders, held and no-show handling, and post-meeting drafts;
+- earned autonomy ([AUTONOMY.md](AUTONOMY.md)): one level reader that fails closed, permanently human-only classes capped by code and by the database, evidence from every decision point, weekly promotion proposals only a person confirms, immediate demotion after incidents, an outbound writer registry with evals, and narrow, rule-checked automatic replies;
+- lifecycle ([LIFECYCLE.md](LIFECYCLE.md)): the host SDK, the event spine, signed product and billing webhooks, the lifecycle state machine with one writer, the deal mirror, nightly reconciliation, MRR snapshots, and one definition each of sign-ups, activations and new paying customers;
 - run-row retention and one definition of the bounce rate, shared by the ramp, the bounce monitor, readiness and the reports;
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
 - the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail`, `email-cloudflare` and `calendar-google`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups and calendar sync are each off by default, and none has yet been run against live providers. Experiments (milestone 7) come next.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. Experiments (milestone 7), signals (11), self-improvement (12), the ship loop (13) and the dashboard (14) remain.
 
 ## Milestones
 

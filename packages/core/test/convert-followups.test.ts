@@ -198,7 +198,11 @@ describe("the post-demo follow-ups", () => {
     await bookMeeting(at(-HOUR));
     await command({ kind: "held", code }, NOW);
     await approve("recap");
-    await db.prepare("INSERT INTO contact_lifecycle (contact_id, state, signed_up_at) VALUES (?1, 'signed_up', ?2)").bind(jane, at(DAY).toISOString()).run();
+    // The booking already gave Jane a lifecycle row (engaged); the sign-up moves it.
+    await db
+      .prepare("INSERT INTO contact_lifecycle (contact_id, state, signed_up_at) VALUES (?1, 'signed_up', ?2) ON CONFLICT (contact_id) DO UPDATE SET state = excluded.state, signed_up_at = excluded.signed_up_at")
+      .bind(jane, at(DAY).toISOString())
+      .run();
     expect(await followups(at(4 * DAY))).toMatchObject({ stopped: 1, steps: 0 });
   });
 

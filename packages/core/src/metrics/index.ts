@@ -39,6 +39,9 @@ export { COMPLAINT_ALERT_RATE, HARD_BOUNCE_ALERT_RATE, MIN_DELIVERED_COVERAGE, d
 export type { DeliveryAlerts, DeliveryHealth } from "./delivery.ts";
 export { complaintRate, deliveryCounts, hardBounceRate, hardBounceShareOfOutcomes, peakDayDelivered, sinceWindow, trailingDays } from "./delivery-rates.ts";
 export type { DeliveryCounts } from "./delivery-rates.ts";
+// The unsubscribe rate: the autonomy rate check reads it.
+export { optOutCounts, unsubscribeRate } from "./opt-outs.ts";
+export type { OptOutCounts } from "./opt-outs.ts";
 export { REPLY_SLA_HOURS, REPLY_SLA_WINDOW_DAYS, median, owedWindowDays, replyResponseTimes, replySla } from "./sla.ts";
 export type { ReplySla, ResponseTimes } from "./sla.ts";
 export { MICRO_CENTS_PER_CENT, failedJobs, operatorQueue, spendByJob } from "./operations.ts";
@@ -61,3 +64,6 @@ export {
   perHundred,
 } from "./meetings.ts";
 export type { MeetingAttribution, MeetingCounts, MeetingOutcome, MeetingRow } from "./meetings.ts";
+// Product outcomes: the one definition of a sign-up, an activation, a new paying customer and MRR.
+export { PRODUCT_OUTCOMES, PRODUCT_OUTCOME_SOURCES, countProductOutcomes, currentMrr, experimentArmForOutcome, firstTouchForOutcome, productOutcomeSql, signupSql } from "./product.ts";
+export type { FirstTouchCredit, Mrr, ProductOutcome, ProductOutcomeCounts } from "./product.ts";

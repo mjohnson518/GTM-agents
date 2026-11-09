@@ -1,0 +1,173 @@
+# GTM-agents release. Publishes every package to npm, with provenance, when a tag named v<version>
+# is pushed. A manual run defaults to a dry run: it packs, checks, smoke-tests and runs
+# `npm publish --dry-run`, and publishes nothing. A manual run publishes only when it is started on
+# a v* tag with dry_run turned off. docs/RELEASING.md covers the whole process, the NPM_TOKEN
+# secret and the npm scope.
+#
+# Jobs: preflight (decide, check the tag against every package version) -> pack (build the
+# tarballs after `npm ci --ignore-scripts`, so no dependency's install script runs where they are
+# made; upload them with release.json, which lists each tarball's SHA-256, and report release.json's
+# own SHA-256 as a job output) -> verify (a normal `npm ci`, the full check, then the smoke test and
+# `npm publish --dry-run` against the downloaded artifact, checking every hash) -> publish (in the
+# npm environment that holds NPM_TOKEN: check the token, download the same artifact, check every
+# hash against the pack job's output again, publish in dependency order). A job output cannot be
+# changed by a later job, so nothing verify runs can swap what publish ships. Only the publish job
+# can request an OIDC token, and only its token check and publish steps see the npm token.
+# Third-party actions are pinned to commit SHAs, checkouts keep no credentials, and the release uses
+# no dependency cache.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Check, pack, smoke-test and run npm publish --dry-run; publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Decide whether this run publishes, and check the version
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - name: Decide whether this run publishes
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_TYPE: ${{ github.ref_type }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          publish=false
+          if [ "$EVENT" = "push" ] && [ "$REF_TYPE" = "tag" ]; then
+            publish=true
+          elif [ "$EVENT" = "workflow_dispatch" ] && [ "$DRY_RUN" = "false" ]; then
+            if [ "$REF_TYPE" != "tag" ]; then
+              echo "::error::A publishing run must start on a v* tag, not $REF. Choose the tag under 'Use workflow from', or keep dry_run on."
+              exit 1
+            fi
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "This run publishes: $publish"
+      - name: Check that the tag matches every package version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/release/version.mjs --check --tag "$TAG"
+      - name: Check that versions are in lockstep
+        if: github.ref_type != 'tag'
+        run: node scripts/release/version.mjs --check
+  pack:
+    name: Build and pack the tarballs (no install scripts)
+    needs: preflight
+    runs-on: ubuntu-latest
+    outputs:
+      record_sha256: ${{ steps.record.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No dependency cache in a release: every package comes from the registry, checked against the lockfile.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # tsc, Vite and npm pack need no install script, so no third-party code runs in this job.
+      - run: npm ci --ignore-scripts
+      - name: Build and pack every package into .release/tarballs
+        run: node scripts/release/pack.mjs
+      - name: Report the SHA-256 of release.json, which lists each tarball's SHA-256
+        id: record
+        run: echo "sha256=$(sha256sum .release/release.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-tarballs
+          path: |
+            .release/tarballs/
+            .release/release.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    name: Check the source and smoke-test the packed tarballs
+    needs: [preflight, pack]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      # Wrangler's runtime needs its install scripts here; this job's files are never published.
+      - run: npm ci
+      - run: npm run check
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tarballs
+          path: .release
+      - name: Install the tarballs, gtm init, npm install, wrangler deploy --dry-run, gtm brain validate
+        env:
+          RECORD_SHA256: ${{ needs.pack.outputs.record_sha256 }}
+        run: node scripts/release/smoke.mjs --record-sha256 "$RECORD_SHA256"
+      - name: npm publish --dry-run for each tarball (checks the tag again on a tag run)
+        env:
+          RECORD_SHA256: ${{ needs.pack.outputs.record_sha256 }}
+        run: node scripts/release/publish.mjs --dry-run --record-sha256 "$RECORD_SHA256"
+
+  publish:
+    name: Publish to npm with provenance
+    needs: [preflight, pack, verify]
+    if: needs.preflight.outputs.publish == 'true' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # Holds the NPM_TOKEN secret. Limit it to v* tags and add required reviewers under Settings,
+    # Environments, so neither another branch's workflow nor an unreviewed run can read the token.
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - name: Require the NPM_TOKEN secret
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::error::The NPM_TOKEN secret is not set in the npm environment. Add a granular access token that can publish to the package scope (docs/RELEASING.md), then re-run this job."
+            exit 1
+          fi
+          echo "NPM_TOKEN is set."
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tarballs
+          path: .release
+      - name: Publish the packed tarballs in dependency order, after checking every hash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          RECORD_SHA256: ${{ needs.pack.outputs.record_sha256 }}
+        run: node scripts/release/publish.mjs --tag "$TAG" --record-sha256 "$RECORD_SHA256"

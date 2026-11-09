@@ -49,6 +49,7 @@
 // not write in on that thread is refused rather than sent as cold mail. Without a mailbox, replies
 // go through the email provider as before. Replies carry the unsubscribe and threading headers but
 // no visible footer, so they read like a normal reply (message.ts).
+import { PRODUCT_STATES } from "../data/enums.ts";
 import { recordCost } from "../budget/cost-ledger.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
@@ -330,7 +331,13 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
         let customers = new Set<string>();
         try {
           repliers = await idsWith(db, "SELECT DISTINCT contact_id AS id FROM inbound_emails WHERE contact_id IN", claimed.filter((w) => w.path === "reply").map((w) => w.item.contactId));
-          customers = await idsWith(db, "SELECT contact_id AS id FROM contact_lifecycle WHERE contact_id IN", claimed.filter((w) => w.path === "lifecycle").map((w) => w.item.contactId));
+          // A product user: someone who signed up, or is in a product state. A lifecycle row alone is
+          // not enough, because prospects have one too (a booked meeting moves them to engaged).
+          customers = await idsWith(
+            db,
+            `SELECT contact_id AS id FROM contact_lifecycle WHERE (signed_up_at IS NOT NULL OR state IN (${PRODUCT_STATES.map((st) => `'${st}'`).join(", ")})) AND contact_id IN`,
+            claimed.filter((w) => w.path === "lifecycle").map((w) => w.item.contactId),
+          );
         } catch {
           // Unreadable: everything below is treated as cold.
         }

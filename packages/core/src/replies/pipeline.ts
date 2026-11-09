@@ -16,6 +16,9 @@
 // Model spend goes through one spend gate for the run (the job's daily cap, the global limits,
 // the run ceiling). The body is read from blob storage once per step; a body that is gone falls
 // back to the row's short preview.
+// With inbound:auto_send_tier on, each new draft is offered to the auto-send tier before its
+// approval request (autonomy/reply-auto-send.ts); it goes out only when every auto-send rule and
+// the class's earned level allow it.
 import { loadBrain, type KVReader } from "../brain/load.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
@@ -36,6 +39,9 @@ import { routeReply, ROUTED_SQL, noDraftReason, type RouteDeps, type RouteResult
 import { daysAgo, inboundColumns, loadContact, parseStoredTriage, replyEventId, type ContactRow, type InboundRow, type StoredTriage } from "./rows.ts";
 import { senderLabel, senderText } from "./text.ts";
 import { TRIAGE_TIMEOUT_MS, triageText } from "./triage.ts";
+import { AUTONOMY_FLAGS } from "../autonomy/flags.ts";
+import { autoSendReply } from "../autonomy/reply-auto-send.ts";
+import type { KvStore } from "../shared/kv.ts";
 
 export const TRIAGE_WINDOW_DAYS = 14;
 export const DRAFT_WINDOW_DAYS = 14;
@@ -65,6 +71,11 @@ export interface PipelineDeps {
   maxSpendCents?: number;
   triageTimeoutMs?: number;
   writerTimeoutMs?: number;
+  /** The KV namespace as a store, for automatic replies (the halt, the kill switch, shown records). */
+  store?: KvStore & ShownStore;
+  /** For automatic replies: the unsubscribe signing key and the deployment's base URL. */
+  unsubscribeSigningKey?: string;
+  baseUrl?: string;
 }
 
 export interface PipelineResult {
@@ -74,6 +85,8 @@ export interface PipelineResult {
   drafted: number;
   blocked: number;
   draftFailed: number;
+  /** Drafts the auto-send tier sent. */
+  autoSent: number;
   stopped: string | null;
 }
 
@@ -87,7 +100,7 @@ async function readSender(deps: PipelineDeps, row: InboundRow): Promise<string> 
 
 export async function runReplyPipeline(deps: PipelineDeps): Promise<PipelineResult> {
   const { db, now, log } = deps;
-  const result: PipelineResult = { rerouted: 0, triaged: 0, triageFailed: 0, drafted: 0, blocked: 0, draftFailed: 0, stopped: null };
+  const result: PipelineResult = { rerouted: 0, triaged: 0, triageFailed: 0, drafted: 0, blocked: 0, draftFailed: 0, autoSent: 0, stopped: null };
   const day = utcDay(now);
   const brain = await loadBrain({ KV: deps.kv ?? { get: () => Promise.resolve(null) } }, "replies");
   const objections = brainObjections(brain.text);
@@ -211,6 +224,36 @@ export async function runReplyPipeline(deps: PipelineDeps): Promise<PipelineResu
   // 3. Drafting.
   if (!(await replyFlagOn(deps.flags, REPLY_FLAGS.drafting)) || result.stopped !== null) return result;
   const context: DraftContext = { brain, objections, assets: await loadReplyAssets(db) };
+  // The auto-send tier, offered only while its flag is on; every rule is checked again per draft.
+  const store = deps.store;
+  const autoSend =
+    store && (await replyFlagOn(deps.flags, AUTONOMY_FLAGS.replyAutoSend))
+      ? async (candidate: Parameters<typeof autoSendReply>[1]) =>
+          (
+            await autoSendReply(
+              {
+                db,
+                kv: store,
+                flags: deps.flags,
+                config: deps.config,
+                ...(deps.inbox ? { inbox: deps.inbox } : {}),
+                ...(deps.operator ? { operator: deps.operator } : {}),
+                ...(deps.approvalChatId ? { chatId: deps.approvalChatId } : {}),
+                ...(deps.model ? { model: deps.model } : {}),
+                spend,
+                job: deps.job,
+                ...(deps.runId ? { runId: deps.runId } : {}),
+                ...(deps.bucket ? { bucket: deps.bucket } : {}),
+                judgeBrain: async () => (await loadBrain({ KV: deps.kv ?? { get: () => Promise.resolve(null) } }, "judge")).text,
+                ...(deps.unsubscribeSigningKey ? { unsubscribeSigningKey: deps.unsubscribeSigningKey } : {}),
+                ...(deps.baseUrl ? { baseUrl: deps.baseUrl } : {}),
+                now,
+                log,
+              },
+              candidate,
+            )
+          ).outcome
+      : undefined;
   const { results: draftable } = await db
     .prepare(
       `SELECT ${inboundColumns("i")} FROM inbound_emails i
@@ -253,12 +296,16 @@ export async function runReplyPipeline(deps: PipelineDeps): Promise<PipelineResu
         context,
         ...(deps.operator ? { operator: deps.operator } : {}),
         ...(deps.approvalChatId ? { approvalChatId: deps.approvalChatId } : {}),
+        ...(autoSend ? { autoSend } : {}),
         now,
         log,
       },
       { row, triage, contact, sender, qualification, senderLabel: senderLabel(row.sender_email) },
     );
-    if (outcome.status === "drafted") result.drafted += 1;
+    if (outcome.status === "drafted") {
+      result.drafted += 1;
+      if (outcome.autoSent) result.autoSent += 1;
+    }
     else if (outcome.status === "blocked") result.blocked += 1;
     else {
       result.draftFailed += 1;

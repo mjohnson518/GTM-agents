@@ -12,7 +12,11 @@
 //     POST opts out). docs/SENDING.md covers both;
 //   - POST /api/webhooks/mail, the mailbox's push wake-up (shared secret first; answers 503 until
 //     MAIL_PUSH_SECRET and the `inbox` factory are set), and the email() entry point for mail that
-//     Cloudflare Email Routing delivers, when `inboundEmail` is given. docs/INBOX.md covers both.
+//     Cloudflare Email Routing delivers, when `inboundEmail` is given. docs/INBOX.md covers both;
+//   - POST /api/webhooks/product (the host's signed events; 503 until PRODUCT_WEBHOOK_SECRET and the
+//     `lifecycle` wiring are set) and POST /api/webhooks/billing (through the billing adapter; 503
+//     until `lifecycle.billing` is given), and the EVENTS_QUEUE consumer that routes what they
+//     record. docs/LIFECYCLE.md covers them.
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
@@ -33,6 +37,10 @@ import { createCronHealthJob } from "./runtime/cron-health.ts";
 import { createJobRunner } from "./runtime/job-runner.ts";
 import { UNSUBSCRIBE_ROUTE, createUnsubscribeHandlers } from "./sending/unsubscribe.ts";
 import { EMAIL_WEBHOOK_PATH, createEmailWebhook } from "./sending/webhook.ts";
+import { BILLING_WEBHOOK_PATH, createBillingWebhook } from "./billing/webhook.ts";
+import { createEventConsumer, isEventMessage } from "./events/consumer.ts";
+import type { LifecycleWiring } from "./lifecycle/jobs.ts";
+import { PRODUCT_WEBHOOK_PATH, createProductWebhook } from "./product-bridge/webhook.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
 
@@ -47,6 +55,9 @@ export const SCHEDULED_WALL_BUDGET_MS = MAX_JOB_DURATION_MS;
  * `<worker>-chat` and prints that name; list it (one per environment) in `agent.chatQueue`.
  */
 export const DEFAULT_CHAT_QUEUE = "gtm-chat";
+
+/** The events queue's name when `lifecycle.eventsQueue` is not set. `gtm setup` names it `<worker>-events`. */
+export const DEFAULT_EVENTS_QUEUE = "gtm-events";
 
 export interface OperatorAgentWorkerOptions {
   /**
@@ -112,6 +123,12 @@ export interface CreateWorkerOptions<E extends Env = Env> {
   agent?: OperatorAgentWorkerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
   cronHealth?: { schedule: string; graceMs?: number };
+  /**
+   * The product bridge, billing and the event spine (createLifecycle from "@gtm-agents/core/lifecycle"):
+   * its routers back the product and billing webhooks and the EVENTS_QUEUE consumer. Register its
+   * jobs in `jobs` too. Without it both webhooks answer 503.
+   */
+  lifecycle?: LifecycleWiring<E>;
   /**
    * Called after every scheduled invocation with the trigger's cron string and the outcomes of the
    * jobs that were due (empty when nothing was due that minute), for observability.
@@ -214,9 +231,19 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     ? createInboundEmailHandler<E>(config, { ...(options.operator ? { operator: options.operator } : {}), logger: inboxLog, ...options.inboundEmail })
     : undefined;
 
+  // Lifecycle: the product bridge's push and the billing provider's webhook (each verifies its
+  // signature before anything else, and answers 503 until configured), and the events queue.
+  const lifecycleLog = consoleLogger({ service: "gtm-agents", scope: "lifecycle" });
+  const lifecycle = options.lifecycle;
+  app.post(PRODUCT_WEBHOOK_PATH, createProductWebhook<E>({ ...(lifecycle ? { routers: lifecycle.routers } : {}), logger: lifecycleLog }));
+  app.post(BILLING_WEBHOOK_PATH, createBillingWebhook<E>({ ...(lifecycle?.billing ? { billing: lifecycle.billing } : {}), ...(lifecycle ? { routers: lifecycle.routers } : {}), logger: lifecycleLog }));
+  const eventConsumer = lifecycle ? createEventConsumer<E>({ routers: lifecycle.routers, flags: (env) => kvFlagReader(env.KV), log: lifecycleLog }) : undefined;
+  const eventQueues = eventConsumer ? [lifecycle?.eventsQueue ?? DEFAULT_EVENTS_QUEUE].flat() : [];
+
   const chatQueues = [options.agent?.chatQueue ?? DEFAULT_CHAT_QUEUE].flat();
   const chatConsumer = createChatConsumer<E>(agentOptions);
   const queueConsumers: Record<string, QueueConsumer<E>> = {
+    ...(eventConsumer ? Object.fromEntries(eventQueues.map((name) => [name, eventConsumer])) : {}),
     ...Object.fromEntries(chatQueues.map((name) => [name, chatConsumer])),
     // A consumer the deployment registers under the same name replaces the built-in one.
     ...(options.queueConsumers ?? {}),
@@ -289,6 +316,12 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
       if (!consumer && batch.messages.length > 0 && batch.messages.every((m) => isChatMessage(m.body))) {
         log.warn("chat messages arrived on a queue not listed in agent.chatQueue; handling them as chat", { queue: batch.queue });
         consumer = chatConsumer;
+      }
+      // Likewise an events queue renamed in wrangler.jsonc: event messages carry only a row id, which
+      // the spine re-reads from the database before acting.
+      if (!consumer && eventConsumer && batch.messages.length > 0 && batch.messages.every((m) => isEventMessage(m.body))) {
+        log.warn("event messages arrived on a queue not listed in lifecycle.eventsQueue; routing them as events", { queue: batch.queue });
+        consumer = eventConsumer;
       }
       if (!consumer) {
         // Retry rather than drop: after the queue's retry limit, messages move to its dead-letter queue.

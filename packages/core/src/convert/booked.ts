@@ -14,7 +14,10 @@
 //   4. credit: the meeting is credited to the first touch that earned it (ledger.ts), and counted
 //      against that send's template (templates.times_meeting);
 //   5. brief: the static prep brief (brief.ts) is stored as a deal handoff and sent to the operator
-//      with the booking notice.
+//      with the booking notice;
+//   6. lifecycle: the contact and every other attributed contact on the invite who has not signed
+//      up yet move to engaged, through the lifecycle module, the state's only writer
+//      (recordMeetingBooked).
 // Each step is bookkeeping: a failure is logged, its claim released, and the next sync tries again.
 // When all have worked, a final claim marks the meeting done, so later syncs skip it.
 //
@@ -22,13 +25,14 @@
 // declined): the ledger credit and the template count are taken back, and the credit claim is
 // released so a meeting that counts again is credited again. Warmth, the deal stage and stopped
 // sequences only move forward and are not reversed; the operator can resume a sequence by hand.
-// The customer lifecycle state is not moved here: it has one writer, the lifecycle module.
+// Neither is the lifecycle state, which never moves backwards either.
 import type { GtmConfig } from "../config/schema.ts";
 import { advanceWarmth } from "../data/contacts.ts";
 import { canTransitionDeal, transitionDeal } from "../data/deals.ts";
 import type { DealStage } from "../data/enums.ts";
 import { claimEffect, hasEffect, releaseEffect, runOnce } from "../events/effects.ts";
 import type { JobLogger } from "../jobs/registry.ts";
+import { recordMeetingBooked } from "../lifecycle/apply.ts";
 import type { MeetingRow } from "../metrics/meetings.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import { label } from "../reports/format.ts";
@@ -37,7 +41,7 @@ import { stopSequences } from "../sequences/state.ts";
 import { displayName, loadContactBrief, renderPrepBrief, when } from "./brief.ts";
 import { creditMeeting, creditedSend, withdrawMeetingCredit } from "./ledger.ts";
 
-export const BOOKED_STEPS = ["warmth", "stop", "deal", "credit", "brief"] as const;
+export const BOOKED_STEPS = ["warmth", "stop", "deal", "credit", "brief", "lifecycle"] as const;
 export type BookedStep = (typeof BOOKED_STEPS)[number];
 const DONE = "meeting_booked_done";
 const stepEffect = (step: BookedStep) => `meeting_booked_${step}`;
@@ -100,12 +104,21 @@ export async function ensureDemoDeal(db: D1Database, contact: { id: string; acco
   const id = `deal_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
   const at = now.toISOString();
   const name = account?.name ? label(account.name, 80) : contact.account_key ? contact.account_key : `Meeting ${code}`;
+  // One statement checks and inserts, so a deal the lifecycle opened for this contact in the
+  // meantime is stepped instead of a second one being created.
   await db
-    .prepare("INSERT INTO deals (id, account_key, contact_id, name, stage, source, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'prospecting', 'calendar', ?5, ?5)")
+    .prepare(
+      `INSERT INTO deals (id, account_key, contact_id, name, stage, source, created_at, updated_at)
+       SELECT ?1, ?2, ?3, ?4, 'prospecting', 'calendar', ?5, ?5
+        WHERE NOT EXISTS (SELECT 1 FROM deals WHERE contact_id = ?3 AND stage NOT IN ('closed_won', 'closed_lost'))`,
+    )
     .bind(id, contact.account_key, contact.id, name, at)
     .run();
-  await transitionDeal(db, id, "demo_scheduled", { reason: `meeting ${code} booked`, actor: "calendar_sync", now });
-  return id;
+  const deal = (await dealFor(db, contact.id, contact.account_key)) ?? { id, stage: "prospecting" as DealStage };
+  if (deal.stage !== "closed_won" && canTransitionDeal(deal.stage, "demo_scheduled")) {
+    await transitionDeal(db, deal.id, "demo_scheduled", { reason: `meeting ${code} booked`, actor: "calendar_sync", now });
+  }
+  return deal.id;
 }
 
 /** The booking notice: who, when, what was stopped, and the brief. Pure. */
@@ -216,6 +229,8 @@ export async function applyBooked(deps: BookedDeps, meeting: BookedMeeting): Pro
     await deps.operator.notify({ text: bookingNotice(displayName(booked), meeting, brief, past), ...(deps.chatId ? { chatId: deps.chatId } : {}) });
     if (deal) await db.prepare("UPDATE deal_handoffs SET notified_at = ?3 WHERE deal_id = ?1 AND trigger = ?2").bind(deal.id, trigger, now.toISOString()).run();
   });
+
+  await step("lifecycle", () => recordMeetingBooked({ db, now }, [booked, ...others].map((c) => ({ contactId: c.id, key: bookedKey(meeting.code, c.id), at: meeting.first_seen_at }))));
 
   if (result.failed.length === 0) {
     try {

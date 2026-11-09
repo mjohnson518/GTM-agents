@@ -9,13 +9,16 @@
 // agent behind operator:agent_enabled, discovery behind discovery:enabled, the cold batch behind
 // cold_batch:enabled, real sends behind delivery:enabled, mailbox intake behind inbox:enabled,
 // reply triage and drafting behind the replies:* flags, follow-ups behind sequences:enabled, and
-// the scorecard and digests behind the ops:* flags, and calendar sync behind convert:calendar_enabled.
+// the scorecard and digests behind the ops:* flags, calendar sync behind convert:calendar_enabled,
+// and product events and billing behind lifecycle:enabled and billing:enabled.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
 import { createWorker, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
+import { createAutonomyJobs } from "@gtm-agents/core/autonomy/runtime";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
+import { createLifecycle } from "@gtm-agents/core/lifecycle";
 import { createReplyJobs } from "@gtm-agents/core/replies";
 import { createReportJobs } from "@gtm-agents/core/reports";
 import { createRetentionJob } from "@gtm-agents/core/runtime";
@@ -85,12 +88,21 @@ const reports = createReportJobs<Env>({ operator, options: { owedWindowDays } })
 // Convert: calendar sync, meeting follow-ups and deal handoff briefs. Nothing is sent automatically.
 const convert = createConvertJobs<Env>({ calendar, operator });
 
+// Lifecycle: product events and billing move contacts and deals (docs/LIFECYCLE.md). The events
+// queues are the EVENTS_QUEUE names gtm setup creates. Pass `billing: (env) => adapter` once you have
+// a BillingProvider adapter; MRR comes from the amounts billing events carry.
+const lifecycle = createLifecycle<Env>({ eventsQueue: ["gtm-agent-events", "gtm-agent-staging-events"] });
+
+// Autonomy: the weekly review proposes level changes (behind autonomy_review:enabled; only a person
+// confirms them), and the hourly watch demotes a class after an incident. Demotion has no flag.
+const autonomy = createAutonomyJobs<Env>({ operator });
+
 // Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
 const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, retention],
+  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...autonomy, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},
@@ -101,6 +113,7 @@ export default createWorker(config, {
   email,
   sendOutreach,
   inbox,
+  lifecycle,
   // Mail that Cloudflare Email Routing delivers to this Worker. Add `forwardTo` with a verified
   // destination address to keep a copy in a mailbox (docs/INBOX.md).
   inboundEmail: { parser: (env) => createRoutedMail(context(env, "email-cloudflare")) },

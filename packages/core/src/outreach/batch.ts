@@ -25,6 +25,7 @@
 //      batches by half (at least five), deferring the rest 24 hours.
 // Every write outside the database is claimed first. Bookkeeping (quality rows, the templates
 // table, holdout rows, operator messages) fails open; every gate fails closed.
+import { returnAutomaticApprovals } from "../autonomy/incidents.ts";
 import { loadBrain } from "../brain/load.ts";
 import type { KVReader } from "../brain/load.ts";
 import type { GtmConfig } from "../config/schema.ts";
@@ -397,7 +398,7 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
   const pause = await readColdPause(deps.kv);
   if (pause.paused) return empty("skipped", `cold outreach is paused (${pause.severity ?? "critical"})`);
 
-  const mode = await readAutoApprove(deps.flags, config);
+  const mode = await readAutoApprove(deps.flags, config, db);
   const caps = {
     domainDailyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.domainDailyCap, OUTREACH_LIMITS.domainDailyCap),
     accountWeeklyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.accountWeeklyCap, OUTREACH_LIMITS.accountWeeklyCap),
@@ -616,6 +617,14 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
     };
   }
 
+  // A demotion recorded after the mode was read did not see these drafts, which were approved
+  // since: read it again now that they are stored, and hand nothing over if it no longer holds.
+  if (!(await readAutoApprove(deps.flags, config, db)).auto) {
+    await returnAutomaticApprovals(db, "cold_batch", now);
+    await activate();
+    await notify(deps, [`Cold batch ${campaignId} was not sent: automatic approval stopped while it was being built (a demotion, or a switch or level change). Its drafts are back for review.`, ...context].join("\n"));
+    return { status: "held", summary: "automatic approval stopped while the batch was being built; drafts returned to review", campaignId, ...counts, skippedByRule: pick.skipped };
+  }
   const policy = await sendUnderPolicy(deps, campaignId, open, caps);
   await activate();
   await recordQualityChecks(db, [readinessRecord(campaignId, policy.readiness)], now);

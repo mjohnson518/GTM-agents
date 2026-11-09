@@ -42,6 +42,7 @@ import { loadCopy, type ComposeContext } from "../outreach/compose.ts";
 import { OUTREACH_FLAGS, readAutoApprove, readOn, type AutoApproveDecision } from "../outreach/flags.ts";
 import { releaseCommand, renderSamples, writeManifest, type Manifest, type ManifestDraft } from "../outreach/manifest.ts";
 import { recordAutonomyEvent } from "../outreach/send.ts";
+import { returnAutomaticApprovals } from "../autonomy/incidents.ts";
 import type { EmailProvider } from "../ports/email.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
@@ -346,7 +347,7 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
   }
 
   // Whether drafts that pass may be approved without a person: the cold batch's rule, and the reviewer on.
-  const mode: AutoApproveDecision = await readAutoApprove(deps.flags, config);
+  const mode: AutoApproveDecision = await readAutoApprove(deps.flags, config, db);
   const reviewOn = await readOn(deps.flags, OUTREACH_FLAGS.modelReview);
   const auto = mode.auto && reviewOn;
 
@@ -661,8 +662,14 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
   const written = await runWrites(db, statements);
   if (written.some((ok) => !ok)) log.warn("some sequence rows could not be updated; the next sweep reconciles them", { lost: written.filter((ok) => !ok).length });
 
-  // 11. Send.
+  // 11. Send. A demotion recorded after the mode was read did not see the steps approved since:
+  // read it again, and send nothing approved automatically if it no longer holds.
   let report: SendReport | undefined;
+  if (auto && ready.length > 0 && !(await readAutoApprove(deps.flags, config, db)).auto) {
+    await returnAutomaticApprovals(db, "cold_batch", now);
+    counts.held += ready.length;
+    ready.length = 0;
+  }
   if (ready.length > 0 && !deps.signal?.aborted) {
     report = await sendSteps({ db, send: deps.send, now, log }, ready);
     counts.sent += report.sent + report.duplicate;

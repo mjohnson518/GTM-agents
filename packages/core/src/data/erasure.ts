@@ -18,9 +18,17 @@
 //      exist);
 //   3. deletes the contact rows. Foreign keys then delete per-contact state (tags, scores, drafts,
 //      inbound mail, meetings, feedback and so on) and clear contact_id on the measurement ledgers.
+// Product and billing data go in the same erasure (eraseProductData): the raw payloads of events
+// about the person (linked to their contact, or naming their product user id) are deleted from blob
+// storage before the batch, like inbound bodies, and the batch clears those rows' payload key and
+// user id, deletes feedback filed under their product user id, and reduces their billing customer
+// records to a marker (the hash of the customer id) so a later billing event for them is refused.
+// The product user id comes from the caller or from the contact's lifecycle row, and the tombstone
+// keeps it so a later event naming that user is refused too.
 // eraseByHash does the same when only the address hash is known (the product's user.deleted
 // event). Memory text is not linked to a contact; the memory module removes it separately.
 import { addressHash } from "../sending/suppression.ts";
+import { sha256Hex } from "../shared/hash.ts";
 import { contactEmailFields } from "./contacts.ts";
 
 export type ErasureSource = "product" | "operator" | "reply" | "reconciliation";
@@ -81,6 +89,54 @@ async function eraseInbound(db: D1Database, bucket: Pick<R2Bucket, "delete"> | n
 }
 
 /**
+ * Product and billing data about the person: deletes the event payloads first (throwing on a
+ * storage error, or when payloads exist and no bucket was given), then returns the statements for
+ * the erasure batch. ?1 is the JSON list of contact ids, ?2 of product user ids, ?3 of address hashes.
+ */
+async function eraseProductData(db: D1Database, bucket: Pick<R2Bucket, "delete"> | null | undefined, scope: { contactIds: string[]; userIds: string[]; hashes: string[] }): Promise<D1PreparedStatement[]> {
+  const ids = JSON.stringify(scope.contactIds);
+  const users = JSON.stringify(scope.userIds);
+  const hashes = JSON.stringify(scope.hashes);
+  // subject_ref holds a product user id, or (for a billing event) the address hash.
+  const about = "(contact_id IN (SELECT value FROM json_each(?1)) OR subject_ref IN (SELECT value FROM json_each(?2)) OR subject_ref IN (SELECT value FROM json_each(?3)))";
+  const { results } = await db.prepare(`SELECT payload_key FROM events WHERE ${about} AND payload_key IS NOT NULL`).bind(ids, users, hashes).all<{ payload_key: string }>();
+  const keys = results.map((r) => r.payload_key).filter((k) => k.startsWith("events/"));
+  const { results: billing } = await db
+    .prepare(
+      `SELECT id, provider, provider_customer_id FROM billing_customers
+        WHERE (contact_id IN (SELECT value FROM json_each(?1)) OR email_sha256 IN (SELECT value FROM json_each(?2))) AND provider_customer_id NOT LIKE '${ERASED_CUSTOMER_PREFIX}%'`,
+    )
+    .bind(ids, hashes)
+    .all<{ id: string; provider: string; provider_customer_id: string }>();
+  if (keys.length > 0 && !bucket) throw new TypeError("this person has stored event payloads; pass the BUCKET binding as options.bucket so they are erased too");
+  for (let i = 0; i < keys.length; i += BLOB_DELETE_CHUNK) await bucket?.delete(keys.slice(i, i + BLOB_DELETE_CHUNK));
+  return [
+    db.prepare(`UPDATE events SET payload_key = NULL, subject_ref = NULL WHERE ${about}`).bind(ids, users, hashes),
+    db.prepare("DELETE FROM feedback_items WHERE product_user_id IN (SELECT value FROM json_each(?1))").bind(users),
+    // A billing customer record keeps only a marker: its provider, the hash of its customer id in
+    // place of the id, and the address hash the tombstone already holds. Everything else goes, and
+    // a later billing event for that customer, with or without an address, is refused by it.
+    ...(await Promise.all(
+      billing.map(async (b) =>
+        db
+          .prepare(
+            `UPDATE billing_customers SET provider_customer_id = ?2, provider_subscription_id = NULL, contact_id = NULL, plan = NULL,
+               status = 'canceled', last_checkout_at = NULL WHERE id = ?1`,
+          )
+          .bind(b.id, await erasedCustomerMarker(b.provider, b.provider_customer_id)),
+      ),
+    )),
+  ];
+}
+
+const ERASED_CUSTOMER_PREFIX = "erased:";
+
+/** What an erased billing customer's id becomes: a hash of the provider and the id, never the id. */
+export async function erasedCustomerMarker(provider: string, customerId: string): Promise<string> {
+  return `${ERASED_CUSTOMER_PREFIX}${await sha256Hex(`${provider}:${customerId}`)}`;
+}
+
+/**
  * Take the people whose hashes are in `hashes` (a JSON list) off the calendar events `scope`
  * selects (meetings that belong to someone else): their attendee entries go, and the hash and
  * domain lists are rebuilt from the entries left, so a domain only they shared disappears too.
@@ -125,16 +181,26 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     .prepare(
       `INSERT INTO erasure_tombstones (email_sha256, mailbox_sha256, product_user_id, source, erased_at, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?5)
-       ON CONFLICT(email_sha256) DO UPDATE SET mailbox_sha256 = COALESCE(erasure_tombstones.mailbox_sha256, excluded.mailbox_sha256)`,
+       ON CONFLICT(email_sha256) DO UPDATE SET mailbox_sha256 = COALESCE(erasure_tombstones.mailbox_sha256, excluded.mailbox_sha256),
+         product_user_id = COALESCE(erasure_tombstones.product_user_id, excluded.product_user_id)`,
     );
   const hashes = await Promise.all(contacts.map(async (c) => [await addressHash(c.email), c.email] as const));
   const addressHashes = JSON.stringify([...new Set([fields.email_sha256, fields.mailbox_sha256, ...hashes.map(([h]) => h)])]);
-  // Inbound mail first, bodies before rows: a storage failure throws before the person's other
-  // rows are touched, so the erasure can simply run again.
+  // Their product user ids: the caller's, and any their lifecycle rows link.
+  const { results: linked } = await db
+    .prepare("SELECT product_user_id FROM contact_lifecycle WHERE contact_id IN (SELECT value FROM json_each(?1)) AND product_user_id IS NOT NULL")
+    .bind(ids)
+    .all<{ product_user_id: string }>();
+  const userIds = [...new Set([...(options.productUserId ? [options.productUserId] : []), ...linked.map((r) => r.product_user_id)])];
+  const productUserId = userIds[0] ?? null;
+  // Inbound mail first, bodies before rows, then event payloads: a storage failure throws before
+  // the person's other rows are touched, so the erasure can simply run again.
   await eraseInbound(db, options.bucket, inboundAbout, [addresses, ids, addressHashes]);
+  const productData = await eraseProductData(db, options.bucket, { contactIds: contacts.map((c) => c.id), userIds, hashes: JSON.parse(addressHashes) as string[] });
   await db.batch([
-    tombstone.bind(fields.email_sha256, fields.mailbox_sha256, options.productUserId ?? null, options.source, now),
-    ...hashes.map(([hash]) => tombstone.bind(hash, fields.mailbox_sha256, options.productUserId ?? null, options.source, now)),
+    tombstone.bind(fields.email_sha256, fields.mailbox_sha256, productUserId, options.source, now),
+    ...hashes.map(([hash]) => tombstone.bind(hash, fields.mailbox_sha256, productUserId, options.source, now)),
+    ...productData,
     db.prepare(`DELETE FROM contact_evidence WHERE candidate_id IN (${candidates})`).bind(addresses, ids),
     db.prepare(`DELETE FROM candidates WHERE id IN (${candidates})`).bind(addresses, ids),
     db.prepare(`DELETE FROM drafts WHERE ${addressIn("recipient_email")}`).bind(addresses),
@@ -180,12 +246,18 @@ export async function eraseByHash(db: D1Database, emailSha256: string, options: 
   const contact = await db.prepare("SELECT email FROM contacts WHERE email_sha256 = ?1").bind(emailSha256).first<{ email: string }>();
   if (contact) return eraseContact(db, contact.email, options);
   const now = (options.now ?? new Date()).toISOString();
-  // Mail they sent and delivery reports about them are found by the hash too.
+  // Mail they sent and delivery reports about them are found by the hash too, and so are their
+  // billing records; their product user id, when known, finds their event payloads and feedback.
   await eraseInbound(db, options.bucket, inboundAbout, ["[]", "[]", JSON.stringify([emailSha256])]);
+  const productData = await eraseProductData(db, options.bucket, { contactIds: [], userIds: options.productUserId ? [options.productUserId] : [], hashes: [emailSha256] });
   await db.batch([
     db
-      .prepare("INSERT OR IGNORE INTO erasure_tombstones (email_sha256, product_user_id, source, erased_at, created_at) VALUES (?1, ?2, ?3, ?4, ?4)")
+      .prepare(
+        `INSERT INTO erasure_tombstones (email_sha256, product_user_id, source, erased_at, created_at) VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT (email_sha256) DO UPDATE SET product_user_id = COALESCE(erasure_tombstones.product_user_id, excluded.product_user_id)`,
+      )
       .bind(emailSha256, options.productUserId ?? null, options.source, now),
+    ...productData,
     // A calendar event that holds the hash (an attendee who was never a contact): the attendee comes
     // off a meeting that belongs to a contact, and any other such event is deleted.
     ...pruneCalendarAttendees(db, JSON.stringify([emailSha256]), "event_id IN (SELECT event_id FROM calendar_meetings)"),

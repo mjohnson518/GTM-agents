@@ -88,6 +88,8 @@ Every external event (product events, billing, git host, deploys, search monitor
 
 Each event carries a taint level. Free text from outside, such as product feedback, is full taint. Side effects of routing are claimed in the effects ledger, so redelivery never repeats them.
 
+Product events arrive at `POST /api/webhooks/product` (HMAC, [EVENT-CONTRACT.md](EVENT-CONTRACT.md)) and billing events at `POST /api/webhooks/billing` (verified by the billing adapter). Routing them moves the contact through the lifecycle states, which one module writes with compare-and-set, and mirrors the deal one stage at a time, never backwards. A nightly signed pull from the product repairs anything a push missed. [LIFECYCLE.md](LIFECYCLE.md) covers it, and the host SDK (`@gtm-agents/sdk`) is what a product installs.
+
 ## Durable Objects, and why
 
 - **`OperatorGateway`** is a single instance holding the dashboard's WebSocket connections through the hibernation API. An idle dashboard costs nothing; the runtime answers pings without waking the object. RPC is default-deny: only `connect` and `health` work before the session presents a valid token. Origin and token checks happen on connect.
@@ -189,6 +191,10 @@ The same send function serves two providers. Cold first touches and sequence fol
 ## Replies and follow-ups
 
 Inbound mail arrives two ways: a mailbox the Worker polls every minute and is woken by push (Gmail), or Cloudflare Email Routing delivering to the Worker's `email()` entry point. Intake records each message once, classifies it structurally without a model (bounce, auto reply, out of office, unsubscribe, reply, new inquiry) and applies the deterministic consequences at once: a reply stops every sequence at the account, an unsubscribe suppresses the sender, an out-of-office reply holds the next step, a delivery report for an address we sent to suppresses it. Model triage, routing, the meeting qualifier and drafting run afterwards in their own jobs, and every reply draft waits for a person's approval. The follow-up sweep sends sequence steps threaded under the first email, re-checking for replies from anyone at the account right before each send. [INBOX.md](INBOX.md), [REPLIES.md](REPLIES.md) and [SEQUENCES.md](SEQUENCES.md) cover each part.
+
+## Autonomy
+
+Every action class has a level, from 0 (observe) to 3, read by one reader that fails closed to 1; the permanently human-only classes never go above 1. Every decision point records evidence (approved unchanged, edited, rejected, sent automatically, incident). A weekly review proposes promotions from that evidence and the outcome metrics, and only an operator's confirmed command applies one; an hourly watch demotes a class immediately after an incident on an automatic send. An automatic reply needs the class at level 2, the auto-send flag, every auto-send rule and the quality gate. `@gtm-agents/core/autonomy` holds the parts that need no Worker bindings (classes, rules, the writer registry); `/autonomy/runtime` holds the jobs and stores. [AUTONOMY.md](AUTONOMY.md) covers it.
 
 ## Meetings
 

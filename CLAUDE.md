@@ -33,6 +33,17 @@ npx gtm brain validate <dir>     # brain and templates against the schema, byte 
 
 Deploying uses `gtm setup`, `gtm migrate`, `gtm brain upload|diff`, `gtm flags` and `gtm deploy` ([docs/DEPLOYING.md](docs/DEPLOYING.md)). They call Wrangler through an injectable runner, and their tests never touch a real account.
 
+Packaging ([docs/RELEASING.md](docs/RELEASING.md)); development stays source-first, and these build what would be published:
+
+```bash
+node scripts/release/pack.mjs           # build JS and types into .release/ and pack each package
+node scripts/release/smoke.mjs          # install the tarballs in a temp dir: gtm init, npm install, wrangler dry run
+node scripts/release/publish.mjs --dry-run
+node scripts/release/version.mjs --check   # every package on one version
+```
+
+Nothing publishes except the release workflow on a `v*` tag.
+
 ## Repository layout
 
 ```
@@ -48,7 +59,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/
 docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, DEPLOYING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, LIFECYCLE, AUTONOMY, DEPLOYING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -158,6 +169,8 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How replies are triaged, drafted, approved and sent | [docs/REPLIES.md](docs/REPLIES.md) |
 | How metrics and reports are defined | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) |
 | How meetings are detected and what a booking does | [docs/CONVERT.md](docs/CONVERT.md) |
+| How product events and billing move contacts and deals | [docs/LIFECYCLE.md](docs/LIFECYCLE.md) |
+| How autonomy is earned, proposed, confirmed and lost | [docs/AUTONOMY.md](docs/AUTONOMY.md) |
 | How to deploy and roll out a deployment | [docs/DEPLOYING.md](docs/DEPLOYING.md) |
 | The whole design in one place | [docs/BLUEPRINT.md](docs/BLUEPRINT.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |

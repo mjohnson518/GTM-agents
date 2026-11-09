@@ -12,9 +12,14 @@
 //        contacts and in the verification cache instead;
 //      - their sequences stop (stopSequences): campaign_contacts rows go inactive and are marked
 //        opted_out (bounced for a bounce), and running sequence runs are cancelled;
-//      - queued deferred sends to them are cancelled.
+//      - queued deferred sends to them are cancelled;
+//   3. an autonomy incident against every class that sent to them automatically in the last 14
+//      days, which demotes those classes at once (autonomy/incidents.ts). For the cold batch only a
+//      complaint counts here; its bounces and opt-outs count through the hourly rate check. It
+//      never throws, and what it cannot write the hourly autonomy watch records.
 // It is idempotent: suppression keeps its first reason, warmth stays opted_out, and the updates
 // only touch rows still active.
+import { incidentKindFor, recordContactIncident } from "../autonomy/incidents.ts";
 import { advanceWarmth } from "../data/contacts.ts";
 import { stopSequences } from "../sequences/state.ts";
 import { addSuppression, addressHash, mailboxOf, normalizeAddress, type SuppressionReason } from "./suppression.ts";
@@ -93,6 +98,11 @@ export async function optOutAddress(db: D1Database, rawAddress: string, options:
       .bind(ids, address, `cancelled: ${options.reason}`)
       .run(),
   );
+
+  if (contactIds.length > 0) {
+    const incident = await recordContactIncident(db, { contactIds, kind: incidentKindFor(options.reason), at: new Date(now), source: options.source });
+    if (incident.failed) failedWrites.push("autonomy_incident");
+  }
 
   return { address, emailSha256: exact, newlySuppressed: added.added, contactIds, failedWrites };
 }

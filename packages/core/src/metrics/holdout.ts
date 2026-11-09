@@ -9,14 +9,15 @@
 //     referral, on mail that is a reply) received after the entry and within
 //     ATTRIBUTION_WINDOW_DAYS of it. Both groups are measured from inbound mail the same way, so a
 //     held contact who writes in on their own counts just as a treated one does;
-//   - signed up: contact_lifecycle.signed_up_at within SIGNUP_WINDOW_DAYS of the entry. Measured
-//     only once product events exist; until then it is null, never a zero;
+//   - signed up: a sign-up (product.ts, the one definition) within SIGNUP_WINDOW_DAYS of the
+//     entry. Measured only once product events exist; until then it is null, never a zero;
 //   - lift: treated rate minus held rate, in absolute terms.
 // A lift is sufficient only with MIN_HELD or more contacts in each group and healthy measurement. Spillover
 // within an account (a held contact's colleague was written to and passed it on) makes the held
 // group look better than no outreach, so lift reads low, never high.
 import { ATTRIBUTION_WINDOW_DAYS } from "./attribution.ts";
 import type { MeasurementHealth } from "./health.ts";
+import { signupSql } from "./product.ts";
 import { firstTouchSql, inboundPositiveSql, n } from "./sql.ts";
 import type { MetricWindow } from "./window.ts";
 
@@ -61,10 +62,10 @@ export async function holdoutLift(db: D1Database, window: MetricWindow, now: Dat
          AND i.received_at > ${entry} AND i.received_at <= ?3
          AND i.received_at <= strftime('%Y-%m-%dT%H:%M:%fZ', ${entry}, '+' || ?4 || ' days')) THEN 1 ELSE 0 END) AS positives,
     SUM(CASE WHEN EXISTS (
-      SELECT 1 FROM contact_lifecycle l
-       WHERE l.contact_id = arm.contact_id AND l.signed_up_at IS NOT NULL
-         AND l.signed_up_at > ${entry} AND l.signed_up_at <= ?3
-         AND l.signed_up_at <= strftime('%Y-%m-%dT%H:%M:%fZ', ${entry}, '+' || ?5 || ' days')) THEN 1 ELSE 0 END) AS signups`;
+      SELECT 1 FROM funnel_events f
+       WHERE f.contact_id = arm.contact_id AND ${signupSql("f")}
+         AND f.occurred_at > ${entry} AND f.occurred_at <= ?3
+         AND f.occurred_at <= strftime('%Y-%m-%dT%H:%M:%fZ', ${entry}, '+' || ?5 || ' days')) THEN 1 ELSE 0 END) AS signups`;
   const [held, treated] = await db.batch<{ contacts: number | null; positives: number | null; signups: number | null }>([
     db
       .prepare(

@@ -10,6 +10,8 @@
 | [SENDING.md](SENDING.md) | Send email safely: the sending domain, the provider and webhooks, the footer and unsubscribe, windows, caps, the ramp and the bounce monitor |
 | [SEQUENCES.md](SEQUENCES.md) | Turn on follow-ups: steps and timing, what stops a sequence, threading, release, the manual channel step |
 | [INBOX.md](INBOX.md) | Connect a mailbox: Gmail or Cloudflare Email Routing, detection, structural classification and what each class does |
+| [AUTONOMY.md](AUTONOMY.md) | Decide how much the agent does on its own: levels, evidence, promotion and demotion, the writer registry and evals, automatic replies |
+| [LIFECYCLE.md](LIFECYCLE.md) | Connect your product: the event bridge and SDK, lifecycle states, identity resolution, the deal mirror, billing through the port, MRR |
 | [CONVERT.md](CONVERT.md) | Turn on meetings: connecting the calendar, privacy, how a booking is detected and attributed, what it does, prep briefs and post-meeting drafts |
 | [BLUEPRINT.md](BLUEPRINT.md) | Read the whole design in one place: the full specification, including parts not built yet |
 | [MEASUREMENT.md](MEASUREMENT.md) | Read the numbers: the one definition of each metric, matured samples, measurement health, the daily scorecard and the other reports |

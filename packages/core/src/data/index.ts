@@ -7,6 +7,6 @@ export { PERSONAL_EMAIL_DOMAINS, SHARED_HOST_DOMAINS, accountKey, registrableDom
 export { advanceWarmth, canAdvanceWarmth, contactEmailFields } from "./contacts.ts";
 export type { ContactEmailFields, WarmthResult } from "./contacts.ts";
 export { DEAL_TRANSITIONS, canTransitionDeal, transitionDeal } from "./deals.ts";
-export { eraseByHash, eraseContact } from "./erasure.ts";
+export { eraseByHash, eraseContact, erasedCustomerMarker } from "./erasure.ts";
 export type { ErasureResult, ErasureSource } from "./erasure.ts";
 export type { DealTransitionResult } from "./deals.ts";

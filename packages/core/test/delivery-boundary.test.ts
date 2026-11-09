@@ -134,6 +134,17 @@ describe("the provider boundary: a send that goes out", () => {
     expect(row?.send_path).toBe("cold");
   });
 
+  it("treats lifecycle mail to a prospect with a lifecycle row but no sign-up as cold", async () => {
+    const h = harness(db);
+    const prospect = await insertContact(db, { timezone: "Asia/Tokyo" });
+    // A booked meeting moves a prospect to engaged, which writes a lifecycle row; that is not a product user.
+    await db.prepare("INSERT INTO contact_lifecycle (contact_id, state) VALUES (?1, 'engaged')").bind(prospect.id).run();
+    const [outcome] = await createOutreachSender(h.deps)([coldItem(prospect, { path: "lifecycle" })]);
+    expect(outcome?.status === "deferred" && outcome.reason).toBe("outside_window");
+    const row = await db.prepare("SELECT send_path FROM deferred_sends WHERE contact_id = ?1 LIMIT 1").bind(prospect.id).first<{ send_path: string }>();
+    expect(row?.send_path).toBe("cold");
+  });
+
   it("refuses an item that names a draft without its approved digest", async () => {
     const h = harness(db);
     const contact = await insertContact(db);

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "outDir": "../../.release/stage/adapters/dist",
+    "paths": {
+      "@gtm-agents/core": ["../../.release/stage/core/dist/index.d.ts"],
+      "@gtm-agents/core/*": ["../../.release/stage/core/dist/*/index.d.ts", "../../.release/stage/core/dist/*.d.ts"]
+    }
+  },
+  "include": ["*/**/*.ts"],
+  "exclude": ["**/*.test.ts", "node_modules"]
+}

@@ -21,6 +21,7 @@
 // After the outcomes come back, the bookkeeping here is fire-and-forget and idempotent: a sent draft
 // is marked sent, its campaign row records step 1 and when the next step is due, the contact's
 // warmth moves from cold to contacted (compare-and-set) and last_contacted_at is set.
+import { recordAutonomyEvidence } from "../autonomy/evidence.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { advanceWarmth } from "../data/contacts.ts";
 import { inChunks, placeholders } from "../data/d1.ts";
@@ -333,14 +334,8 @@ export function handoffLine(report: HandoffReport): string {
   return parts.join(", ");
 }
 
-/** An autonomy evidence row. Bookkeeping: never throws. */
+/** A cold_batch autonomy evidence row, through the evidence module (autonomy/evidence.ts). Bookkeeping: never throws. */
 export async function recordAutonomyEvent(db: D1Database, outcome: "approved_unchanged" | "auto_sent", subjectId: string, detail: string, now: Date): Promise<void> {
-  try {
-    await db
-      .prepare("INSERT INTO autonomy_events (id, action_class, outcome, subject_id, detail, created_at) VALUES (?1, 'cold_batch', ?2, ?3, ?4, ?5)")
-      .bind(`ae_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, outcome, subjectId, detail.slice(0, 500), now.toISOString())
-      .run();
-  } catch {
-    // Evidence is bookkeeping; a lost row never changes what was sent.
-  }
+  // Evidence is bookkeeping; a lost row never changes what was sent.
+  await recordAutonomyEvidence(db, { actionClass: "cold_batch", outcome, subjectId, detail, now });
 }

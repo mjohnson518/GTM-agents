@@ -51,11 +51,11 @@ The signature covers the raw bytes the host sent, not a re-serialization. The ag
 
 | Status | Meaning |
 |--------|---------|
-| `200 {"ok":true,"duplicate":false}` | Recorded and dispatched |
+| `200 {"ok":true,"duplicate":false}` | Recorded and dispatched (`"late":true` is added for an event older than 7 days) |
 | `200 {"ok":true,"duplicate":true}` | Already seen (same `id`); nothing is dispatched again |
 | `400` | Bad shape (fails the schema below) |
-| `401` | Bad or missing signature, or `X-Event-Id` differs from `body.id` |
-| `503` | The agent is not configured for this bridge (`PRODUCT_WEBHOOK_SECRET` is unset) |
+| `401` | Bad or missing signature, or `X-Event-Id` missing or different from `body.id` (a body without an `id` cannot match) |
+| `503` | The agent is not accepting product events: `PRODUCT_WEBHOOK_SECRET` is unset, or the deployment has not turned lifecycle on. A `user.deleted` event is the exception: once its signature verifies, it is always recorded and honored, so a deletion is never lost |
 
 The agent handles a push in this order:
 1. Write the raw payload to blob storage.
@@ -112,7 +112,7 @@ The agent resolves identity in this order:
 | `org.created` | A tenant is created (may coincide with sign-up) | `{plan}` |
 | `user.activated` | The first value event: the first report generated, the first import, whatever "aha" is for the product | `{event, count?}` |
 | `usage.limit_reached` | A plan limit is hit | `{limit, used, period}` |
-| `billing.subscribed` | A paid subscription starts | `{plan, interval, amount, currency}` |
+| `billing.subscribed` | A paid subscription starts | `{plan, interval, amount, currency}`; every `amount` in this catalogue is an integer in the currency's minor unit (cents for USD) |
 | `billing.subscription_changed` | The plan or status changes. Only real changes count; a renewal that changes nothing is not an event | `{from_plan, to_plan, status}` |
 | `billing.subscription_canceled` | A subscription ends or is set to end | `{plan, ends_at, reason?}` |
 | `billing.payment_failed` | A payment attempt fails | `{amount, currency, attempt}` |

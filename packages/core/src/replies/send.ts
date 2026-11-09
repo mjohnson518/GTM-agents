@@ -12,8 +12,9 @@
 //      and the exactly-once claim itself; a reply never goes through the cold email provider.
 // After a send: the message is marked responded, and the decision is recorded as autonomy evidence
 // (approved_unchanged when the approved text is the text the writer produced, approved_edited
-// otherwise). A refusal says why and what to do. Nothing that might have been sent is ever retried:
-// an uncertain provider answer keeps the lock.
+// otherwise, and auto_sent when the auto-send tier approved it: approved_by auto:...). A refusal
+// says why and what to do. Nothing that might have been sent is ever retried: an uncertain
+// provider answer keeps the lock.
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
@@ -96,6 +97,7 @@ interface DraftRow {
   body: string | null;
   status: DraftStatus;
   approved_digest: string | null;
+  approved_by: string | null;
   action_class: string | null;
   notes: string | null;
 }
@@ -120,7 +122,7 @@ export async function sendApprovedReply(deps: ReplySenderDeps, draftId: string):
   let inbound: InboundRow | null;
   try {
     draft = await deps.db
-      .prepare("SELECT id, contact_id, kind, recipient_email, subject, body, status, approved_digest, action_class, notes FROM drafts WHERE id = ?1")
+      .prepare("SELECT id, contact_id, kind, recipient_email, subject, body, status, approved_digest, approved_by, action_class, notes FROM drafts WHERE id = ?1")
       .bind(draftId)
       .first<DraftRow>();
     inbound = draft ? await deps.db.prepare(`SELECT ${inboundColumns()} FROM inbound_emails WHERE draft_id = ?1 LIMIT 1`).bind(draftId).first<InboundRow>() : null;
@@ -200,8 +202,9 @@ export async function sendApprovedReply(deps: ReplySenderDeps, draftId: string):
       } catch (error) {
         log?.warn("a sent reply's message could not be marked responded", { inboundId: inbound.id, error: sanitizeErrorMessage(error) });
       }
-      const evidence: ReplyEvidence = generatedDigest(draft.notes) === digest ? "approved_unchanged" : "approved_edited";
-      await recordReplyEvidence(deps.db, { draftId, actionClass: draft.action_class, outcome: evidence, detail: "approved in chat, sent from the mailbox", now });
+      const automatic = (draft.approved_by ?? "").startsWith("auto:");
+      const evidence: ReplyEvidence = automatic ? "auto_sent" : generatedDigest(draft.notes) === digest ? "approved_unchanged" : "approved_edited";
+      await recordReplyEvidence(deps.db, { draftId, actionClass: draft.action_class, outcome: evidence, detail: automatic ? "sent automatically from the mailbox" : "approved in chat, sent from the mailbox", now });
       return { status: "sent", draftId, inboundId: inbound.id, providerMessageId: outcome.providerMessageId, evidence };
     }
     case "duplicate":

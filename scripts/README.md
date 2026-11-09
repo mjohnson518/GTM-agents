@@ -16,6 +16,7 @@ Each check accepts the same inputs: no flag (tracked files plus untracked files 
 | `generate-brain-schema.ts` | Not a check. It regenerates the brain's JSON Schemas in `packages/core/brain/schema/` after a schema change; a test fails if they are out of date |
 | `check-commit-msg.mjs` | A commit subject that is empty, not capitalized, longer than 72 characters, or ends with a period (run by `.githooks/commit-msg`) |
 | `install-hooks.mjs` | Not a check. It points git at `.githooks/` when you run `npm install` |
+| `release/` | Not checks. `pack.mjs` builds each publishable package (JS and types) into `.release/` and packs it; `smoke.mjs` installs those tarballs in a temporary directory and proves `gtm init`, `npm install` and a Wrangler dry run work; `publish.mjs` publishes the tested tarballs (the release workflow runs it on a `v*` tag); `version.mjs` moves every package to one version. [docs/RELEASING.md](../docs/RELEASING.md) |
 
 ## Synthetic fixtures
 

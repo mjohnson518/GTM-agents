@@ -26,6 +26,11 @@
 // `meeting-held-<code>`, `meeting-noshow-<code>`, `meeting-notes-<code> <notes>`,
 // `meeting-link-<code> <contact>` and `meeting-unlink-<code>` answer for a meeting, and
 // `prep-<contact>` shows a prep brief. The chat consumer routes them to runConvertCommand.
+//
+// Autonomy commands (autonomy/commands.ts) never reach the model: `autonomy-status` shows every
+// class's level and evidence, `autonomy-set <class> <0-3>` proposes a level, and
+// `autonomy-confirm-<id>-<code>` applies a proposal if the class has not changed since. The chat
+// consumer routes them to runAutonomyCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -49,6 +54,9 @@ import { REPORT_HELP_LINES } from "../reports/commands.ts";
 // Convert: the meeting commands and the prep brief on demand.
 export { CONVERT_HELP_LINES, parseConvertCommand, runConvertCommand, type ConvertCommand, type ConvertCommandDeps } from "../convert/commands.ts";
 import { CONVERT_HELP_LINES } from "../convert/commands.ts";
+// Autonomy: the level commands.
+export { AUTONOMY_HELP_LINES, parseAutonomyCommand, runAutonomyCommand, type AutonomyCommand, type AutonomyCommandDeps } from "../autonomy/commands.ts";
+import { AUTONOMY_HELP_LINES } from "../autonomy/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -75,6 +83,7 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     ...REPLY_HELP_LINES,
     ...REPORT_HELP_LINES,
     ...CONVERT_HELP_LINES,
+    ...AUTONOMY_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",

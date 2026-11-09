@@ -62,8 +62,13 @@ describe("holdout lift", () => {
     const window = metricWindow(new Date(at(200)), new Date(at(210)));
     const h = await held(201);
     const t = await treated(201);
-    await db.prepare("INSERT INTO contact_lifecycle (contact_id, state, signed_up_at) VALUES (?1, 'signed_up', ?2)").bind(t, at(220)).run();
-    await db.prepare("INSERT INTO contact_lifecycle (contact_id, state, signed_up_at) VALUES (?1, 'signed_up', ?2)").bind(h, at(240)).run();
+    // A sign-up is the funnel event the lifecycle writes (metrics/product.ts); one from a source that
+    // is not the product bridge or billing never counts.
+    const signup = (contactId: string, days: number, source = "product") =>
+      db.prepare("INSERT INTO funnel_events (id, event_type, contact_id, source, occurred_at) VALUES (?1, 'signed_up', ?2, ?3, ?4)").bind(uid("fe"), contactId, source, at(days)).run();
+    await signup(t, 220);
+    await signup(h, 240);
+    await signup(h, 215, "manual");
     const lift = await holdoutLift(db, window, new Date(at(300)), { measureSignups: true });
     expect(lift.treated).toMatchObject({ contacts: 1, signups: 1, signupRate: 1 });
     expect(lift.held).toMatchObject({ contacts: 1, signups: 0, signupRate: 0 });

@@ -5,3 +5,5 @@
 5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:tests/security/delivery-unsubscribe.test.ts:generic-api-key:13
 5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:tests/security/delivery-gates.test.ts:generic-api-key:64
 5837976695dea67d71f26ff2f6bd5bd8b5b4dac1:packages/core/test/delivery-fakes.ts:generic-api-key:14
+# Prose in the blueprint that matched a vendor client-id pattern (a word after a comma), since reworded.
+35f4c9e389ff06670ba12e49b692b3df11aa754b:docs/BLUEPRINT.md:linkedin-client-id:69

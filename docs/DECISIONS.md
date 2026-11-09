@@ -152,14 +152,14 @@ Measurement health (ledger coverage, unrouted product events) gates every conclu
 A build step per package means stale output, source maps and a slower loop for every contributor.
 
 **Decision.**
-- There is no build step. Node 24 runs the CLI's TypeScript directly, using native type stripping, and the bundlers consume the same sources.
+- There is no build step in development. Node 24 runs the CLI's TypeScript directly, using native type stripping, and the bundlers consume the same sources.
 - `tsconfig.base.json` enables `strict`, `verbatimModuleSyntax`, `erasableSyntaxOnly`, `allowImportingTsExtensions` and `noUncheckedIndexedAccess`.
 - Code uses only erasable syntax: no enums, namespaces or constructor parameter properties.
 - Relative imports name the `.ts` file.
 
 **Consequences.**
 - Contributors need Node 24 or later (`.nvmrc`, `engines`).
-- Publishing packages to npm will need a compile step that emits JavaScript and declarations, because Node does not strip types inside `node_modules`.
+- Published packages need JavaScript, because Node refuses to strip types from files inside `node_modules`. A release-only build compiles each package with its `tsconfig.build.json` (JavaScript, plus declarations for the libraries) and generates the published `package.json` at pack time, pointing `exports` and `bin` at `dist/`. Development never runs it: the source manifests keep their `.ts` exports and stay private, so only the generated ones can publish. [RELEASING.md](RELEASING.md) covers the build, the smoke test and the release workflow.
 - Some TypeScript conveniences are off-limits, and lint and the compiler say so immediately.
 
 ## ADR-010: Brain and template files are strict Markdown

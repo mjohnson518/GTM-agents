@@ -80,3 +80,26 @@ jobs:
       - run: npm ci
       # Workspace-aware: lists every workspace's production dependencies with `npm query`.
       - run: npm run check:licenses
+
+  release-smoke:
+    # Proves a release would work without publishing anything (docs/RELEASING.md): builds and packs
+    # every package, installs the tarballs in a temporary directory, runs gtm --help and gtm init in
+    # npm mode, installs the generated project against the tarballs, then runs wrangler deploy
+    # --dry-run, tsc, gtm brain validate and gtm doctor in it (and the same for gtm init --local).
+    name: Release packaging smoke test (publishes nothing)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The smoke test runs third-party install scripts in temporary projects.
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # As in the release workflow, the tarballs are built with no dependency install scripts.
+      - run: npm ci --ignore-scripts
+      - run: node scripts/release/version.mjs --check
+      - run: node scripts/release/pack.mjs
+      - run: node scripts/release/smoke.mjs
+      - run: node scripts/release/publish.mjs --dry-run

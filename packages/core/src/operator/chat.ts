@@ -14,6 +14,9 @@
 //     once per message, without the model;
 //   - a report command (/scorecard, /report ...) reads and replies once per message, without the
 //     model;
+//   - an autonomy command (`autonomy-status`, `autonomy-set <class> <0-3>`,
+//     `autonomy-confirm-<id>-<code>`) runs once per message, without the model. These are the only
+//     way a level is raised from the chat, and only an allowlisted operator reaches them;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -43,12 +46,15 @@ import { isReplyCommand, runReplyCommand } from "../replies/commands.ts";
 import { isReportCommand, runReportCommand } from "../reports/commands.ts";
 // Convert: the meeting commands and the prep brief on demand.
 import { parseConvertCommand, runConvertCommand } from "../convert/commands.ts";
+// Autonomy: the level commands (docs/AUTONOMY.md).
+import { parseAutonomyCommand, runAutonomyCommand } from "../autonomy/commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
 export const SEQUENCE_COMMAND_EFFECT = "operator_sequence_command";
 export const REPORT_COMMAND_EFFECT = "operator_report_command";
 export const CONVERT_COMMAND_EFFECT = "operator_convert_command";
+export const AUTONOMY_COMMAND_EFFECT = "operator_autonomy_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -207,6 +213,22 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
         );
       } catch (error) {
         text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing was sent; send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
+    // Autonomy: levels are set only here, by an allowlisted operator, in two steps; once per message.
+    const autonomyCommand = parseAutonomyCommand(message.text);
+    if (autonomyCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, AUTONOMY_COMMAND_EFFECT))) {
+        log.warn("redelivered autonomy command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let text: string;
+      try {
+        text = await runAutonomyCommand({ db: env.DB, kv: env.KV, flags, config: options.config, userId: message.userId, ...(options.now ? { now: options.now } : {}) }, autonomyCommand);
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing changed; send it again to retry.`;
       }
       await reply(text);
       return;

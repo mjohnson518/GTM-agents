@@ -92,6 +92,7 @@ Start with the foundation and the operator chat, then add one capability at a ti
 | **Replies** | Inbox; delivery for sending | none | none | `models.roles.triage` and `writer` with prices; brain `facts`, `objections`, `competitors`, `voice`, `stack`, `personas` | `replies:triage_enabled`, `replies:reminders_enabled`, `replies:drafting_enabled`, `replies:mirror_enabled`, `replies:send_enabled` | none | Triage and drafting model calls (100 cents a day for the triage job) |
 | **Follow-ups** | Delivery, inbox recording, operator chat | none | none | Approved `follow_up` (step 2) and `breakup` (step 3) templates; `sequences.cold` | `sequences:enabled`; `sequences:reply_intake`; optional `followup:manual_channel_enabled` | none | Emails sent; one reviewer call per template per sweep when the reviewer is on (25 cents a day) |
 | **Reports** | Operator chat | none | none | none | `ops:daily_scorecard`, `ops:funnel_digest`, `ops:cost_digest` | none | None: no model calls, no spend |
+| **Lifecycle** (product events and billing) | Operator chat | Your product (the host application), and a billing provider adapter if you want billing events | `PRODUCT_WEBHOOK_SECRET`; `PRODUCT_READ_SECRET` for the pull; the billing adapter's own secrets | `PRODUCT_APP_URL`; in `src/index.ts`, `createLifecycle` with your events queue names and, when you have one, `billing` | `lifecycle:enabled`; optional `lifecycle:reconcile_enabled`, `billing:enabled`; `outreach:ref_tokens_enabled` for attribution tokens | Your host posts to `/api/webhooks/product`; your billing provider to `/api/webhooks/billing` | Event sweeps every 5 minutes, hourly lifecycle checks, a nightly pull of at most 1,800 rows; no model calls |
 | **Meetings** (calendar sync) | Operator chat; inbox and delivery recommended | Google Cloud and the operator's Google Calendar | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (shared with the inbox), `GOOGLE_CALENDAR_REFRESH_TOKEN` | `adapters` `calendar-google` | `convert:calendar_enabled`; optional `convert:post_demo_enabled`, `convert:handoff_enabled` | none | `calendar_sync` every 15 minutes; no model calls, no spend |
 
 The cents figures are each job's default daily spend cap in this toolkit, always enforced; they are not vendor prices.
@@ -117,7 +118,7 @@ Remove `enabled: false` from each adapter as you reach its stage, set its secret
 
 - **Cloudflare on the Workers Paid plan.** The Free plan's CPU, subrequest and KV write limits are far below what the scheduled jobs and the send path need. Upgrade the account before you run `gtm setup`. The [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [pricing](https://developers.cloudflare.com/workers/platform/pricing/) pages have the current numbers.
 - **Node 24 or later on macOS or Linux** (on Windows, use WSL), and git.
-- **A checkout of this repository.** The packages are not on npm yet, so `gtm init --local` installs them from a checkout. Pin the checkout to a release or commit you have reviewed (`git checkout <tag-or-commit>`), because your deployment links to it.
+- **The packages, from npm or from a checkout.** From a published release, `npx @gtm-agents/cli@<version> init <dir>` creates a deployment that installs every package from npm at exactly that version. For code that is not released yet, use a checkout of this repository and `gtm init --local <checkout>`; pin the checkout to a release or commit you have reviewed (`git checkout <tag-or-commit>`), because your deployment links to it. [RELEASING.md](RELEASING.md) explains how releases are published.
 - **A domain you control.** Cold mail goes out from an isolated sending subdomain (for example `outreach.acme.example`), replies come back to a mailbox on your domain, and the Worker needs a stable public https origin for unsubscribe links and webhooks.
 - **Accounts for the providers you will enable** ([section 4](#4-provider-setup)). You can deploy with only Cloudflare, Telegram and Anthropic, and add the rest later.
 - **A password manager** for the secrets you generate. Cloudflare never shows a secret again once it is set.
@@ -296,8 +297,8 @@ Before the first deploy, Wrangler offers to create the Worker so it can hold the
 |---|---|---|---|---|
 | `GATEWAY_TOKEN` | Core: bearer token for every `/api/*` route except webhooks | Yes | Generate: `openssl rand -hex 32` | `/api/*` answers 503 |
 | `UNSUBSCRIBE_SIGNING_KEY` | Core: signs one-click unsubscribe links | Yes | Generate, at least 32 characters: `openssl rand -hex 32` | Nothing is sent (`[SEND BLOCKED:not_configured]`) and `/u/` answers 503. Rotating it invalidates links already sent |
-| `PRODUCT_WEBHOOK_SECRET` | Core: verifies product events from your host application ([EVENT-CONTRACT.md](EVENT-CONTRACT.md)) | No | Generate; share with your host application | Not read by this version; reserved for the product event bridge |
-| `PRODUCT_READ_SECRET` | Core: signs reconciliation reads to your host application | No | Generate; share with your host application | Not read by this version; reserved for the product event bridge |
+| `PRODUCT_WEBHOOK_SECRET` | Core: verifies product events from your host application ([EVENT-CONTRACT.md](EVENT-CONTRACT.md)) | For lifecycle | Generate; share with your host application | `/api/webhooks/product` answers 503 |
+| `PRODUCT_READ_SECRET` | Core: signs reconciliation reads to your host application | For the nightly pull | Generate; share with your host application | The pull refuses to run; pushes still work |
 | `TELEGRAM_BOT_TOKEN` | `operator-telegram` | Yes, when enabled | @BotFather | Replies and pages fail; updates are still verified |
 | `TELEGRAM_WEBHOOK_SECRET` | `operator-telegram` | Yes, when enabled | Generate: letters, digits, `_` and `-`, up to 256 characters | `/api/webhooks/operator` answers 503 |
 | `ANTHROPIC_API_KEY` | `llm-gateway` | Yes, when enabled | Anthropic Console | Model calls fail with an auth error; chat commands still work |
@@ -321,7 +322,7 @@ These are vars, not secrets, set in `wrangler.jsonc`:
 |---|---|
 | `AGENT_BASE_URL` | The environment's public https origin, used in unsubscribe links. `gtm setup --base-url` fills it; `gtm deploy` refuses to run while it is still a placeholder |
 | `ENVIRONMENT` | `production` or `staging`, set by the template |
-| `PRODUCT_APP_URL` | Optional: your product's app URL. Links to its host pass the quality gate's link check |
+| `PRODUCT_APP_URL` | Optional: your product's app URL (https). Links to its host pass the quality gate's link check, and the nightly pull reads from it |
 
 ## 6. Configuration reference
 
@@ -384,9 +385,11 @@ The brain is a set of short Markdown files, one per component (`personas.md`, `i
 1. **Copy the example.** [examples/brains/acme](../examples/brains/acme/) is a complete brain for the fictional Acme, with a three-step template sequence:
 
    ```bash
-   # from your deployment directory, with the checkout next to it
-   for f in ../gtm-agents/examples/brains/acme/*.md; do [ "$(basename "$f")" = README.md ] || cp "$f" brain/; done
-   cp ../gtm-agents/examples/brains/acme/templates/*.md templates/
+   # from your deployment directory; TOOLKIT is a checkout of the repository, or its source
+   # archive for the release you installed, unpacked
+   TOOLKIT=../gtm-agents
+   for f in "$TOOLKIT"/examples/brains/acme/*.md; do [ "$(basename "$f")" = README.md ] || cp "$f" brain/; done
+   cp "$TOOLKIT"/examples/brains/acme/templates/*.md templates/
    ```
 
    This keeps the deployment's own `brain/README.md` and `templates/README.md` (the validator ignores README files) and leaves Acme's lock behind: you will write your own.
@@ -411,11 +414,13 @@ Keep `brain/` and `templates/` in your deployment's git repository: the lock rec
 The whole path for staging, in order. Each step is explained below.
 
 ```bash
-# A pinned checkout of the toolkit
+# 1. Create the deployment from a published release (every package pinned to <version>)
+npx @gtm-agents/cli@<version> init acme-agent
+cd acme-agent && npm install
+
+#    or from a pinned checkout of the toolkit, linked with --local
 git clone <repository-url> gtm-agents
 cd gtm-agents && git checkout <tag-or-commit> && npm install
-
-# 1. Create the deployment
 npx gtm init ../acme-agent --local .
 cd ../acme-agent && npm install
 
@@ -447,7 +452,7 @@ Then the same again without `--env staging` for production.
 
 ### Step 1: create the deployment
 
-`gtm init <dir> --local <checkout>` copies the worker template into a new, empty directory: `wrangler.jsonc` with `${...}` placeholders for every resource, `src/index.ts`, `gtm.config.ts`, `.dev.vars.example`, `brain/` and `templates/` folders holding only a README each, `public/admin/` (the dashboard), `package.json`, `tsconfig.json` and `.gitignore`. The Worker is named after the directory (`acme-agent`; pass `--name` for another, lowercase letters, digits and hyphens, at most 48 characters), and staging gets `<name>-staging`. Put the new directory under git.
+`gtm init <dir>` copies the worker template into a new, empty directory: `wrangler.jsonc` with `${...}` placeholders for every resource, `src/index.ts`, `gtm.config.ts`, `.dev.vars.example`, `brain/` and `templates/` folders holding only a README each, `public/admin/` (the dashboard), `package.json`, `tsconfig.json` and `.gitignore`. By default the template comes from the CLI package and `package.json` depends on the packages at exactly the CLI's version; with `--local <checkout>`, both come from the checkout (the packages through `file:` links). The Worker is named after the directory (`acme-agent`; pass `--name` for another, lowercase letters, digits and hyphens, at most 48 characters), and staging gets `<name>-staging`. Put the new directory under git.
 
 Use `npx gtm deploy`, not the generated `npm run deploy`: the npm script runs a bare `wrangler deploy`, which skips the migrations.
 
@@ -619,6 +624,21 @@ Reports need only the operator chat, so you can turn them on as early as stage 1
 - **Messages:** a booked meeting's notice and prep brief; reminders at 24 hours and 1 hour; a held or no-show question after it. `/meetings` lists what the system sees.
 - **Before moving on:** book a test meeting with a synthetic contact's address you control, accept it from that address, and check that the contact's sequences stop and the brief arrives. Nothing is ever sent automatically: recaps, rebooks and post-demo steps are drafts.
 
+### Stage 10: lifecycle
+
+- **Turn on:** set `PRODUCT_WEBHOOK_SECRET` (and `PRODUCT_READ_SECRET` and `PRODUCT_APP_URL` for the pull), have your host application send events with the SDK ([LIFECYCLE.md](LIFECYCLE.md), `@gtm-agents/sdk`), then `npx gtm flags set lifecycle:enabled true --env staging`. Later `lifecycle:reconcile_enabled`, and `billing:enabled` once a billing adapter is wired.
+- **Run rows:** `event_sweep` every 5 minutes, `lifecycle_checks` hourly, `mrr_snapshot` and `event_retention` nightly, `lifecycle_reconcile` nightly when on.
+- **Check:** send a test `user.signed_up` for a synthetic contact from your host's staging; the push answers 200, the contact moves to signed up, its sequences stop and its deal steps to trial. The scorecard's sign-up line starts counting.
+
+### Stage 11: earned autonomy
+
+Nothing here is required: at the default level a person approves every send. When the evidence supports it:
+
+- **Turn on the review:** `npx gtm flags set autonomy_review:enabled true --env staging`. Each Monday it proposes level changes it can justify; `autonomy-status` shows every class and its evidence. Demotion needs no flag and always runs.
+- **Raise a class** only from the operator chat: `autonomy-set <class> 2`, then the `autonomy-confirm-...` command it gives you within 30 minutes. For automatic replies also set `inbound:auto_send_tier` and keep `quality:model_review_enabled` on, with a `judge` model and price in `gtm.config.ts`.
+- **Run rows:** `autonomy_review` Mondays at 06:00 when on, `autonomy_watch` at 15 past every hour always.
+- **Check:** after a hard bounce, complaint or unsubscribe on an automatic reply, that class is back at 1 within the hour and you were told. The cold batch demotes on a per-contact complaint at once, and on bounces or unsubscribes only when the hourly rate check (14 days, 50 or more sends, bounces at 2% or more, or unsubscribes at 1% or more) trips, so a single cold bounce does not demote it. [AUTONOMY.md](AUTONOMY.md) has the rules.
+
 ### The warm-up ramp
 
 A new sending domain earns its reputation gradually, so daily cold volume follows fixed levels, set by `outreach:ramp_level`:
@@ -675,11 +695,13 @@ Flag changes take up to a minute to reach every location.
 
 ### Upgrading to a new version of the toolkit
 
-Your deployment links to your checkout, so a pull changes what the next deploy ships, to both environments. Upgrade deliberately:
+Upgrade deliberately; nothing changes until you move a version.
 
-1. **Read what changed.** In the checkout, `git fetch`, then read the commits and the changed docs between your pinned version and the new one (`git log --oneline <old>..<new>`, `git diff <old>..<new> -- docs/`). [ROADMAP.md](ROADMAP.md) says what each milestone adds.
-2. **Move the checkout:** `git checkout <new-tag-or-commit> && npm install`, then `npm install` in the deployment.
-3. **Compare the template with your copies.** `gtm init` copied `src/index.ts`, `wrangler.jsonc` and `gtm.config.ts` once; a new version may wire new jobs, add a binding or add a config field. Diff `apps/worker/` in the checkout against your files and carry the changes over.
+1. **Read what changed** between your version and the new one: the release notes or commits, and the changed docs (in a checkout, `git log --oneline <old>..<new>` and `git diff <old>..<new> -- docs/`). [ROADMAP.md](ROADMAP.md) says what each milestone adds.
+2. **Move the version.**
+   - From npm: set every `@gtm-agents/*` dependency in your `package.json` to the new version (they move together), then `npm install`.
+   - From a checkout linked with `--local`: in the checkout, `git checkout <new-tag-or-commit> && npm install`, then `npm install` in the deployment. Your deployment links to the checkout, so a pull there changes what the next deploy ships.
+3. **Compare the template with your copies.** `gtm init` copied `src/index.ts`, `wrangler.jsonc` and `gtm.config.ts` once; a new version may wire new jobs, add a binding or add a config field. Generate a fresh copy with the new version (`npx @gtm-agents/cli@<new> init /tmp/gtm-fresh`, or `apps/worker/` in a checkout), diff it against your files and carry the changes over.
 4. **Staging first:** `npx gtm doctor --env staging`, `npx gtm migrate --env staging`, `npx gtm deploy --env staging`, `npx gtm doctor --remote --env staging`, and watch it for a day. New capabilities arrive behind flags that default to off.
 5. **Then production:** `npx gtm migrate`, `npx gtm deploy`, `npx gtm doctor --remote`.
 
@@ -889,6 +911,13 @@ Every job the template registers, its schedule (UTC), the flag that gates it and
 | `calendar_sync` | Every 15 minutes | `convert:calendar_enabled` | Yes | 2 min, 500 events | Nothing |
 | `meeting_followups` | 5, 20, 35 and 50 past each hour | `convert:calendar_enabled` | | 1 min, 200 meetings | Nothing |
 | `deal_handoffs` | 10 past each hour | `convert:handoff_enabled` | | 30 s, 20 deals | Nothing |
+| `event_sweep` | Every 5 minutes | none (it retries deletions whatever the flags; each source's own flag holds everything else) | | 2 min, 100 rows | Nothing |
+| `lifecycle_checks` | 20 past each hour | `lifecycle:enabled` | | 2 min, 400 rows | Nothing |
+| `lifecycle_reconcile` | 03:15 daily | `lifecycle:reconcile_enabled` | | 10 min, 1,800 rows | Nothing |
+| `mrr_snapshot` | 23:55 daily | `lifecycle:enabled` | | 30 s, 1 row | Nothing |
+| `event_retention` | 03:50 daily | `lifecycle:enabled` | | 2 min, 500 rows | Nothing |
+| `autonomy_review` | 06:00, Mondays | `autonomy_review:enabled` | | Proposals only | Nothing |
+| `autonomy_watch` | 15 past each hour | none (demotion always runs) | | Incidents, rate checks, notices | Nothing |
 | `run_retention` | 03:40 daily | `ops:retention_enabled` | | 2 min, 20,000 rows | Nothing |
 | `cron_health` | 10:30 and 15:30 daily (`cronHealth.schedule`) | none | | 2 min | Nothing |
 

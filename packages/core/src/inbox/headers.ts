@@ -23,6 +23,9 @@ export const INBOUND_HEADER_NAMES = [
   "x-auto-response-suppress",
   "x-failed-recipients",
   "content-type",
+  // What the receiving mailbox found when it checked the sender (SPF, DKIM, DMARC). Only the first
+  // occurrence is kept: the one the receiving server prepended. Automatic replies read it.
+  "authentication-results",
 ] as const;
 
 export type InboundHeaderName = (typeof INBOUND_HEADER_NAMES)[number];
@@ -50,9 +53,21 @@ export function pickInboundHeaders(entries: Iterable<readonly [string, string]>)
     if (typeof rawName !== "string" || typeof rawValue !== "string") continue;
     const name = rawName.trim().toLowerCase();
     if (!WANTED.has(name) || Object.hasOwn(out, name)) continue;
+    if (name === "authentication-results") {
+      // Read as proof of who sent the message, so it is kept only whole and only as plain ASCII:
+      // anything else (a Unicode space or full-width punctuation that cleaning or normalizing could
+      // turn into a delimiter, or a value too long to keep whole) drops it, and the sender counts
+      // as unauthenticated. The first occurrence is still the one that decides.
+      const unfolded = rawValue.replace(/\r?\n(?=[ \t])/g, "");
+      const whole = unfolded.replace(/[ \t]+/g, " ").trim();
+      out[name] = /^[\x20-\x7e]+$/.test(whole) && whole.length < MAX_HEADER_CHARS ? whole : "";
+      continue;
+    }
     const value = cleanHeaderValue(rawValue);
     if (value) out[name] = value;
   }
+  // An Authentication-Results that was dropped above still claims its slot, so a later one never takes it.
+  if (out["authentication-results"] === "") delete out["authentication-results"];
   return out;
 }
 

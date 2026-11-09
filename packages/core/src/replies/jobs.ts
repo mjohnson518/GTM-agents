@@ -132,6 +132,10 @@ export function createReplyJobs<E extends ReplyEnv>(deps: ReplyDeps<E>): Registe
         log: ctx.log,
         maxRows: Math.min(options.triageMaxRows, ctx.ceilings.maxRows ?? options.triageMaxRows),
         maxSpendCents: options.maxSpendCents,
+        // Automatic replies (inbound:auto_send_tier and an earned level), docs/AUTONOMY.md.
+        ...(ctx.env.KV ? { store: ctx.env.KV } : {}),
+        ...(ctx.env.UNSUBSCRIBE_SIGNING_KEY ? { unsubscribeSigningKey: ctx.env.UNSUBSCRIBE_SIGNING_KEY } : {}),
+        ...(ctx.env.AGENT_BASE_URL ? { baseUrl: ctx.env.AGENT_BASE_URL } : {}),
       });
       return {
         summary: `rerouted ${result.rerouted}, triaged ${result.triaged} (${result.triageFailed} left for retry), drafted ${result.drafted}, blocked ${result.blocked}, draft failures ${result.draftFailed}${result.stopped ? `; stopped: ${result.stopped}` : ""}`,

@@ -54,25 +54,40 @@ export interface CalendarProvider {
   cancelEvent(id: string): Promise<void>;
 }
 
+/** How often a price recurs. An amount with no interval is read as monthly. */
+export type BillingInterval = "day" | "week" | "month" | "year";
+
+/**
+ * A billing webhook, as an adapter maps it. Amounts are integers in the currency's minor unit
+ * (cents). `email` is the customer's address when the vendor's payload carries it: core resolves an
+ * existing contact by it and never creates one. `at` is ISO 8601 UTC.
+ */
 export type BillingEvent =
-  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; at: string; providerEventId: string }
+  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string }
   | {
       type: "subscription_created" | "subscription_updated" | "subscription_canceled";
       customerId: string;
       subscriptionId: string;
+      /** The vendor's status: active, trialing, past_due, unpaid, incomplete, canceled, or another the core keeps unchanged. */
       status: string;
+      email?: string;
       plan?: string;
       amount?: number;
       currency?: string;
+      interval?: BillingInterval;
       at: string;
       providerEventId: string;
     }
-  | { type: "payment_failed"; customerId: string; subscriptionId?: string; amount?: number; currency?: string; at: string; providerEventId: string }
+  | { type: "payment_failed"; customerId: string; subscriptionId?: string; email?: string; amount?: number; currency?: string; at: string; providerEventId: string }
   | { type: "ignored"; providerEventId: string; reason: string };
 
 export interface BillingProvider {
   readonly name: string;
-  /** Verifies the signature with a 5-minute tolerance. */
+  /**
+   * Verifies the signature with a 5-minute tolerance, in constant time, before reading anything
+   * else, then maps the payload. Throws an AdapterError: "auth" for a missing, bad or stale
+   * signature, "invalid" for a payload it cannot map, "unavailable" when its webhook secret is unset.
+   */
   parseWebhook(request: Request): Promise<BillingEvent>;
   getCustomerByEmail(email: string): Promise<{ customerId: string; plan?: string; status?: string } | null>;
   listSubscriptions(customerId: string): Promise<Array<{ subscriptionId: string; plan: string; status: string; amount?: number; currency?: string; renewsAt?: string }>>;

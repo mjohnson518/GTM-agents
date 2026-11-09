@@ -14,7 +14,9 @@
 //   4. approveDraft checks the shown digest once more, and the update is a compare-and-set on the
 //      status and the content, so an edit that lands in between is not approved.
 // Approving marks the draft approved. It never sends anything: sending is a separate path with its
-// own gates, and it verifies the approval digest again before relying on it.
+// own gates, and it verifies the approval digest again before relying on it. Each approve or reject
+// of a meeting draft is autonomy evidence for its class (autonomy/evidence.ts, recordDraftDecision).
+import { recordDraftDecision } from "../autonomy/evidence.ts";
 import { approveDraft, draftDigest, markShown, wasShown, type DraftContent, type DraftStatus, type ShownStore } from "../security/approval-digest.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import type { OperatorChannel, OperatorUpdate } from "../ports/operator.ts";
@@ -124,6 +126,7 @@ export async function handleApprovalCallback(deps: ApprovalDeps, update: Callbac
       .bind(row.id, (deps.now?.() ?? new Date()).toISOString())
       .run();
     if ((result.meta.changes ?? 0) === 0) return refuse("That draft changed state and was not rejected.", row.id);
+    await recordDraftDecision(deps.db, row.id, "rejected", deps.now?.() ?? new Date());
     await answer(deps, update, "Rejected.");
     await settle(deps, update, `Rejected draft ${row.id} for ${row.recipient_email ?? "(none)"}.`);
     return { outcome: "rejected", draftId: row.id };
@@ -150,6 +153,7 @@ export async function handleApprovalCallback(deps: ApprovalDeps, update: Callbac
     .bind(row.id, current, at, `operator:${update.userId}`, row.status, row.recipient_email, row.subject, row.body)
     .run();
   if ((result.meta.changes ?? 0) === 0) return refuse("That draft changed while it was being approved, so the approval was refused.", row.id);
+  await recordDraftDecision(deps.db, row.id, "approved", deps.now?.() ?? new Date());
   await answer(deps, update, "Approved. Nothing was sent.");
   await settle(deps, update, `Approved draft ${row.id} for ${row.recipient_email ?? "(none)"}. Nothing was sent.`);
   return { outcome: "approved", draftId: row.id };

@@ -70,7 +70,7 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "inbox:cursor:<provider>", kind: "json", default: null, description: "State: a mailbox's poll cursor, {cursor, at}. A rebuildable cache: unset or unreadable, the poll lists the last day instead." },
   { key: "inbox:push_last", kind: "string", default: null, description: "State: when the last push-triggered poll started, so a burst of pushes runs one poll." },
   { key: "signal_response:auto_send", kind: "boolean", default: "false", description: "The signal fast lane." },
-  { key: "inbound:auto_send_tier", kind: "boolean", default: "false", description: "The reply auto-send tier." },
+  { key: "inbound:auto_send_tier", kind: "boolean", default: "false", description: "Automatic replies (docs/AUTONOMY.md). A reply goes out without a person only with this on AND its class (reply_send or reply_demo_link) at level 2 or above AND replies:send_enabled and quality:model_review_enabled on, and then only when every auto-send rule passes. Unreadable counts as off." },
   { key: "replies:triage_enabled", kind: "boolean", default: "false", description: "Reply triage (docs/REPLIES.md): the triage model reads new human mail, and routing applies each intent's side effects (opt-out, deal stage, decline hold, referrals, objections, warmth, ledger credit, sequence stop). Off, or unreadable, nothing is triaged." },
   { key: "replies:drafting_enabled", kind: "boolean", default: "false", description: "Draft replies with the writer model after triage and ask the operator to approve each one. Nothing is sent by drafting." },
   { key: "replies:send_enabled", kind: "boolean", default: "false", description: "Send approved reply drafts from the warm mailbox, after freshness checks and every send gate (the replies_send job and /reply_send). Delivery also needs delivery:enabled." },
@@ -86,6 +86,12 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "convert:handoff_enabled", kind: "boolean", default: "false", description: "Write a static handoff brief for the operator when a deal reaches proposal or negotiation (hourly, no model call)." },
   { key: "convert:booking_redirect_enabled", kind: "boolean", default: "false", description: "Serve booking links through the deployment, so the booking URL can change without editing templates. Records nothing per contact; bookings are detected by calendar sync." },
   { key: "convert:pov_enabled", kind: "boolean", default: "false", description: "Proof-of-value requests." },
+
+  // Lifecycle, the product bridge and billing (docs/LIFECYCLE.md).
+  { key: "lifecycle:enabled", kind: "boolean", default: "false", description: "The product bridge and the customer lifecycle: POST /api/webhooks/product records signed events, the event spine routes them, sign-ups and payments move contacts and deals, and the lifecycle jobs run (stalled and dormant checks, the daily MRR snapshot, payload retention). Off, or unreadable, the product webhook answers 503 and records nothing, and recorded events wait unrouted, except user.deleted: an erasure is always recorded and carried out in full, whatever this flag says. No model calls." },
+  { key: "lifecycle:reconcile_enabled", kind: "boolean", default: "false", description: "The nightly signed pull from the product (deletions, users, feedback), 3 pages of 200 per resource a run with a weekly full re-read. Needs PRODUCT_APP_URL (https) and PRODUCT_READ_SECRET; with lifecycle:enabled off it reads deletions only, which are always carried out." },
+  { key: "lifecycle:pull:<resource>", kind: "json", default: null, description: "State: the pull's place for users, feedback or deletions, {since, cursor, high, done, fullAt}. A rebuildable cache: unset or unreadable, the next pull is a full read." },
+  { key: "billing:enabled", kind: "boolean", default: "false", description: "POST /api/webhooks/billing through the BillingProvider adapter: checkouts, subscriptions, cancellations and failed payments move the lifecycle, the deal mirror and MRR, for existing contacts only. Needs lifecycle:enabled. Off, or unreadable, the route verifies the signature, then answers 503 and records nothing." },
 
   // Operations.
   { key: "ops:daily_scorecard", kind: "boolean", default: "false", description: "The daily scorecard (docs/MEASUREMENT.md): one operator message each weekday at 12:00 UTC, no model call. It carries spend, so the daily cost digest stands down while it is on." },
@@ -108,7 +114,8 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "chat:turn_max_cents", kind: "number", default: "50", description: "Spend ceiling for one chat turn, including delegated runs." },
 
   // Autonomy and the classifier tier.
-  { key: "autonomy:<class>", kind: "number", default: "1", description: "Autonomy level per action class (0 to 3). Permanently human-only classes are capped at 1." },
+  { key: "autonomy:<class>", kind: "number", default: "1", description: "Autonomy level per action class (0 to 3). Permanently human-only classes are capped at 1. A class acts at the lower of this flag and its latest recorded change (autonomy-set from the operator chat, or a demotion), so raise a level with autonomy-set; a value written here cannot lift a class above its latest recorded change, so it cannot undo a demotion. Unreadable or malformed reads as 1." },
+  { key: "autonomy_review:enabled", kind: "boolean", default: "false", description: "The weekly autonomy review (autonomy_review, Mondays 06:00 UTC): it proposes promotions from evidence, each applied only by the operator's autonomy-confirm command. No model call. Demotion has no flag: it is always on." },
   { key: "classifier_tier:<call_site>", kind: "string", default: "off", description: "The cheap classifier tier per call site: off, shadow or on." },
 ];
 

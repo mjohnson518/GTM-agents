@@ -57,14 +57,14 @@ import { inboundPreview, putInboundBody, readInboundBody } from "./body.ts";
 import { parseBounce, type BounceInfo } from "./bounce.ts";
 import { classifyStructural, isDeliveryReport, ownText, type StructuralClassification } from "./classify.ts";
 import { outOfOfficeHoldUntil, parseReturnDate } from "./dates.ts";
-import { cleanHeaderValue, messageIdDomain, parseMessageIds } from "./headers.ts";
+import { MAX_HEADER_CHARS, cleanHeaderValue, messageIdDomain, parseMessageIds } from "./headers.ts";
 
 // D1 binds at most 100 parameters per statement.
 const CHUNK = 90;
 /** Rows the pending pass leaves alone while intake may still be working on them. */
 export const PENDING_GRACE_MS = 2 * 60_000;
-/** The headers kept on the row, for threading replies and for the pending pass. */
-const STORED_HEADERS = ["message-id", "in-reply-to", "references", "reply-to", "auto-submitted", "precedence", "list-id", "x-autoreply", "x-autorespond", "x-failed-recipients"] as const;
+/** The headers kept on the row, for threading replies, for the pending pass, and for checking the sender before an automatic reply. */
+const STORED_HEADERS = ["message-id", "in-reply-to", "references", "reply-to", "auto-submitted", "precedence", "list-id", "x-autoreply", "x-autorespond", "x-failed-recipients", "authentication-results"] as const;
 const MAX_STORED_HEADER_CHARS = 1000;
 
 export interface InboxIntakeDeps {
@@ -180,7 +180,14 @@ function storedHeaders(message: InboundMessage): string | null {
   const out: Record<string, string> = {};
   for (const name of STORED_HEADERS) {
     const value = headers[name];
-    if (typeof value === "string" && value.length > 0) out[name] = cleanHeaderValue(value).slice(0, MAX_STORED_HEADER_CHARS);
+    if (typeof value !== "string" || value.length === 0) continue;
+    // Authentication-Results is kept only whole and plain ASCII, never cut: a cut one could drop
+    // the result that refuses the sender.
+    if (name === "authentication-results") {
+      if (value.length < MAX_HEADER_CHARS && /^[\x20-\x7e]+$/.test(value)) out[name] = value;
+      continue;
+    }
+    out[name] = cleanHeaderValue(value).slice(0, MAX_STORED_HEADER_CHARS);
   }
   return Object.keys(out).length > 0 ? JSON.stringify(out) : null;
 }

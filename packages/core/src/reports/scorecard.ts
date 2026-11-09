@@ -13,9 +13,11 @@
 // and positives with how deep the sequence was; the reply SLA; spend per job; failed jobs; the
 // convert stage; cohorts; measurement health; everything waiting on the operator; the flags that are
 // on; then what needs attention. Meetings (countMeetings, the one definition in metrics/meetings.ts)
-// are shown once calendar sync is on (convert:calendar_enabled); until then, and for sign-ups,
-// activations, paid customers and quotas, which belong to later milestones, the lines say "not
-// measured yet", never a zero.
+// are shown once calendar sync is on (convert:calendar_enabled); until then the lines say "not
+// measured yet", never a zero. Sign-ups, activations and new paying customers (countProductOutcomes,
+// the one definition in metrics/product.ts) are shown once the product bridge has delivered an event
+// (measurement health's productEventsSeen), with how many were credited to a first touch; until then,
+// and for quotas, which belong to a later milestone, they say "not measured yet" too.
 //
 // Each section loads on its own: a failed read shows that section as "could not be read" and is
 // listed under what needs attention, and the rest of the message still goes. Measurement health
@@ -26,8 +28,10 @@ import { isFlagOn } from "../jobs/loop.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import {
   countMeetings,
+  countProductOutcomes,
   perHundred,
   type MeetingCounts,
+  type ProductOutcomeCounts,
   COMPLAINT_ALERT_RATE,
   HARD_BOUNCE_ALERT_RATE,
   MIN_DELIVERED_COVERAGE,
@@ -106,6 +110,8 @@ export interface ScorecardData {
   flagsOn: string[] | null;
   /** Meetings, once calendar sync is on: booked week to date, and the 30-day convert counts. */
   meetings: { calendarOn: boolean; weekToDate: MeetingCounts; month: MeetingCounts; monthFirstTouches: number } | null;
+  /** Product outcomes week to date and over 30 days; `measured` once the product bridge has delivered an event. */
+  product?: { measured: boolean; weekToDate: ProductOutcomeCounts; month: ProductOutcomeCounts } | null;
 }
 
 async function section<T>(load: () => Promise<T>): Promise<T | null> {
@@ -129,7 +135,7 @@ export async function flagsOn(flags: FlagReader): Promise<string[]> {
  */
 export async function loadScorecard(db: D1Database, flags: FlagReader, now: Date, options: { owedWindowDays?: number } = {}): Promise<ScorecardData> {
   const w = scorecardWindows(now);
-  const [funnel, sends, delivery, replies, sla, spend, failed, cohorts, health, queue, on, meetings] = await Promise.all([
+  const [funnel, sends, delivery, replies, sla, spend, failed, cohorts, health, queue, on, meetings, product] = await Promise.all([
     section(async () => ({ sends: await countSends(db, w.weekToDate), replies: await countReplies(db, w.weekToDate) })),
     section(async () => ({ day: await countSends(db, w.day), week: await countSends(db, w.week) })),
     section(() => deliveryHealth(db, w.week)),
@@ -147,8 +153,25 @@ export async function loadScorecard(db: D1Database, flags: FlagReader, now: Date
       month: await countMeetings(db, w.month),
       monthFirstTouches: (await countSends(db, w.month)).firstTouches,
     })),
+    section(async () => ({ weekToDate: await countProductOutcomes(db, w.weekToDate), month: await countProductOutcomes(db, w.month) })),
   ]);
-  return { windows: w, funnel, sends, delivery, replies, sla, spend, failed, cohorts, health: health ?? unreadableHealth(), queue, flagsOn: on, meetings };
+  const checked = health ?? unreadableHealth();
+  return {
+    windows: w,
+    funnel,
+    sends,
+    delivery,
+    replies,
+    sla,
+    spend,
+    failed,
+    cohorts,
+    health: checked,
+    queue,
+    flagsOn: on,
+    meetings,
+    product: product ? { measured: checked.productEventsSeen === true, ...product } : null,
+  };
 }
 
 /** The measurement line, shared with the other reports. Pure. */
@@ -164,12 +187,25 @@ export function renderScorecard(d: ScorecardData): string {
   const unreadable = (name: string) => attention.push(`the ${name} section ${UNREADABLE}`);
   const lines: string[] = [`GTM scorecard for ${windowLabel(d.windows.day)} (UTC)`, ""];
 
+  const product = d.product?.measured ? d.product : null;
+  const outcomes = (p: ProductOutcomeCounts) =>
+    `${plural(p.signups, "sign-up", "sign-ups")}, ${plural(p.activations, "activation", "activations")}, ${plural(p.newPaying, "new paying customer", "new paying customers")}`;
+  if (d.product === null) unreadable("product outcomes");
   if (d.funnel) {
-    lines.push(
-      d.meetings?.calendarOn
-        ? `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}. Sign-ups, activations, new paying customers and quotas: ${NOT_MEASURED}.`
-        : `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}. Sign-ups, activations, new paying customers, meetings and quotas: ${NOT_MEASURED}.`,
-    );
+    const head = `Week to date (from ${d.windows.weekToDate.from.slice(0, 10)}): ${plural(d.funnel.sends.firstTouches, "first touch", "first touches")}, ${plural(d.funnel.replies.positiveReplies, "positive reply", "positive replies")}`;
+    if (product) {
+      lines.push(
+        d.meetings?.calendarOn
+          ? `${head}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}, ${outcomes(product.weekToDate)}. Quotas: ${NOT_MEASURED}.`
+          : `${head}, ${outcomes(product.weekToDate)}. Meetings and quotas: ${NOT_MEASURED}.`,
+      );
+    } else {
+      lines.push(
+        d.meetings?.calendarOn
+          ? `${head}, ${plural(d.meetings.weekToDate.booked, "meeting booked", "meetings booked")}. Sign-ups, activations, new paying customers and quotas: ${NOT_MEASURED}.`
+          : `${head}. Sign-ups, activations, new paying customers, meetings and quotas: ${NOT_MEASURED}.`,
+      );
+    }
   } else {
     lines.push(`Week to date: ${UNREADABLE}`);
     unreadable("week-to-date");
@@ -244,14 +280,16 @@ export function renderScorecard(d: ScorecardData): string {
     unreadable("failed jobs");
   }
 
+  const monthOutcomes = (p: ProductOutcomeCounts) =>
+    `${plural(p.signups, "sign-up", "sign-ups")} (${p.fromOutreach.signups} from outreach), ${plural(p.activations, "activation", "activations")}, ${plural(p.newPaying, "new paying customer", "new paying customers")} (${p.fromOutreach.newPaying} from outreach)`;
   if (d.meetings?.calendarOn) {
     const m = d.meetings.month;
     const per100 = perHundred(m.held, d.meetings.monthFirstTouches);
     lines.push(
-      `Convert, 30 days: ${plural(m.booked, "meeting booked", "meetings booked")}, ${m.held} held, ${plural(m.noShows, "no-show", "no-shows")}, ${m.cancelled} cancelled; held per 100 first touches: ${per100 === null ? "n/a" : per100}. Sign-ups, activations and paid: ${NOT_MEASURED}`,
+      `Convert, 30 days: ${plural(m.booked, "meeting booked", "meetings booked")}, ${m.held} held, ${plural(m.noShows, "no-show", "no-shows")}, ${m.cancelled} cancelled; held per 100 first touches: ${per100 === null ? "n/a" : per100}. ${product ? `${monthOutcomes(product.month)}` : `Sign-ups, activations and paid: ${NOT_MEASURED}`}`,
     );
   } else {
-    lines.push(`Convert, 30 days: meetings booked and held, sign-ups, activations and paid: ${NOT_MEASURED}`);
+    lines.push(product ? `Convert, 30 days: ${monthOutcomes(product.month)}; meetings booked and held: ${NOT_MEASURED}` : `Convert, 30 days: meetings booked and held, sign-ups, activations and paid: ${NOT_MEASURED}`);
     if (d.meetings === null) unreadable("meetings");
   }
 

@@ -5,10 +5,12 @@
 //     asset link and no other link except the booking URL;
 //   - reply_question: a question triaged at 0.8 or above, answered with approved facts available;
 //   - reply_send: everything else.
-// Each decision a person makes on a draft writes one autonomy_events row for its class:
-// approved_unchanged (sent as drafted), approved_edited (sent after a change), or rejected. The
-// promotion ladder reads them. One row per draft, claimed in the effects ledger. Recording is
+// Each decision on a draft writes one autonomy_events row for its class, through the evidence
+// module (autonomy/evidence.ts): approved_unchanged (sent as drafted), approved_edited (sent after
+// a change), rejected, or auto_sent (approved and sent by the auto-send tier, docs/AUTONOMY.md).
+// The promotion review reads them. One row per draft, claimed in the effects ledger. Recording is
 // bookkeeping: it never throws.
+import { recordAutonomyEvidence } from "../autonomy/evidence.ts";
 import type { ActionClass } from "../autonomy/levels.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
 
@@ -19,7 +21,7 @@ export function replyActionClass(value: unknown): ReplyActionClass {
   return typeof value === "string" && (REPLY_ACTION_CLASSES as readonly string[]).includes(value) ? (value as ReplyActionClass) : "reply_send";
 }
 
-export type ReplyEvidence = "approved_unchanged" | "approved_edited" | "rejected";
+export type ReplyEvidence = "approved_unchanged" | "approved_edited" | "rejected" | "auto_sent";
 
 const EVIDENCE_EFFECT = "autonomy_evidence";
 const evidenceKey = (draftId: string) => `reply_evidence:${draftId}`;
@@ -34,16 +36,9 @@ export async function recordReplyEvidence(
   } catch {
     return false;
   }
-  try {
-    await db
-      .prepare("INSERT INTO autonomy_events (id, action_class, outcome, subject_id, detail, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
-      .bind(`ae_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, replyActionClass(input.actionClass), input.outcome, input.draftId, input.detail.slice(0, 200), input.now.toISOString())
-      .run();
-    return true;
-  } catch {
-    await releaseEffect(db, evidenceKey(input.draftId), EVIDENCE_EFFECT);
-    return false;
-  }
+  if (await recordAutonomyEvidence(db, { actionClass: replyActionClass(input.actionClass), outcome: input.outcome, subjectId: input.draftId, detail: input.detail.slice(0, 200), now: input.now })) return true;
+  await releaseEffect(db, evidenceKey(input.draftId), EVIDENCE_EFFECT);
+  return false;
 }
 
 /**
