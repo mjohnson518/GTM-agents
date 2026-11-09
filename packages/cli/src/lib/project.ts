@@ -1,6 +1,6 @@
 // GTM-agents: locate and load the pieces of a deployment the CLI works with.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { GtmConfig } from "@gtm-agents/core/config";
 
@@ -39,9 +39,9 @@ export interface BrainLocation {
  * templates/ folder when the directory is named brain.
  */
 export function locateBrain(cwd: string, dirArg: string | undefined, templatesArg: string | undefined): BrainLocation {
-  const brainDir = dirArg ? join(cwd, dirArg) : join(cwd, "brain");
+  const brainDir = dirArg ? resolve(cwd, dirArg) : join(cwd, "brain");
   const candidates = templatesArg
-    ? [join(cwd, templatesArg)]
+    ? [resolve(cwd, templatesArg)]
     : dirArg
       ? [join(brainDir, "templates"), ...(basename(brainDir) === "brain" ? [join(dirname(brainDir), "templates")] : [])]
       : [join(cwd, "templates")];

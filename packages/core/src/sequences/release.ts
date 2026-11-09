@@ -171,7 +171,17 @@ export async function releaseSequenceManifest(deps: SequenceReleaseDeps, command
       step: l.step,
       nextDelayDays: after ? after.delayDays : null,
       idempotencyKey: l.draft.idempotency_key,
-      draft: { id: l.draft.id, to: l.draft.recipient_email ?? "", toName: l.draft.recipient_name, subject: l.draft.subject ?? "", body: l.draft.body ?? "", templateId: l.draft.template_id, approvedDigest: l.digest },
+      draft: {
+        id: l.draft.id,
+        to: l.draft.recipient_email ?? "",
+        toName: l.draft.recipient_name,
+        subject: l.draft.subject ?? "",
+        body: l.draft.body ?? "",
+        templateId: l.draft.template_id,
+        approvedDigest: l.digest,
+        templateSha256: l.draft.template_sha256 ?? null,
+        cohort: l.draft.cohort ?? null,
+      },
       thread,
     });
   }

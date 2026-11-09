@@ -1,5 +1,5 @@
-// GTM-agents: the scheduled-handler loop. Jobs whose schedule matches the firing cron run one
-// after another; a failure in one job never stops the next. The runner is pluggable so the
+// GTM-agents: the scheduled-handler loop. Jobs whose schedule matches the minute run concurrently,
+// each under its own ceiling; a failure in one job never affects another. The runner is pluggable so the
 // fault-tolerant runner (run rows, operator paging, halt checks) can replace the default.
 import { HALT_KEY } from "../security/halt.ts";
 import type { JobContext, JobRegistry, RegisteredJob } from "./registry.ts";
@@ -55,6 +55,7 @@ export async function defaultRunner<E>(job: RegisteredJob<E>, ctx: JobContext<E>
     }
   }
   try {
+    if (ctx.notStarted) throw new Error(ctx.notStarted);
     if (ctx.signal.aborted) throw new Error(`job ${job.name} exceeded its ${job.ceilings.maxDurationMs} ms ceiling before it started`);
     const result = await withTimeout(job.run(ctx), ctx.signal, job.ceilings.maxDurationMs, job.name);
     return { job: job.name, status: "completed", durationMs: Date.now() - started, ...(result?.summary ? { summary: result.summary } : {}) };
@@ -124,9 +125,89 @@ export async function runOneJob<E>(
 }
 
 /**
- * Run every job registered for `cron`, sequentially. Always resolves; never throws. The loop
+ * Run `jobs` one after another through the same runner. Always resolves; never throws. The loop
  * enforces each job's ceiling itself, so a runner (or a flag read) that never settles cannot
  * block the jobs after it.
+ */
+export async function runJobsInOrder<E>(
+  jobs: readonly RegisteredJob<E>[],
+  makeContext: ContextFactory<E>,
+  runner: JobRunner<E> = defaultRunner,
+  track?: (settled: Promise<unknown>) => void,
+): Promise<JobOutcome[]> {
+  const outcomes: JobOutcome[] = [];
+  for (const job of jobs) outcomes.push(await runOneJob(job, makeContext, runner, track));
+  return outcomes;
+}
+
+/** How many due jobs run at once. Jobs mostly wait on D1, KV and providers; a small bound keeps one
+ * busy minute from opening more connections than an invocation allows (six at a time). */
+export const DUE_JOB_CONCURRENCY = 4;
+
+/** Longest ceiling first, registration order among equals, so the jobs that need the most time start first. */
+export function inRunOrder<E>(jobs: readonly RegisteredJob<E>[]): RegisteredJob<E>[] {
+  return jobs.map((job, i) => ({ job, i })).sort((a, b) => b.job.ceilings.maxDurationMs - a.job.ceilings.maxDurationMs || a.i - b.i).map(({ job }) => job);
+}
+
+export interface ConcurrentOptions {
+  /** Jobs running at once. Defaults to DUE_JOB_CONCURRENCY. */
+  concurrency?: number;
+  /**
+   * Epoch milliseconds by which every job must be able to finish. A job whose ceiling would end
+   * after it is not run: it goes through the runner with ctx.notStarted, which records it as failed.
+   */
+  deadline?: number;
+}
+
+/**
+ * Run `jobs` concurrently, at most `concurrency` at a time, each under its own ceiling and through
+ * the same runner. One job's failure never affects another. Outcomes come back in input order.
+ * Always resolves.
+ */
+export async function runJobsConcurrently<E>(
+  jobs: readonly RegisteredJob<E>[],
+  makeContext: ContextFactory<E>,
+  runner: JobRunner<E> = defaultRunner,
+  track?: (settled: Promise<unknown>) => void,
+  options: ConcurrentOptions = {},
+): Promise<JobOutcome[]> {
+  const outcomes: JobOutcome[] = new Array<JobOutcome>(jobs.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length) {
+      const index = next++;
+      const job = jobs[index] as RegisteredJob<E>;
+      const late = options.deadline !== undefined && Date.now() + job.ceilings.maxDurationMs > options.deadline;
+      const factory: ContextFactory<E> = late
+        ? (j, signal) => ({ ...makeContext(j, signal), notStarted: `job ${j.name} was not started: its ${j.ceilings.maxDurationMs} ms ceiling would run past this invocation's time limit` })
+        : makeContext;
+      outcomes[index] = await runOneJob(job, factory, runner, track);
+    }
+  };
+  const width = Math.max(1, Math.min(options.concurrency ?? DUE_JOB_CONCURRENCY, jobs.length));
+  await Promise.all(Array.from({ length: width }, worker));
+  return outcomes;
+}
+
+/**
+ * Run every job whose schedule fires at the minute of `at` (UTC), concurrently and longest ceiling
+ * first: what the Worker's per-minute trigger does. A minute with nothing due resolves to []
+ * without calling the runner or the context factory, so it touches no storage.
+ */
+export async function runDueJobs<E>(
+  registry: JobRegistry<E>,
+  at: Date,
+  makeContext: ContextFactory<E>,
+  runner: JobRunner<E> = defaultRunner,
+  track?: (settled: Promise<unknown>) => void,
+  options: ConcurrentOptions = {},
+): Promise<JobOutcome[]> {
+  return runJobsConcurrently(inRunOrder(registry.dueAt(at)), makeContext, runner, track, options);
+}
+
+/**
+ * Run every job registered with exactly the schedule `cron`, sequentially, whatever the time: for
+ * running one schedule on demand. The Worker's scheduled handler uses runDueJobs instead.
  */
 export async function runScheduledJobs<E>(
   registry: JobRegistry<E>,
@@ -135,7 +216,5 @@ export async function runScheduledJobs<E>(
   runner: JobRunner<E> = defaultRunner,
   track?: (settled: Promise<unknown>) => void,
 ): Promise<JobOutcome[]> {
-  const outcomes: JobOutcome[] = [];
-  for (const job of registry.forCron(cron)) outcomes.push(await runOneJob(job, makeContext, runner, track));
-  return outcomes;
+  return runJobsInOrder(registry.forCron(cron), makeContext, runner, track);
 }

@@ -225,7 +225,7 @@ GTM BRAIN (version 3f9a1c0b7d2e, operator-approved; task: replies)
 
 - `hash` is the SHA-256 of the sorted lines `<file> <sha256>\n`.
 - Only approved files are locked.
-- `gtm brain validate --write-lock` writes the lock, and only when validation passes. `gtm brain upload` validates, locks and uploads the files and the lock to the deployment's KV namespace (`brain:lock` and `brain:file:<component>`).
+- `gtm brain validate --write-lock` writes the lock, and only when validation passes. `gtm brain upload` validates, requires that lock, and uploads the files first and the lock last to the deployment's KV namespace (`brain:file:<component>`, then `brain:lock`; templates likewise under `template:file:<id>` and `templates:lock`), so a half-finished upload is never served.
 - Editing an approved file without re-locking it takes that component out of every prompt until the operator re-locks it. That is deliberate: what is served is always what was approved.
 
 The system may propose brain changes in its weekly report, built from numbers and enum names only. Nothing in the system writes to the brain.

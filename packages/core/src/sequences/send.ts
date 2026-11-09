@@ -42,7 +42,18 @@ export interface ReadyStep {
   /** Days until the step after this one, or null when this is the last step. */
   nextDelayDays: number | null;
   idempotencyKey: string;
-  draft: { id: string; to: string; toName: string | null; subject: string; body: string; templateId: string | null; approvedDigest: string };
+  draft: {
+    id: string;
+    to: string;
+    toName: string | null;
+    subject: string;
+    body: string;
+    templateId: string | null;
+    approvedDigest: string;
+    /** Measurement bookkeeping from the draft: the template file's SHA-256 and the send's cohort. */
+    templateSha256?: string | null;
+    cohort?: string | null;
+  };
   thread: Thread;
 }
 
@@ -94,6 +105,8 @@ export function toItem(step: ReadyStep): OutreachItem {
     inReplyTo: step.thread.inReplyTo,
     references: step.thread.references,
     approvedDigest: step.draft.approvedDigest,
+    ...(step.draft.templateSha256 ? { templateSha256: step.draft.templateSha256 } : {}),
+    ...(step.draft.cohort ? { cohort: step.draft.cohort } : {}),
   };
 }
 

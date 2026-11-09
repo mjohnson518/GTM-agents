@@ -129,6 +129,10 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `inbound_emails.triage` (JSON) and `drafts.action_class` (0018): the model triage result for a message, and the autonomy class a reply draft falls under (`reply_send`, `reply_question` or `reply_demo_link`).
 - `outreach_sends.message_id` and `approval_manifests.kind` (0019): the RFC 5322 Message-ID the provider gave a sent email, which follow-ups thread under, and whether a manifest releases a cold batch or sequence steps. Sequence steps use idempotency keys of the form `seq:<campaign>:<contact>:<step>`. A paused sequence stays active with `sequence_paused_at` set until it is resumed.
 
+### Measurement (0020)
+
+- `drafts.template_sha256` and `drafts.cohort`: the template version a draft was built from and its cohort (`signalled`, `segment_routed` or `generic`), carried to `outreach_sends` when it is sent, so matured samples compare only sends of the template's current copy. Indexes on `outreach_sends (replied_at)` and `(positive_reply_at)`, `execution_runs (started_at)` and `event_effects (effect, created_at)` serve the reports ([MEASUREMENT.md](MEASUREMENT.md)).
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

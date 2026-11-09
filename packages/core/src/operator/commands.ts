@@ -17,6 +17,10 @@
 // Reply commands (replies/commands.ts) start with "/" and never reach the model: /replies lists what
 // is owed, /reply_done and /reply_ignore settle a message, /reply_send sends an approved reply, and
 // /reply_draft shows a pending reply draft again. The chat consumer routes them to runReplyCommand.
+//
+// Report commands (reports/commands.ts) start with "/", only read, and never reach the model:
+// /scorecard shows the daily scorecard as of now, and /report conversion|funnel|cost|holdout shows
+// the other reports. The chat consumer routes them to runReportCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -34,6 +38,9 @@ export { parseSequenceCommand, runSequenceCommand, type SequenceCommand, type Se
 // Replies: list and settle owed replies, and send approved ones.
 export { REPLY_COMMAND_NAMES, REPLY_HELP_LINES, isReplyCommand, runReplyCommand, type ReplyCommandDeps } from "../replies/commands.ts";
 import { REPLY_HELP_LINES } from "../replies/commands.ts";
+// Reports: the scorecard and the other reports on demand, read-only.
+export { REPORT_COMMAND_NAMES, REPORT_HELP_LINES, isReportCommand, runReportCommand, type ReportCommandDeps } from "../reports/commands.ts";
+import { REPORT_HELP_LINES } from "../reports/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -58,6 +65,7 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     "sequence-resume-<contact id>  resume a contact's paused follow-up sequence",
     "channel-done-<id> [linkedin|x] / channel-skip-<id>  answer a manual touch before the last follow-up",
     ...REPLY_HELP_LINES,
+    ...REPORT_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",

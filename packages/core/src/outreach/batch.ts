@@ -30,6 +30,7 @@ import type { KVReader } from "../brain/load.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect } from "../events/effects.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
+import { cohortFor, signalledContacts, templateIsTargeted, type SendCohort } from "../metrics/cohort.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import { approvedClaimLines } from "../quality/claims.ts";
@@ -133,6 +134,8 @@ interface Composed {
   body: string;
   result: QualityResult;
   review: ReviewVerdict | null;
+  /** Measurement bookkeeping (metrics/cohort.ts); null when the signals could not be read. */
+  cohort: SendCohort | null;
 }
 
 const empty = (status: ColdBatchStatus, summary: string, extra: Partial<ColdBatchResult> = {}): ColdBatchResult => ({ status, summary, drafts: 0, passed: 0, held: 0, blocked: 0, heldOut: 0, ...extra });
@@ -199,8 +202,8 @@ function storeDraftStatement(deps: ColdBatchDeps, campaignId: string, c: Compose
   return deps.db
     .prepare(
       `INSERT OR IGNORE INTO drafts (id, contact_id, campaign_id, template_id, kind, recipient_email, recipient_name, subject, body, status,
-         approved_digest, approved_at, approved_by, idempotency_key, notes, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, 'cold_intro', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)`,
+         approved_digest, approved_at, approved_by, idempotency_key, notes, created_at, updated_at, template_sha256, cohort)
+       VALUES (?1, ?2, ?3, ?4, 'cold_intro', ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15, ?16, ?17)`,
     )
     .bind(
       c.draftId,
@@ -218,8 +221,13 @@ function storeDraftStatement(deps: ColdBatchDeps, campaignId: string, c: Compose
       c.idempotencyKey,
       `quality ${c.result.verdict}${c.result.findings.length ? `: ${[...new Set(c.result.findings.map((f) => f.code))].join(", ")}` : ""}`.slice(0, 500),
       at,
+      validSha(c.template?.sha256),
+      c.cohort,
     );
 }
+
+/** Measurement bookkeeping must never drop a draft: a value the column's CHECK would refuse is left out. */
+const validSha = (value: string | undefined): string | null => (value && /^[0-9a-f]{64}$/.test(value) ? value : null);
 
 function templateRowStatement(db: D1Database, t: ServedTemplate, at: string): D1PreparedStatement {
   const list = (v: readonly string[] | undefined) => (v ? JSON.stringify(v) : null);
@@ -478,6 +486,9 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
   const copy = await loadCopy(db);
   const ctx: ComposeContext = { config, ...copy, links: linkPolicy(config, deps.appUrl), approvedClaims: approvedClaimLines(judgeSlice.text) };
   const rotation = createRotation();
+  // Measurement bookkeeping: which contacts had a recent signal, for each draft's cohort. A failed
+  // read records no cohort; it never stops the batch.
+  const signalled = await signalledContacts(db, toWrite.map((r) => ({ contactId: r.id, accountKey: r.account_key })), now);
   const composed: Composed[] = [];
   for (const row of toWrite) {
     if (deps.signal?.aborted) break;
@@ -491,6 +502,7 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
       body: outcome.status === "composed" ? outcome.body : "",
       result: outcome.result,
       review: null,
+      cohort: outcome.template ? cohortFor(signalled, row.id, templateIsTargeted(outcome.template.meta)) : null,
     });
   }
 

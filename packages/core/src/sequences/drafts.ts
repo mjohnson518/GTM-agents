@@ -48,9 +48,12 @@ export interface StepDraft {
   sent_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Measurement bookkeeping set at composition: the template file's SHA-256 and the send's cohort. */
+  template_sha256?: string | null;
+  cohort?: string | null;
 }
 
-const DRAFT_COLUMNS = "id, contact_id, campaign_id, template_id, kind, recipient_email, recipient_name, subject, body, status, approved_digest, approved_by, idempotency_key, sent_at, created_at, updated_at";
+const DRAFT_COLUMNS = "id, contact_id, campaign_id, template_id, kind, recipient_email, recipient_name, subject, body, status, approved_digest, approved_by, idempotency_key, sent_at, created_at, updated_at, template_sha256, cohort";
 
 /** Drafts by step key. Throws on a database error. */
 export async function loadStepDrafts(db: D1Database, keys: readonly string[]): Promise<Map<string, StepDraft>> {
@@ -72,6 +75,9 @@ export async function loadDraftsById(db: D1Database, ids: readonly string[]): Pr
   return out;
 }
 
+/** Measurement bookkeeping must never fail a draft write: a value the column's CHECK would refuse is left out. */
+const validSha = (value: string | null | undefined): string | null => (value && /^[0-9a-f]{64}$/.test(value) ? value : null);
+
 export const newDraftId = (): string => `dr_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 
 export interface NewStepDraft {
@@ -88,6 +94,9 @@ export interface NewStepDraft {
   notes: string;
   /** Set when the draft is approved as it is stored. */
   approval: { digest: string; by: string } | null;
+  /** Measurement bookkeeping: the template file's SHA-256 and the send's cohort (metrics/cohort.ts). */
+  templateSha256?: string | null;
+  cohort?: string | null;
 }
 
 /** Insert a draft, unless the step already has one. */
@@ -96,8 +105,8 @@ export function insertDraftStatement(db: D1Database, d: NewStepDraft, now: Date)
   return db
     .prepare(
       `INSERT OR IGNORE INTO drafts (id, contact_id, campaign_id, template_id, kind, recipient_email, recipient_name, subject, body, status,
-         approved_digest, approved_at, approved_by, idempotency_key, notes, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)`,
+         approved_digest, approved_at, approved_by, idempotency_key, notes, created_at, updated_at, template_sha256, cohort)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16, ?17, ?18)`,
     )
     .bind(
       d.id,
@@ -116,6 +125,8 @@ export function insertDraftStatement(db: D1Database, d: NewStepDraft, now: Date)
       d.key,
       d.notes.slice(0, 500),
       at,
+      validSha(d.templateSha256),
+      d.cohort ?? null,
     );
 }
 
@@ -128,10 +139,26 @@ export function refreshDraftStatement(db: D1Database, draftId: string, d: Omit<N
   return db
     .prepare(
       `UPDATE drafts SET template_id = ?2, kind = ?3, recipient_email = ?4, recipient_name = ?5, subject = ?6, body = ?7, notes = ?8,
-              status = ?9, approved_digest = ?10, approved_at = ?11, approved_by = ?12, updated_at = ?13
+              status = ?9, approved_digest = ?10, approved_at = ?11, approved_by = ?12, updated_at = ?13, template_sha256 = ?14, cohort = ?15
         WHERE id = ?1 AND status = 'pending_approval'`,
     )
-    .bind(draftId, d.templateId, d.kind, d.to, d.toName, d.subject, d.body, d.notes.slice(0, 500), d.approval ? "approved" : "pending_approval", d.approval?.digest ?? null, d.approval ? at : null, d.approval?.by ?? null, at);
+    .bind(
+      draftId,
+      d.templateId,
+      d.kind,
+      d.to,
+      d.toName,
+      d.subject,
+      d.body,
+      d.notes.slice(0, 500),
+      d.approval ? "approved" : "pending_approval",
+      d.approval?.digest ?? null,
+      d.approval ? at : null,
+      d.approval?.by ?? null,
+      at,
+      validSha(d.templateSha256),
+      d.cohort ?? null,
+    );
 }
 
 /**

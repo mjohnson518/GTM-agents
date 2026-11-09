@@ -101,7 +101,7 @@ models: {
 
 ## 4. Register the webhook
 
-`gtm setup` will register it for you; until then, call the Bot API once after deploying, with your deployment's public URL:
+Call the Bot API once after deploying, with your deployment's public URL (the CLI never reads your secrets, so it does not do this for you):
 
 ```bash
 curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
@@ -127,7 +127,7 @@ In a private chat with the bot, the chat id and your user id are the same number
 The agent runs only while the `operator:agent_enabled` flag is on. It defaults to off, and a value that cannot be read counts as off. While it is off, the webhook still verifies updates, and an allowlisted operator is told the agent is turned off.
 
 ```bash
-npx wrangler kv key put --binding KV --remote "operator:agent_enabled" "true"
+npx gtm flags set operator:agent_enabled true
 ```
 
 Delete the key to turn it off again. `gtm doctor` lists the flag with every other flag.
@@ -151,6 +151,8 @@ Replies and follow-ups add their own commands, documented with them:
 | `sequence-release-<id>-<code>` | Release the follow-ups a sweep put up ([SEQUENCES.md](SEQUENCES.md)) |
 | `sequence-resume-<contact id>` | Resume a contact's paused sequence |
 | `channel-done-<id> [linkedin\|x]`, `channel-skip-<id>` | Record or skip the optional manual touch before the last step |
+| `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
+| `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 
 Commands never reach the model, and each runs once per message even if the channel redelivers it. `/clean@YourBot` forms work in groups. Anything that is not a command is a task for the hub agent.
 

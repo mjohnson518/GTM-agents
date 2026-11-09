@@ -21,8 +21,8 @@
 // Then the items are chunked to the provider's batch limit. Per item: the idempotency key is
 // claimed in the effects ledger, the plain-text footer and the unsubscribe and threading headers
 // are added, and the message is tagged for webhook correlation. After the provider answers, per
-// sent item, each bookkeeping write is caught and counted: the outreach_sends ledger row, the
-// outreach_log row, the draft marked sent, warmth cold -> contacted, the campaign_contacts row, a
+// sent item, each bookkeeping write is caught and counted: the outreach_sends ledger row (with the
+// template version and cohort the composer set, when they are well formed), the outreach_log row, the draft marked sent, warmth cold -> contacted, the campaign_contacts row, a
 // funnel event and the recipient domain's send count.
 //
 // Gates fail closed: a gate whose input cannot be read holds the item (a typed refusal, or a
@@ -52,6 +52,7 @@
 import { recordCost } from "../budget/cost-ledger.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
+import { isSendCohort } from "../metrics/cohort.ts";
 import type { EmailProvider, InboxProvider, OutboundMessage, SendOutcome } from "../ports/email.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import type { AdapterErrorCode } from "../ports/types.ts";
@@ -691,8 +692,8 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
               db
                 .prepare(
                   `INSERT OR IGNORE INTO outreach_sends (id, contact_id, account_key, campaign_id, draft_id, template_id, body_sha256, subject, experiment_id,
-                     experiment_arm, sequence_step, send_path, channel, provider, provider_message_id, recipient_domain, sent_at, created_at)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'email', ?13, ?14, ?15, ?16, ?16)`,
+                     experiment_arm, sequence_step, send_path, channel, provider, provider_message_id, recipient_domain, sent_at, created_at, template_sha256, cohort)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'email', ?13, ?14, ?15, ?16, ?16, ?17, ?18)`,
                 )
                 .bind(
                   r.sendId,
@@ -711,6 +712,8 @@ export function createDeliveryBoundary(deps: OutreachSenderDeps): DeliveryBounda
                   r.providerMessageId,
                   r.domain,
                   at,
+                  ledgerTemplateSha(r.w.item.templateSha256),
+                  ledgerCohort(r.w.item.cohort),
                 ),
           },
           {
@@ -880,7 +883,19 @@ export function deferredItemJson(item: OutreachItem): string {
     ...(item.inReplyTo !== undefined ? { inReplyTo: item.inReplyTo } : {}),
     ...(item.references !== undefined ? { references: [...item.references] } : {}),
     ...(item.approvedDigest !== undefined ? { approvedDigest: item.approvedDigest } : {}),
+    ...(item.templateSha256 !== undefined ? { templateSha256: item.templateSha256 } : {}),
+    ...(item.cohort !== undefined ? { cohort: item.cohort } : {}),
   });
+}
+
+/** The ledger's template_sha256: a lowercase hex SHA-256, or nothing. Bookkeeping, never a gate. */
+function ledgerTemplateSha(value: unknown): string | null {
+  return typeof value === "string" && /^[0-9a-f]{64}$/.test(value) ? value : null;
+}
+
+/** The ledger's cohort: one of metrics/cohort.ts's values, or nothing. Bookkeeping, never a gate. */
+function ledgerCohort(value: unknown): string | null {
+  return isSendCohort(value) ? value : null;
 }
 
 /**

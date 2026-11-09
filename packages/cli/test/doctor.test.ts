@@ -1,9 +1,18 @@
 // GTM-agents: tests for `gtm doctor`.
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { doctorCommand } from "../src/commands/doctor.ts";
+import { doctorCommand, triggerCheck } from "../src/commands/doctor.ts";
 import type { CommandRunner } from "../src/lib/io.ts";
+import { ADAPTERS_DIR, makeDeployment, setUpDeployment } from "./deployment.ts";
+import { FakeAccount } from "./fake-wrangler.ts";
 import { REPO_ROOT, captureIo } from "./helpers.ts";
+
+/** Answers `wrangler kv bulk get` with these values for the keys in the request file. */
+function bulkGet(values: Record<string, string | null>, args: string[]): { code: number; stdout: string; stderr: string } {
+  const keys = JSON.parse(readFileSync(args[args.indexOf("get") + 1] ?? "", "utf8")) as string[];
+  return { code: 0, stdout: JSON.stringify(Object.fromEntries(keys.map((k) => [k, values[k] ?? null]))), stderr: "" };
+}
 
 const noRemote: CommandRunner = async () => ({ code: 1, stdout: "", stderr: "not expected" });
 
@@ -49,7 +58,7 @@ describe("gtm doctor", () => {
   it("with --remote, fails on missing secrets and on a flag store it cannot read, and warns when halted", async () => {
     const runner: CommandRunner = async (_cmd, args) => {
       if (args.includes("secret")) return { code: 0, stdout: JSON.stringify([{ name: "GATEWAY_TOKEN", type: "secret_text" }]), stderr: "" };
-      if (args.includes("system:halt")) return { code: 0, stdout: '{"reason":"maintenance"}', stderr: "" };
+      if (args.includes("bulk")) return bulkGet({ "system:halt": '{"reason":"maintenance"}' }, args);
       return { code: 1, stdout: "", stderr: "authentication error" };
     };
     const io = captureIo();
@@ -57,6 +66,17 @@ describe("gtm doctor", () => {
     const text = io.text();
     expect(text).toMatch(/FAIL\s+secrets\s+missing: UNSUBSCRIBE_SIGNING_KEY/);
     expect(text).toMatch(/WARN\s+halt flag\s+the system is halted/);
+    expect(text).toMatch(/PASS\s+kill switch\s+outreach:cold-pause is unset/);
+  });
+
+  it("with --remote, fails every stop flag when the flag store cannot be read", async () => {
+    const runner: CommandRunner = async (_cmd, args) =>
+      args.includes("secret") ? { code: 0, stdout: "[]", stderr: "" } : { code: 1, stdout: "", stderr: "X [ERROR] Authentication error [code: 10000]" };
+    const io = captureIo();
+    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(1);
+    const text = io.text();
+    expect(text).toMatch(/FAIL\s+halt flag\s+could not read system:halt/);
+    expect(text).toMatch(/FAIL\s+kill switch \(critical\)\s+could not read/);
     expect(text).toMatch(/FAIL\s+kill switch\s+could not read outreach:cold-pause/);
   });
 
@@ -66,10 +86,44 @@ describe("gtm doctor", () => {
         const names = ["GATEWAY_TOKEN", "UNSUBSCRIBE_SIGNING_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "ANTHROPIC_API_KEY", "EXA_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"];
         return { code: 0, stdout: JSON.stringify(names.map((name) => ({ name }))), stderr: "" };
       }
-      return { code: 0, stdout: "Value not found", stderr: "" };
+      return bulkGet({}, args);
     };
     const io = captureIo();
     expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(0);
     expect(io.text()).toMatch(/PASS\s+secrets\s+all 12 required secrets are set/);
+  });
+
+  it("passes exactly one per-minute cron trigger and fails a missing or extra one", () => {
+    expect(triggerCheck(["* * * * *"]).status).toBe("PASS");
+    expect(triggerCheck([]).status).toBe("FAIL");
+    expect(triggerCheck(["0 9 * * MON-FRI"]).detail).toContain("no per-minute trigger");
+    const extra = triggerCheck(["* * * * *", "0 9 * * MON-FRI"]);
+    expect(extra.status).toBe("FAIL");
+    expect(extra.detail).toContain('"0 9 * * MON-FRI"');
+    expect(triggerCheck(["* * * * *", "* * * * *"]).status).toBe("FAIL");
+  });
+
+  it("checks the trigger an environment inherits from the top level", async () => {
+    const dir = makeDeployment();
+    const path = join(dir, "wrangler.jsonc");
+    writeFileSync(path, readFileSync(path, "utf8").replace(/,\n\s*"triggers": \{ "crons": \["\* \* \* \* \*"\] \}\n(\s*\}\n\s*\}\n\})/, "\n$1"));
+    const io = captureIo(dir);
+    await doctorCommand(["--env", "staging"], io, { runner: noRemote, adaptersDir: ADAPTERS_DIR });
+    expect(io.text()).toMatch(/PASS\s+cron trigger/);
+    writeFileSync(path, readFileSync(path, "utf8").replace('"triggers": { "crons": ["* * * * *"] },', '"triggers": { "crons": [] },'));
+    const after = captureIo(dir);
+    expect(await doctorCommand(["--env", "staging"], after, { runner: noRemote, adaptersDir: ADAPTERS_DIR })).toBe(1);
+    expect(after.text()).toMatch(/FAIL\s+cron trigger\s+no per-minute trigger/);
+  });
+
+  it("counts only the selected environment's placeholders", async () => {
+    const account = new FakeAccount();
+    const dir = await setUpDeployment(account);
+    const production = captureIo(dir);
+    await doctorCommand([], production, { runner: noRemote, adaptersDir: ADAPTERS_DIR });
+    expect(production.text()).toMatch(/PASS\s+placeholders/);
+    const staging = captureIo(dir);
+    await doctorCommand(["--env", "staging"], staging, { runner: noRemote, adaptersDir: ADAPTERS_DIR });
+    expect(staging.text()).toMatch(/WARN\s+placeholders.*run gtm setup --env staging/);
   });
 });

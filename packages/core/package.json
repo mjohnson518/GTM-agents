@@ -30,6 +30,7 @@
     "./replies": "./src/replies/index.ts",
     "./replies/testing": "./src/replies/testing.ts",
     "./metrics": "./src/metrics/index.ts",
+    "./reports": "./src/reports/index.ts",
     "./budget": "./src/budget/index.ts",
     "./data": "./src/data/index.ts",
     "./adapters": "./src/adapters/index.ts",

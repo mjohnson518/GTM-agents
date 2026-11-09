@@ -18,8 +18,9 @@ import { bodyLimit } from "hono/body-limit";
 import type { GtmConfig } from "./config/schema.ts";
 import type { Env } from "./env.ts";
 import { bearerAuth } from "./http/auth.ts";
-import { runScheduledJobs, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
-import { createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
+import { normalizeCron } from "./jobs/cron.ts";
+import { inRunOrder, runJobsConcurrently, type JobOutcome, type JobRunner } from "./jobs/loop.ts";
+import { MAX_JOB_DURATION_MS, SCHEDULER_CRON, createJobRegistry, type FlagReader, type JobContext, type JobDefinition, type JobLogger, type JobRegistry, type RegisteredJob } from "./jobs/registry.ts";
 import { createInboundEmailHandler, type InboundEmailHandler, type InboundEmailOptions } from "./inbox/email-handler.ts";
 import { MAIL_WEBHOOK_PATH, createInboxPushWebhook } from "./inbox/webhook.ts";
 import { createChatConsumer, isChatMessage } from "./operator/chat.ts";
@@ -35,7 +36,16 @@ import { EMAIL_WEBHOOK_PATH, createEmailWebhook } from "./sending/webhook.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
 
-/** The chat queue's name when `agent.chatQueue` is not set, matching the template's default. */
+/**
+ * Wall time one scheduled invocation plans for. Cloudflare ends a cron invocation after 15 minutes;
+ * a due job whose ceiling would run past this budget is not started, and its run row says why.
+ */
+export const SCHEDULED_WALL_BUDGET_MS = MAX_JOB_DURATION_MS;
+
+/**
+ * The chat queue's name when `agent.chatQueue` is not set. `gtm setup` names the queue it creates
+ * `<worker>-chat` and prints that name; list it (one per environment) in `agent.chatQueue`.
+ */
 export const DEFAULT_CHAT_QUEUE = "gtm-chat";
 
 export interface OperatorAgentWorkerOptions {
@@ -100,7 +110,10 @@ export interface CreateWorkerOptions<E extends Env = Env> {
   agent?: OperatorAgentWorkerOptions;
   /** Registers the cron health check as a job on this schedule, for example "30 10,15 * * *". */
   cronHealth?: { schedule: string; graceMs?: number };
-  /** Called with each scheduled run's outcomes, for observability. */
+  /**
+   * Called after every scheduled invocation with the trigger's cron string and the outcomes of the
+   * jobs that were due (empty when nothing was due that minute), for observability.
+   */
   onScheduled?: (cron: string, outcomes: JobOutcome[]) => void;
 }
 
@@ -214,11 +227,14 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     return c.json({ error: "internal_error" }, 500);
   });
 
-  const makeContext = (env: E, now: Date) => (job: RegisteredJob<E>, signal: AbortSignal): JobContext<E> => ({
+  // `now` is when the job starts (never before its scheduled minute), not the trigger's scheduled
+  // time: a job may wait for a free slot before it starts, and a send window must be checked
+  // against the real clock.
+  const makeContext = (env: E, at: Date) => (job: RegisteredJob<E>, signal: AbortSignal): JobContext<E> => ({
     env,
     config,
     job: job.name,
-    now,
+    now: new Date(Math.max(Date.now(), at.getTime())),
     signal,
     ceilings: job.ceilings,
     flags: kvFlagReader(env.KV),
@@ -230,10 +246,33 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     registry,
     fetch: (request, env, ctx) => app.fetch(request, env, ctx),
     ...(emailHandler ? { email: (message, env, ctx) => emailHandler(message, env, ctx) } : {}),
+    // One trigger fires every minute (SCHEDULER_CRON). The jobs to run are the ones whose own
+    // schedule matches the minute of scheduledTime (UTC); controller.cron is logged, never matched,
+    // so a manual or extra trigger cannot pick a different set of jobs. They run concurrently
+    // (DUE_JOB_CONCURRENCY at a time, longest ceiling first), each under its own ceiling, and a job
+    // that could not finish within SCHEDULED_WALL_BUDGET_MS is recorded as not started. A minute
+    // with nothing due returns before any binding is touched.
     scheduled: (controller, env, ctx) => {
-      const run = runScheduledJobs(registry, controller.cron, makeContext(env, new Date(controller.scheduledTime)), runner, (settled) => ctx.waitUntil(settled))
+      const at = new Date(controller.scheduledTime);
+      const due = registry.dueAt(at);
+      if (due.length === 0) {
+        try {
+          options.onScheduled?.(controller.cron, []);
+        } catch (err) {
+          log.error("onScheduled failed", { cron: controller.cron, error: err instanceof Error ? err.message : String(err) });
+        }
+        return;
+      }
+      const ordered = inRunOrder(due);
+      const jobs = ordered.map((j) => j.name);
+      if (normalizeCron(controller.cron) !== SCHEDULER_CRON) {
+        log.warn("scheduled invocation from a trigger other than the per-minute one; due jobs run by scheduled time, so an extra trigger runs them again", { cron: controller.cron, jobs });
+      }
+      log.info("running due jobs", { cron: controller.cron, at: at.toISOString(), jobs });
+      const deadline = Date.now() + SCHEDULED_WALL_BUDGET_MS;
+      const run = runJobsConcurrently(ordered, makeContext(env, at), runner, (settled) => ctx.waitUntil(settled), { deadline })
         .then((outcomes) => {
-          if (outcomes.length === 0) log.warn("no jobs registered for this cron trigger", { cron: controller.cron });
+          for (const o of outcomes) if (o.status === "failed") log.error("scheduled job failed", { cron: controller.cron, job: o.job, error: o.error ?? "unknown error" });
           options.onScheduled?.(controller.cron, outcomes);
         })
         .catch((err: unknown) => log.error("scheduled handler failed", { cron: controller.cron, error: err instanceof Error ? err.message : String(err) }));

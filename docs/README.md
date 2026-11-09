@@ -10,6 +10,7 @@
 | [SENDING.md](SENDING.md) | Send email safely: the sending domain, the provider and webhooks, the footer and unsubscribe, windows, caps, the ramp and the bounce monitor |
 | [SEQUENCES.md](SEQUENCES.md) | Turn on follow-ups: steps and timing, what stops a sequence, threading, release, the manual channel step |
 | [INBOX.md](INBOX.md) | Connect a mailbox: Gmail or Cloudflare Email Routing, detection, structural classification and what each class does |
+| [MEASUREMENT.md](MEASUREMENT.md) | Read the numbers: the one definition of each metric, matured samples, measurement health, the daily scorecard and the other reports |
 | [REPLIES.md](REPLIES.md) | Handle replies: triage, routing, the meeting qualifier, drafting, approving and sending, reminders and mailbox mirroring |
 | [SOURCING.md](SOURCING.md) | Turn on sourcing: discovery, enrichment and verification, the fit gate, promotion, flags, costs and adapters |
 | [DATA-MODEL.md](DATA-MODEL.md) | Read or write the database: conventions, status enums, erasure, and every table by group |

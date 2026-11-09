@@ -69,7 +69,7 @@ describe("createWorker: HTTP", () => {
 });
 
 describe("createWorker: scheduled and queue handlers", () => {
-  it("runs only the jobs registered for the firing cron, and keeps going after a failure", async () => {
+  it("runs the jobs due at the per-minute trigger's scheduled time, and keeps going after a failure", async () => {
     const ran: string[] = [];
     let outcomes: JobOutcome[] = [];
     const worker = createWorker(config, {
@@ -83,12 +83,77 @@ describe("createWorker: scheduled and queue handlers", () => {
       },
     });
     expect(worker.registry.schedules()).toEqual(["0 13 * * MON-THU", "0 9 * * MON-FRI"]);
-    const controller = createScheduledController({ cron: "0 9 * * MON-FRI", scheduledTime: new Date("2026-11-02T09:00:00Z") });
+    const controller = createScheduledController({ cron: "* * * * *", scheduledTime: new Date("2026-11-02T09:00:00Z") });
     const ctx = createExecutionContext();
     await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, testEnv, ctx);
     await waitOnExecutionContext(ctx);
     expect(ran).toEqual(["first", "second"]);
     expect(outcomes.map((o) => o.status)).toEqual(["failed", "completed"]);
+  });
+
+  it("matches jobs on the scheduled time, never on the trigger's cron string", async () => {
+    const ran: string[] = [];
+    let seenCron = "";
+    const worker = createWorker(config, {
+      jobs: [
+        { name: "nine_job", schedule: "0 9 * * MON-FRI", ceilings: { maxDurationMs: 1000 }, run: async () => { ran.push("nine"); } },
+        { name: "thirteen_job", schedule: "0 13 * * MON-THU", ceilings: { maxDurationMs: 1000 }, run: async () => { ran.push("thirteen"); } },
+      ],
+      onScheduled: (cron) => {
+        seenCron = cron;
+      },
+    });
+    // A trigger string naming the 13:00 job, firing at 09:00 on a Monday: the 09:00 job runs.
+    const controller = createScheduledController({ cron: "0 13 * * MON-THU", scheduledTime: new Date("2026-11-02T09:00:00Z") });
+    const ctx = createExecutionContext();
+    await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, testEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(ran).toEqual(["nine"]);
+    expect(seenCron).toBe("0 13 * * MON-THU");
+  });
+
+  it("gives each job the real start time as now, never earlier than its scheduled minute", async () => {
+    let seen: Date | undefined;
+    const worker = createWorker(config, {
+      jobs: [{ name: "clock_job", schedule: "0 9 * * MON-FRI", ceilings: { maxDurationMs: 1000 }, run: async (ctx) => void (seen = ctx.now) }],
+      runner: async (job, ctx) => {
+        await job.run(ctx);
+        return { job: job.name, status: "completed", durationMs: 0 };
+      },
+    });
+    const before = Date.now();
+    const controller = createScheduledController({ cron: "* * * * *", scheduledTime: new Date("2026-11-02T09:00:00Z") });
+    const ctx = createExecutionContext();
+    await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, testEnv, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(seen?.getTime()).toBeGreaterThanOrEqual(Math.max(before, Date.parse("2026-11-02T09:00:00Z")));
+  });
+
+  it("does no database or KV work in a minute with nothing due", async () => {
+    const touched: string[] = [];
+    const guarded = new Proxy(
+      {},
+      {
+        get: (_target, key) => {
+          touched.push(String(key));
+          throw new Error(`binding ${String(key)} was touched`);
+        },
+      },
+    ) as unknown as Env;
+    let outcomes: JobOutcome[] | undefined;
+    const worker = createWorker(config, {
+      jobs: [{ name: "weekday_job", schedule: "0 9 * * MON-FRI", ceilings: { maxDurationMs: 1000 }, run: async () => {} }],
+      cronHealth: { schedule: "30 10,15 * * *" },
+      onScheduled: (_cron, o) => {
+        outcomes = o;
+      },
+    });
+    const controller = createScheduledController({ cron: "* * * * *", scheduledTime: new Date("2026-11-07T09:00:00Z") }); // a Saturday
+    const ctx = createExecutionContext();
+    await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, guarded, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(touched).toEqual([]);
+    expect(outcomes).toEqual([]);
   });
 
   it("uses the fault-tolerant runner by default, so every scheduled job leaves a run row", async () => {
@@ -97,7 +162,7 @@ describe("createWorker: scheduled and queue handlers", () => {
       cronHealth: { schedule: "30 10 * * *" },
     });
     expect(worker.registry.get("cron_health")).toBeDefined();
-    const controller = createScheduledController({ cron: "15 9 * * MON-FRI", scheduledTime: new Date("2026-11-02T09:15:00Z") });
+    const controller = createScheduledController({ cron: "* * * * *", scheduledTime: new Date("2026-11-02T09:15:00Z") });
     const ctx = createExecutionContext();
     await (worker.scheduled as (c: ScheduledController, e: Env, x: ExecutionContext) => Promise<void>)(controller, testEnv, ctx);
     await waitOnExecutionContext(ctx);

@@ -57,6 +57,9 @@ export interface StoredDraft {
   job_title: string | null;
   last_contacted_at: string | null;
   lifecycle_state: string | null;
+  /** Measurement bookkeeping set at composition: the template file's SHA-256 and the send's cohort. */
+  template_sha256?: string | null;
+  cohort?: string | null;
 }
 
 /** Load drafts with their contact, in the order given. Throws on a database error. */
@@ -66,7 +69,7 @@ export async function loadDrafts(db: D1Database, ids: readonly string[]): Promis
     const { results } = await db
       .prepare(
         `SELECT d.id, d.contact_id, d.campaign_id, d.template_id, d.kind, d.recipient_email, d.recipient_name, d.subject, d.body,
-                d.status, d.approved_digest, d.created_at, d.idempotency_key,
+                d.status, d.approved_digest, d.created_at, d.idempotency_key, d.template_sha256, d.cohort,
                 c.email AS contact_email, c.warmth, c.account_key, c.job_title, c.last_contacted_at, l.state AS lifecycle_state
            FROM drafts d
            LEFT JOIN contacts c ON c.id = d.contact_id
@@ -217,6 +220,8 @@ function toItem(draft: StoredDraft, approvedDigest: string): OutreachItem | null
     ...(draft.template_id ? { templateId: draft.template_id } : {}),
     sequenceStep: 1,
     approvedDigest,
+    ...(draft.template_sha256 ? { templateSha256: draft.template_sha256 } : {}),
+    ...(draft.cohort ? { cohort: draft.cohort } : {}),
   };
 }
 

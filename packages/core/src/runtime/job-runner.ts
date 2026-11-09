@@ -5,9 +5,14 @@
 //      declares ceilings.maxSpendCents or has a budget:job:<job>:daily_cents cap, the budget gate
 //      (fail closed). A job held by any of them is not run, and leaves a "skipped" run row saying
 //      why; a hold caused by state that could not be read says "unreadable";
-//   2. writes a "running" row, runs the job with its duration ceiling, and finishes the row as
-//      "completed" or "failed" with a sanitized error and an error class;
-//   3. on failure, pages the operator at most once per job per UTC day, and escalates at most once
+//   2. skips a job whose previous run is still going (a "running" row younger than the job's ceiling;
+//      an older one is stale and does not block), so the same job does not run twice at once. The
+//      check reads run rows, which are bookkeeping, so it fails open: when they cannot be read, the
+//      job runs;
+//   3. writes a "running" row, runs the job with its duration ceiling, and finishes the row as
+//      "completed" or "failed" with a sanitized error and an error class. A job the scheduler had
+//      no time to start (ctx.notStarted) is recorded as failed with that reason, without running;
+//   4. on failure, pages the operator at most once per job per UTC day, and escalates at most once
 //      per job per day when the error looks like configuration, the job failed three times today,
 //      or it has failed three days in a row. Each page is claimed in the effects ledger before it is
 //      sent and released if sending fails, so a retry can page again.
@@ -269,15 +274,31 @@ export function createJobRunner<E extends RunnerEnv>(options: JobRunnerOptions<E
       }
       if (!isFlagOn(value)) return skip("flag off");
     }
+    const notStarted = ctx.notStarted;
+    if (!notStarted) {
+      // No overlapping runs: a previous run younger than the ceiling is still going.
+      let previous: { started_at: string } | null = null;
+      try {
+        previous = await db
+          .prepare("SELECT started_at FROM execution_runs WHERE task_name = ?1 AND status = 'running' AND started_at > ?2 ORDER BY started_at DESC LIMIT 1")
+          .bind(job.name, new Date(startedAt.getTime() - job.ceilings.maxDurationMs).toISOString())
+          .first<{ started_at: string }>();
+      } catch (error) {
+        ctx.log.warn("could not check for a previous run; running anyway", { job: job.name, error: sanitizeErrorMessage(error) });
+      }
+      if (previous) return skip(`the previous run is still going (started ${previous.started_at})`);
+    }
     // A job is budget-checked when it declares maxSpendCents or the operator has set a daily cap
     // flag for it. The cap flag is read here so a flag-only cap is enforced too.
-    let capFlag: string | null;
-    try {
-      capFlag = await ctx.flags.get(jobCapKey(job.name));
-    } catch {
-      return skip("budget: unreadable");
+    let capFlag: string | null = null;
+    if (!notStarted) {
+      try {
+        capFlag = await ctx.flags.get(jobCapKey(job.name));
+      } catch {
+        return skip("budget: unreadable");
+      }
     }
-    if (job.ceilings.maxSpendCents !== undefined || (capFlag !== null && capFlag.trim() !== "")) {
+    if (!notStarted && (job.ceilings.maxSpendCents !== undefined || (capFlag !== null && capFlag.trim() !== ""))) {
       const budget = await checkBudget({
         db,
         flags: ctx.flags,
@@ -293,6 +314,7 @@ export function createJobRunner<E extends RunnerEnv>(options: JobRunnerOptions<E
     let outcome: JobOutcome;
     let errorClass: JobErrorClass | undefined;
     try {
+      if (notStarted) throw new Error(notStarted);
       if (ctx.signal.aborted) throw new Error(`job ${job.name} exceeded its ${job.ceilings.maxDurationMs} ms ceiling before it started`);
       const result = await withTimeout(job.run({ ...ctx, trigger, runId: id }), ctx.signal, job.ceilings.maxDurationMs, job.name);
       const summary = result && typeof result.summary === "string" ? result.summary.slice(0, 500) : undefined;

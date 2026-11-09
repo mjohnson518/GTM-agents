@@ -39,6 +39,13 @@ export interface OutreachItem {
    * that the contact wrote in on that thread before sending on it.
    */
   threadId?: string;
+  /**
+   * Bookkeeping only, never a gate: the SHA-256 of the template file the message was built from,
+   * recorded on the send ledger so matured samples count only sends of a template's current copy.
+   */
+  templateSha256?: string;
+  /** Bookkeeping only, never a gate: signalled, segment_routed or generic (metrics/cohort.ts), recorded on the send ledger. */
+  cohort?: string;
 }
 
 /** Why an item waits for later instead of going now. */

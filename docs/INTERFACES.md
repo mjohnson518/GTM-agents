@@ -414,7 +414,7 @@ export interface OperatorChannel {
   acknowledgeCallback(callbackId: string, text?: string): Promise<void>;
   /** Verify the inbound webhook (for example a secret-token header) and normalize the update. */
   parseUpdate(request: Request): Promise<OperatorUpdate>;
-  /** Register the webhook URL with the vendor (used by `gtm setup`). */
+  /** Register the webhook URL with the vendor. A deployment calls it once after deploying. */
   registerWebhook(url: string): Promise<void>;
 }
 ```

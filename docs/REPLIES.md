@@ -155,7 +155,7 @@ An `<id>` is a message id from `/replies`, or a unique prefix of at least 6 char
 
 ## Flags
 
-Set a flag with `npx wrangler kv key put --binding KV --remote "<key>" "<value>"`; delete the key to turn it off. A flag that cannot be read counts as off. `gtm doctor` lists them all.
+Set a flag with `npx gtm flags set <key> <value>`; `npx gtm flags unset <key>` turns it off. A flag that cannot be read counts as off. `gtm doctor` lists them all.
 
 | Flag | Default | What it does |
 |---|---|---|

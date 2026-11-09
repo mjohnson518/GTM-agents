@@ -73,7 +73,7 @@ npx gtm doctor                       # bindings, config, adapters, secrets, webh
 npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 ```
 
-`examples/brains/acme` is a complete brain to copy from. Creating the Cloudflare resources (`gtm setup`) and deploying (`gtm deploy`) are not available yet; see the roadmap.
+`examples/brains/acme` is a complete brain to copy from. To deploy, follow [docs/DEPLOYING.md](docs/DEPLOYING.md): `gtm setup` creates the Cloudflare resources and fills in `wrangler.jsonc`, then `gtm migrate`, `gtm brain upload`, `gtm flags` and `gtm deploy`. Workers Paid is required.
 
 ## Documentation
 

@@ -86,7 +86,9 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "convert:pov_enabled", kind: "boolean", default: "false", description: "Proof-of-value requests." },
 
   // Operations.
-  { key: "ops:daily_scorecard", kind: "boolean", default: "false", description: "The daily scorecard replaces separate digests." },
+  { key: "ops:daily_scorecard", kind: "boolean", default: "false", description: "The daily scorecard (docs/MEASUREMENT.md): one operator message each weekday at 12:00 UTC, no model call. It carries spend, so the daily cost digest stands down while it is on." },
+  { key: "ops:funnel_digest", kind: "boolean", default: "false", description: "The weekly funnel digest, Mondays at 09:00 UTC: sends, replies, delivery, the matured reply rate and holdout lift, flagging a reply rate under 3% or hard bounces over 2% at 50 or more sends. No model call." },
+  { key: "ops:cost_digest", kind: "boolean", default: "false", description: "The daily cost digest, weekdays at 14:00 UTC: spend per job since the previous report. Skipped while ops:daily_scorecard is on. No model call." },
   { key: "ops:target_accounts_page", kind: "boolean", default: "false", description: "The weekly target-accounts page." },
   { key: "ops:retention_enabled", kind: "boolean", default: "false", description: "Archive and delete old logs." },
   { key: "runs:durable", kind: "boolean", default: "false", description: "Journaled, resumable delegated runs." },

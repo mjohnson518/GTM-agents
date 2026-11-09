@@ -1,4 +1,5 @@
-// GTM-agents: read a deployment's wrangler.jsonc and answer the questions `gtm doctor` asks of it.
+// GTM-agents: read a deployment's wrangler.jsonc and answer the questions the CLI asks of it:
+// bindings, placeholders, queues, Durable Object migrations, cron triggers and the Worker's name.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BindingSpec } from "@gtm-agents/core/config";
@@ -67,6 +68,15 @@ export function placeholderPaths(value: unknown, path = ""): string[] {
   return [];
 }
 
+/**
+ * Placeholders in the selected environment only. The top level holds the other environments under
+ * "env", so production leaves that key out; an environment block never contains it.
+ */
+export function environmentPlaceholders(loaded: LoadedWranglerConfig): string[] {
+  const { env: _others, ...own } = loaded.config;
+  return placeholderPaths(loaded.config === loaded.root ? own : loaded.config);
+}
+
 /** Queues that have a producer but no consumer in this config. */
 export function queuesWithoutConsumers(config: WranglerConfig): string[] {
   const queues = asObject(config.queues);
@@ -82,4 +92,54 @@ export function unmigratedClasses(config: WranglerConfig, root: WranglerConfig):
   const names = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
   const migrated = new Set(asArray(root.migrations).flatMap((m) => [...names(m.new_sqlite_classes), ...names(m.new_classes)]));
   return bound.filter((c) => !migrated.has(c));
+}
+
+/**
+ * The cron triggers that apply. Wrangler inherits `triggers` into an environment that does not set
+ * its own, so an environment block falls back to the top level.
+ */
+export function cronTriggers(config: WranglerConfig, root: WranglerConfig = config): string[] {
+  const triggers = asObject(config.triggers ?? root.triggers);
+  return Array.isArray(triggers.crons) ? triggers.crons.map(String) : [];
+}
+
+/** The deployed Worker's name: the environment's own name, or Wrangler's default `<name>-<env>`. */
+export function workerName(loaded: LoadedWranglerConfig, env: string | undefined): string {
+  const own = loaded.config.name;
+  if (typeof own === "string" && own !== "") return own;
+  const base = typeof loaded.root.name === "string" ? loaded.root.name : "worker";
+  return env ? `${base}-${env}` : base;
+}
+
+/** The D1 binding's entry, if declared. */
+export function d1Binding(config: WranglerConfig, binding: string): Record<string, unknown> | undefined {
+  return asArray(config.d1_databases).find((b) => b.binding === binding);
+}
+
+/** The KV binding's entry, if declared. */
+export function kvBinding(config: WranglerConfig, binding: string): Record<string, unknown> | undefined {
+  return asArray(config.kv_namespaces).find((b) => b.binding === binding);
+}
+
+/** True for a string that still holds a ${...} placeholder. */
+export function isPlaceholder(value: unknown): boolean {
+  return typeof value === "string" && value.includes("${");
+}
+
+/** True for a non-empty string with no placeholder: a real id or name. */
+export function isFilled(value: unknown): value is string {
+  return typeof value === "string" && value !== "" && !value.includes("${");
+}
+
+/** Null when the environment's KV binding has a real namespace id, otherwise why KV cannot be reached. */
+export function kvReadiness(dir: string, env: string | undefined, binding = "KV"): string | null {
+  try {
+    const loaded = loadWranglerConfig(dir, env);
+    const kv = kvBinding(loaded.config, binding);
+    if (!kv) return `wrangler config declares no KV binding named ${binding}`;
+    if (!isFilled(kv.id)) return `the ${binding} binding has no namespace id yet; run gtm setup${env ? ` --env ${env}` : ""} first`;
+    return null;
+  } catch (err) {
+    return (err as Error).message;
+  }
 }

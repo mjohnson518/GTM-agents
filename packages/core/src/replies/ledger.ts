@@ -11,9 +11,10 @@
 //     keeping the earliest.
 // Only messages that count as replies (metrics/) are credited: opt-outs, automatic replies, spam
 // and noise never are. Crediting is bookkeeping: callers catch and log its errors.
+import { ATTRIBUTION_WINDOW_DAYS } from "../metrics/attribution.ts";
 import { countsAsReply, isPositiveReply } from "../metrics/positive-reply.ts";
 
-export const ATTRIBUTION_WINDOW_DAYS = 60;
+export { ATTRIBUTION_WINDOW_DAYS };
 
 export interface LedgerCredit {
   /** The credited send, or null when nothing was credited. */

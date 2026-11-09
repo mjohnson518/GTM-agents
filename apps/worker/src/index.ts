@@ -8,13 +8,15 @@
 // Every capability below is off until you turn its flag on in KV (`gtm doctor` lists them): the chat
 // agent behind operator:agent_enabled, discovery behind discovery:enabled, the cold batch behind
 // cold_batch:enabled, real sends behind delivery:enabled, mailbox intake behind inbox:enabled,
-// reply triage and drafting behind the replies:* flags, and follow-ups behind sequences:enabled.
+// reply triage and drafting behind the replies:* flags, follow-ups behind sequences:enabled, and
+// the scorecard and digests behind the ops:* flags.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
 import { createWorker, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
 import { createReplyJobs } from "@gtm-agents/core/replies";
+import { createReportJobs } from "@gtm-agents/core/reports";
 import { createDeliveryJobs, createOutreachSender, readColdVolume, senderDepsFromEnv } from "@gtm-agents/core/sending";
 import { createSequenceJobs } from "@gtm-agents/core/sequences";
 import { createSourcingJobs } from "@gtm-agents/core/sourcing";
@@ -69,9 +71,12 @@ const replies = createReplyJobs<Env>({ model, inbox, operator });
 // Sequences: the follow-up sweep and the weekend stale-sequence check.
 const sequences = createSequenceJobs<Env>({ email, operator, model });
 
+// Reports: the daily scorecard, the Monday funnel digest and the weekday cost digest. No model calls.
+const reports = createReportJobs<Env>({ operator });
+
 export default createWorker(config, {
-  // Scheduled work. `gtm setup` generates the cron triggers in wrangler.jsonc from these schedules.
-  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences],
+  // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
+  jobs: [...sourcing, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},
@@ -85,8 +90,9 @@ export default createWorker(config, {
   // Mail that Cloudflare Email Routing delivers to this Worker. Add `forwardTo` with a verified
   // destination address to keep a copy in a mailbox (docs/INBOX.md).
   inboundEmail: { parser: (env) => createRoutedMail(context(env, "email-cloudflare")) },
-  // The CHAT_QUEUE names from wrangler.jsonc, one per environment.
-  agent: { chatQueue: ["gtm-chat", "gtm-chat-staging"] },
+  // The CHAT_QUEUE names from wrangler.jsonc, one per environment (`gtm setup` names them
+  // <worker name>-chat). Change these if you rename the Worker or the queues.
+  agent: { chatQueue: ["gtm-agent-chat", "gtm-agent-staging-chat"] },
 
   // Watches every critical job and pages when one is missed or failing.
   cronHealth: { schedule: "30 10,15 * * *" },

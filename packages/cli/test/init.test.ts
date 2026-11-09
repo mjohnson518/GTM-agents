@@ -8,7 +8,7 @@ import { initCommand } from "../src/commands/init.ts";
 import { main } from "../src/index.ts";
 import { parseJsonc } from "../src/lib/jsonc.ts";
 import { hasBinding } from "../src/lib/wrangler-config.ts";
-import { captureIo } from "./helpers.ts";
+import { REPO_ROOT, captureIo } from "./helpers.ts";
 
 describe("gtm init", () => {
   it("creates a standalone deployment from the worker template", () => {
@@ -59,15 +59,31 @@ describe("gtm", () => {
     expect(await main(["frobnicate"], captureIo())).toBe(2);
   });
 
-  it.each(["setup", "migrate", "flags", "deploy"])("explains that %s is not available yet", async (command) => {
+  it("lists every command in its help, and none as unavailable", async () => {
     const io = captureIo();
-    expect(await main([command], io)).toBe(2);
-    expect(io.text()).toContain("not available in this version");
+    expect(await main(["--help"], io)).toBe(0);
+    for (const command of ["init", "setup", "migrate", "brain validate", "brain upload", "brain diff", "flags", "doctor", "deploy"]) expect(io.text()).toContain(`  ${command}`);
+    expect(io.text()).not.toContain("not available");
+    const sub = captureIo();
+    expect(await main(["setup", "--help"], sub)).toBe(0);
+    expect(sub.text()).toContain("Usage: gtm <command>");
+  });
+});
+
+describe("the worker template's cron trigger", () => {
+  const crons = (config: Record<string, unknown>) => (config.triggers as { crons: string[] }).crons;
+
+  it("has exactly the per-minute trigger, at the top level and in staging", () => {
+    const config = parseJsonc(readFileSync(join(REPO_ROOT, "apps/worker/wrangler.jsonc"), "utf8")) as Record<string, unknown> & { env: { staging: Record<string, unknown> } };
+    expect(crons(config)).toEqual(["* * * * *"]);
+    expect(crons(config.env.staging)).toEqual(["* * * * *"]);
   });
 
-  it.each([["brain", "upload"], ["brain", "diff"]])("explains that %s %s is not available yet", async (a, b) => {
-    const io = captureIo();
-    expect(await main([a, b], io)).toBe(2);
-    expect(io.text()).toContain("not available in this version");
+  it("keeps it in the copy gtm init makes", () => {
+    const parent = mkdtempSync(join(tmpdir(), "gtm-init-"));
+    expect(initCommand(["agent"], captureIo(parent))).toBe(0);
+    const config = parseJsonc(readFileSync(join(parent, "agent", "wrangler.jsonc"), "utf8")) as Record<string, unknown> & { env: { staging: Record<string, unknown> } };
+    expect(crons(config)).toEqual(["* * * * *"]);
+    expect(crons(config.env.staging)).toEqual(["* * * * *"]);
   });
 });

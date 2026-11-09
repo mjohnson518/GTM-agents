@@ -31,7 +31,7 @@ npx gtm doctor --config apps/worker   # bindings, config, adapters, secrets, web
 npx gtm brain validate <dir>     # brain and templates against the schema, byte budgets and lock
 ```
 
-`gtm setup`, `gtm migrate`, `gtm flags`, `gtm deploy` and `gtm brain upload|diff` are not available yet; [docs/ROADMAP.md](docs/ROADMAP.md) tracks them.
+Deploying uses `gtm setup`, `gtm migrate`, `gtm brain upload|diff`, `gtm flags` and `gtm deploy` ([docs/DEPLOYING.md](docs/DEPLOYING.md)). They call Wrangler through an injectable runner, and their tests never touch a real account.
 
 ## Repository layout
 
@@ -48,7 +48,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/
 docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -156,6 +156,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How follow-ups are swept, threaded and released | [docs/SEQUENCES.md](docs/SEQUENCES.md) |
 | How a mailbox is connected and inbound mail is classified | [docs/INBOX.md](docs/INBOX.md) |
 | How replies are triaged, drafted, approved and sent | [docs/REPLIES.md](docs/REPLIES.md) |
+| How metrics and reports are defined | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |
 | What goes in `brain/` and `templates/`, and how is it validated | [docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md) |
 | Why was a structural choice made | [docs/DECISIONS.md](docs/DECISIONS.md) |

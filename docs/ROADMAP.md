@@ -12,7 +12,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 2. Sourcing and enrichment | Done (behind `discovery:enabled`) |
 | 3. Outreach | Done (behind `cold_batch:enabled` and `delivery:enabled`) |
 | 4. Replies | Done (behind `inbox:enabled` and the `replies:*` flags; no reply is sent automatically yet) |
-| 5. Measurement | Planned |
+| 5. Measurement | Done (the scorecard and digests behind the `ops:*` flags) |
 | 6. Sequences | Done (behind `sequences:enabled`) |
 | 7 to 14 | Planned |
 
@@ -23,7 +23,8 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies;
 - the core runtime skeleton: `createWorker`, configuration, the job registry, the port interfaces, the brain and template engines, and the baseline migration;
 - the worker template, which bundles from placeholders, and the admin shell;
-- the `gtm` CLI with `init`, `doctor` and `brain validate`;
+- the `gtm` CLI ([DEPLOYING.md](DEPLOYING.md)): `init`, `doctor`, `brain validate|upload|diff`, `setup` (creates the Cloudflare resources and fills in `wrangler.jsonc`), `migrate`, `flags` (validated against the flag registry) and `deploy`;
+- one per-minute cron trigger, from which the Worker runs every job whose schedule is due;
 - `examples/brains/acme`, a complete, locked example brain with a three-step template sequence, and a behavior eval that renders it;
 - the safety spine ([SECURITY-MODEL.md](SECURITY-MODEL.md)):
   - for untrusted text: the taint model and action gate, the tool registry and dispatcher, sanitize and fence, URL and egress checks, delegation taint, approval digests, and the security contract that adapters run;
@@ -35,10 +36,11 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - delivery ([SENDING.md](SENDING.md)): a provider boundary that runs every send check itself, the plain-text footer and one-click unsubscribe, delivery and bounce webhooks that suppress hard bounces and complaints, send windows and the deferred queue, per-domain and per-account caps, a circuit breaker, the warm-up ramp, the bounce monitor and liveness checks;
 - the inbox ([INBOX.md](INBOX.md)): Gmail polling and push, Cloudflare Email Routing through the Worker's `email()` entry point, structural classification without a model, and the deterministic consequences of each class (a reply stops every sequence at the account, an unsubscribe suppresses, an out-of-office reply holds the next step, a bounce suppresses the address);
 - replies ([REPLIES.md](REPLIES.md)): model triage, routing by intent, the meeting qualifier, drafts from approved facts, approved sends from the warm mailbox with freshness checks, reply-owed reminders, mailbox draft mirroring, and the one definition of a positive reply;
+- measurement ([MEASUREMENT.md](MEASUREMENT.md)): one definition of each metric in one module (sends, matured samples, replies and positive replies, first-touch attribution, bounce and complaint rates, reply SLA, spend, failed jobs, measurement health, holdout lift), the daily scorecard, the funnel and cost digests and the conversion report, all reading the same definitions;
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
 - the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail` and `email-cloudflare`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling and follow-ups are each off by default, and none has yet been run against live providers. Measurement (milestone 5) comes next.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling and follow-ups are each off by default, and none has yet been run against live providers. Experiments (milestone 7) come next.
 
 ## Milestones
 

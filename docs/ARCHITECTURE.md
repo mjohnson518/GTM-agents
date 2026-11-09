@@ -108,7 +108,7 @@ defineJob({
 });
 ```
 
-- `gtm setup` generates the Worker's cron triggers from the distinct schedules in the registry. The scheduled handler is a loop over the jobs whose schedule matches, not a switch statement.
+- The Worker has one cron trigger, `* * * * *`. Each minute the scheduled handler asks the registry which jobs are due at that minute (UTC, from each job's own schedule) and runs them concurrently, at most four at a time, longest ceiling first, each under its own ceiling. It is a loop, not a switch statement, and changing a schedule never touches `wrangler.jsonc`. A minute with nothing due touches no binding. A job whose ceiling would not fit in the invocation's remaining wall time is not started: it gets a failed run row and the normal failure page, rather than being cut off. A job whose previous run is still going is skipped.
 - Schedules use named days. On Cloudflare, numeric day-of-week `1` is Sunday, so `MON-FRI` is the only unambiguous form. The registry rejects numeric days.
 - Every job runs inside a fault-tolerant runner:
   - It writes a run row (running, then completed, failed or skipped), including for jobs it holds because the system is halted, the job's flag is off or its budget is spent.

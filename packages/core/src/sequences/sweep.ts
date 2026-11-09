@@ -36,6 +36,7 @@ import { loadBrain, type KVReader } from "../brain/load.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect } from "../events/effects.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
+import { cohortFor, signalledContacts, templateIsTargeted } from "../metrics/cohort.ts";
 import { createRotation, type Rotation } from "../outreach/allocate.ts";
 import { loadCopy, type ComposeContext } from "../outreach/compose.ts";
 import { OUTREACH_FLAGS, readAutoApprove, readOn, type AutoApproveDecision } from "../outreach/flags.ts";
@@ -566,7 +567,17 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
       step: c.step,
       nextDelayDays: c.nextDelayDays,
       idempotencyKey: c.stepKey,
-      draft: { id: e.id, to: e.recipient_email ?? "", toName: e.recipient_name, subject: e.subject ?? "", body: e.body ?? "", templateId: e.template_id, approvedDigest: e.approved_digest ?? "" },
+      draft: {
+        id: e.id,
+        to: e.recipient_email ?? "",
+        toName: e.recipient_name,
+        subject: e.subject ?? "",
+        body: e.body ?? "",
+        templateId: e.template_id,
+        approvedDigest: e.approved_digest ?? "",
+        templateSha256: e.template_sha256 ?? null,
+        cohort: e.cohort ?? null,
+      },
       thread: c.thread as Thread,
     });
   }
@@ -575,6 +586,8 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
   if (reviewed.length > 0) {
     const writes: D1PreparedStatement[] = [];
     const approvals = new Map<string, string>();
+    // Measurement bookkeeping: each step's cohort. A failed signal read records none; it never holds a step.
+    const signalled = await signalledContacts(db, reviewed.map((x) => ({ contactId: x.c.row.contact_id, accountKey: x.c.row.account_key })), now);
     for (const x of reviewed) {
       const name = [x.c.row.first_name, x.c.row.last_name].filter(Boolean).join(" ").trim();
       const digest = auto ? await draftDigest({ to: x.c.row.email, subject: x.subject, body: x.body }) : null;
@@ -592,6 +605,8 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
         body: x.body,
         notes: `step ${x.c.step} from template ${x.template.id}; quality ${x.result.verdict}`,
         approval: digest ? { digest, by: `auto:${mode.reason ?? "unknown"}` } : null,
+        templateSha256: x.template.sha256,
+        cohort: cohortFor(signalled, x.c.row.contact_id, templateIsTargeted(x.template.meta)),
       };
       writes.push(x.c.existing ? refreshDraftStatement(db, x.c.existing.id, draft, now) : insertDraftStatement(db, draft, now));
     }
@@ -622,7 +637,17 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
           step: x.c.step,
           nextDelayDays: x.c.nextDelayDays,
           idempotencyKey: x.c.stepKey,
-          draft: { id: d.id, to: d.recipient_email ?? "", toName: d.recipient_name, subject: d.subject ?? "", body: d.body ?? "", templateId: d.template_id, approvedDigest: digest },
+          draft: {
+            id: d.id,
+            to: d.recipient_email ?? "",
+            toName: d.recipient_name,
+            subject: d.subject ?? "",
+            body: d.body ?? "",
+            templateId: d.template_id,
+            approvedDigest: digest,
+            templateSha256: d.template_sha256 ?? null,
+            cohort: d.cohort ?? null,
+          },
           thread: x.c.thread as Thread,
         });
       } else if (d.status === "pending_approval") {

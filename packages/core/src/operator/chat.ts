@@ -9,6 +9,8 @@
 //     `channel-done-<id>`, `channel-skip-<id>`) runs once per message, without the model;
 //   - a reply command (/replies, /reply_done, /reply_ignore, /reply_send, /reply_draft) runs once
 //     per message, without the model;
+//   - a report command (/scorecard, /report ...) reads and replies once per message, without the
+//     model;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -34,10 +36,13 @@ import { createSequenceSender } from "../sequences/sender.ts";
 // Replies: the reply commands, and the warm mailbox approved replies go out through.
 import type { InboxProvider } from "../ports/email.ts";
 import { isReplyCommand, runReplyCommand } from "../replies/commands.ts";
+// Reports: the scorecard and the other reports on demand.
+import { isReportCommand, runReportCommand } from "../reports/commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
 export const SEQUENCE_COMMAND_EFFECT = "operator_sequence_command";
+export const REPORT_COMMAND_EFFECT = "operator_report_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -213,6 +218,21 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
         );
       } catch (error) {
         text = `That command could not be completed (${sanitizeErrorMessage(error)}). Send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
+    // Reports: the scorecard and the other reports on demand, read-only, once per message.
+    if (command && isReportCommand(command.name)) {
+      if (!(await claimEffect(env.DB, message.updateId, REPORT_COMMAND_EFFECT))) {
+        log.warn("redelivered report command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let text: string;
+      try {
+        text = await runReportCommand({ db: env.DB, flags, ...(options.now ? { now: options.now } : {}) }, command);
+      } catch (error) {
+        text = `That report could not be built (${sanitizeErrorMessage(error)}). Send the command again to retry.`;
       }
       await reply(text);
       return;

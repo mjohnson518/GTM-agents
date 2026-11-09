@@ -197,7 +197,7 @@ With `cold_batch:enabled` on, the `delivery_liveness` job checks each weekday ev
 
 ## Flags
 
-Set a flag with `npx wrangler kv key put --binding KV --remote "<key>" "<value>"`; delete the key to return to the default. `gtm doctor` lists them all.
+Set a flag with `npx gtm flags set <key> <value>` (checked against the flag registry); `npx gtm flags unset <key>` returns it to the default. `gtm doctor` lists them all.
 
 | Flag | Default | What it does |
 |---|---|---|
