@@ -27,6 +27,7 @@ const MODULES = {
   gate: "../../packages/core/src/quality/gate.ts",
   claims: "../../packages/core/src/quality/claims.ts",
   convertDrafts: "../../packages/core/src/convert/drafts.ts",
+  lifecycleRules: "../../packages/core/src/lifecycle/followup-rules.ts",
   llmGateway: "../../packages/adapters/llm-gateway/index.ts",
   adapterContext: "../../packages/core/src/adapters/context.ts",
 } as const;
@@ -71,6 +72,18 @@ interface ConvertDrafts {
   CONVERT_DRAFT_KINDS: readonly string[];
   draftText(kind: string, ctx: { firstName: string | null; timezone: string | null; meetingStart: string; reason?: "cancelled" | "no_show" }, config: unknown): { subject: string; body: string };
   meetingDay(iso: string, timezone: string | null): string;
+}
+
+interface LifecycleRules {
+  FOLLOWUP_KINDS: readonly string[];
+  defaultTemplateId(kind: string): string;
+  followupLinks(config: unknown, appUrl: string | undefined): { domains: string[]; exactUrls: string[] };
+  composeFollowup(
+    template: { subject: string; body: string },
+    contact: { email: string; first_name: string | null; last_name: string | null; account_key: string | null },
+    config: unknown,
+    links: unknown,
+  ): { status: "composed"; subject: string; body: string; quality: QualityResult } | { status: "held"; missing: string[] };
 }
 
 const BOOKING_URL = "https://acme.example/book";
@@ -321,3 +334,42 @@ const meetingWriter = (id: string, kinds: readonly string[]) =>
 meetingWriter("meeting-recap", ["recap"]);
 meetingWriter("meeting-rebook", ["rebook"]);
 meetingWriter("post-demo-follow-ups", ["step2", "step3"]);
+
+// Lifecycle follow-ups: the writer only fills the operator's approved template with the contact's
+// own name, the agent's name and the booking URL. These templates are invented for the eval.
+const LIFECYCLE_TEMPLATES: Record<string, { subject: string; body: string }> = {
+  first_use: { subject: "Getting started with Acme Quarantine", body: "Hi {{first_name}},\n\nThanks for signing up for Acme Quarantine. The quickest way to see it work is to connect one CI pipeline and let it watch a few runs.\n\nIf anything gets in the way, reply here and I will help.\n\n{{sender_name}}" },
+  usefulness: { subject: "Was it useful?", body: "Hi {{first_name}},\n\nI saw your team has started using Acme Quarantine. Was it useful so far, and is there anything that got in the way?\n\nA one-line reply is plenty.\n\n{{sender_name}}" },
+  win_back: { subject: "Picking things back up", body: "Hi {{first_name}},\n\nIt has been a while since you canceled. If flaky tests are slowing your team down again, I would be glad to help you pick things back up.\n\nIf a short call would help, you can pick a time here: {{booking_url}}\n\n{{sender_name}}" },
+};
+
+writer("lifecycle-follow-ups", () => {
+  it("fills approved lifecycle templates cleanly, and holds rather than guess a missing name", async () => {
+    const rules = await load<LifecycleRules>(MODULES.lifecycleRules);
+    const links = rules.followupLinks(config, "https://app.acme.example");
+    for (const [kind, tpl] of Object.entries(LIFECYCLE_TEMPLATES)) {
+      expect(rules.FOLLOWUP_KINDS, kind).toContain(kind);
+      expect(rules.defaultTemplateId(kind)).toBe(`lifecycle-${kind.replace(/_/g, "-")}`);
+      for (const contact of contacts) {
+        const composed = rules.composeFollowup(tpl, { email: contact.email, first_name: contact.first_name, last_name: contact.last_name, account_key: contact.account_key }, config, links);
+        expect(composed.status, `${kind} ${contact.id}`).toBe("composed");
+        if (composed.status !== "composed") continue;
+        expect(composed.quality.verdict, `${kind} ${contact.id}: ${composed.quality.findings.map((f) => f.code).join(", ")}`).toBe("pass");
+        const inputs = [tpl.subject, tpl.body, contact.first_name, contact.last_name, config.agent.name, config.company.product.name, BOOKING_URL];
+        expect(scoreOutboundText({ subject: composed.subject, body: composed.body, inputs, words: WORD_BOUNDS.lifecycle }).failures, `${kind} ${contact.id}`).toEqual([]);
+        for (const link of composed.body.match(/https?:\/\/\S+/g) ?? []) expect(link).toBe(BOOKING_URL);
+      }
+      const nameless = rules.composeFollowup(tpl, { email: "ops@globex.example", first_name: "ops2", last_name: null, account_key: "globex.example" }, config, links);
+      expect(nameless).toEqual({ status: "held", missing: ["first_name"] });
+    }
+  });
+
+  it("is caught by the scorers when its output is bad", async () => {
+    const rules = await load<LifecycleRules>(MODULES.lifecycleRules);
+    const bad = rules.composeFollowup({ subject: "Big news", body: "Hi {{first_name}},\n\nTeams save 40% of CI time with us \u2014 upgrade today at https://deals.example/now.\n\n{{sender_name}}" }, { email: "dana@globex.example", first_name: "Dana", last_name: null, account_key: "globex.example" }, config, rules.followupLinks(config, undefined));
+    expect(bad.status).toBe("composed");
+    if (bad.status !== "composed") return;
+    expect(bad.quality.verdict).not.toBe("pass");
+    expect(scoreOutboundText({ subject: bad.subject, body: bad.body, inputs: ["Big news"], words: WORD_BOUNDS.lifecycle }).failures.length).toBeGreaterThan(0);
+  });
+});

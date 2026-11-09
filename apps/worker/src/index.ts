@@ -19,7 +19,8 @@ import { createExperimentJobs } from "@gtm-agents/core/experiments";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createAutonomyJobs } from "@gtm-agents/core/autonomy/runtime";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
-import { createLifecycle } from "@gtm-agents/core/lifecycle";
+import { createLearningJobs, learningDashboard } from "@gtm-agents/core/learning";
+import { createLifecycle, createLifecycleFollowups } from "@gtm-agents/core/lifecycle";
 import { createReplyJobs } from "@gtm-agents/core/replies";
 import { createReportJobs } from "@gtm-agents/core/reports";
 import { createRetentionJob } from "@gtm-agents/core/runtime";
@@ -30,6 +31,7 @@ import { createSourcingJobs } from "@gtm-agents/core/sourcing";
 import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
+import { createAdapter as createStripe } from "@gtm-agents/adapters/billing-stripe";
 import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
 import { createAdapter as createRoutedMail } from "@gtm-agents/adapters/email-cloudflare";
 import { createAdapter as createResend } from "@gtm-agents/adapters/email-resend";
@@ -114,18 +116,30 @@ const convert = createConvertJobs<Env>({ calendar, operator });
 // Lifecycle: product events and billing move contacts and deals (docs/LIFECYCLE.md). The events
 // queues are the EVENTS_QUEUE names gtm setup creates. Pass `billing: (env) => adapter` once you have
 // a BillingProvider adapter; MRR comes from the amounts billing events carry.
-const lifecycle = createLifecycle<Env>({ eventsQueue: ["gtm-agent-events", "gtm-agent-staging-events"] });
+const lifecycle = createLifecycle<Env>({
+  eventsQueue: ["gtm-agent-events", "gtm-agent-staging-events"],
+  billing: (env) => createStripe(context(env, "billing-stripe")),
+});
+
+// Lifecycle follow-ups: nudges to product users from approved lifecycle templates, each under its
+// autonomy class; offers (upgrade, win-back) are always drafts a person approves.
+const followups = createLifecycleFollowups<Env>({ send: sendOutreach, model, operator });
 
 // Autonomy: the weekly review proposes level changes (behind autonomy_review:enabled; only a person
 // confirms them), and the hourly watch demotes a class after an incident. Demotion has no flag.
 const autonomy = createAutonomyJobs<Env>({ operator });
+
+// Self-improvement: edit mining, the voice profile, the retrospective, agent review, objection
+// answers, fitness, the benchmark and evolution, each behind its own learning:* flag. Every loop only
+// proposes; a person approves the exact text (docs/LEARNING.md).
+const learning = createLearningJobs<Env>({ model, operator });
 
 // Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
 const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...autonomy, ...experiments, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},
@@ -155,6 +169,9 @@ export default createWorker(config, {
   sendOutreach,
   inbox,
   lifecycle,
+  // The operator dashboard at /admin, behind Cloudflare Access (docs/DASHBOARD.md): learning
+  // proposals, fitness and the learnings summary come from the learning module.
+  dashboard: learningDashboard<Env>(),
   // Mail that Cloudflare Email Routing delivers to this Worker. Add `forwardTo` with a verified
   // destination address to keep a copy in a mailbox (docs/INBOX.md).
   inboundEmail: { parser: (env) => createRoutedMail(context(env, "email-cloudflare")) },

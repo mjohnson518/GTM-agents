@@ -639,6 +639,18 @@ Experiments need volume: each arm needs hundreds of matured sends before anythin
 
 Signal sources need only what sourcing already has (`EXA_API_KEY` and `HUNTER_API_KEY`), plus the `data-jobboards` adapter, which needs no key. Turn each on with its flag (`signals:news_enabled`, `signals:hiring_boards_enabled`, `signals:websets_enabled`, `signals:monitors_enabled`, `signals:lookalikes_enabled`, `signals:coverage_fill_enabled`); each spends within its own daily cap. A search monitor you create at the provider is added to `monitors` in `src/index.ts`, with a Worker secret named in its `secretName` (it must start with `MONITOR_`, so no other setting or credential can sign deliveries) that signs its deliveries to `/api/webhooks/search/<key>`. The intent score runs in shadow behind `scoring:intent_enabled` until `intent_score:enforce`. [SIGNALS.md](SIGNALS.md) has each source's rules and costs.
 
+### The dashboard
+
+Put `/admin` and `/ws` behind a Cloudflare Access application, add the `admin` section to `gtm.config.ts` (`accessTeamDomain`, `accessAud`, `allowedEmails`), and turn on `admin:enabled`. [DASHBOARD.md](DASHBOARD.md) walks through it.
+
+### Billing and lifecycle follow-ups
+
+Stripe: set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` and point a Stripe webhook endpoint at `/api/webhooks/billing`, then `billing:enabled`. Follow-ups to product users need approved `lifecycle` templates, a `classifier` model and price, and `lifecycle:followups_enabled` ([LIFECYCLE.md](LIFECYCLE.md)).
+
+### Self-improvement
+
+Each loop has its own `learning:*` flag and spend cap and only proposes; approve from the chat or the dashboard. The model-calling loops (retrospective, agent review, benchmark, evolution) need the `strategist`, `judge` and `writer` roles priced ([LEARNING.md](LEARNING.md)).
+
 ### Stage 11: earned autonomy
 
 Nothing here is required: at the default level a person approves every send. When the evidence supports it:

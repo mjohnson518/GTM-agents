@@ -21,6 +21,13 @@
 //     `experiment-start-<id>-<code>`, `exp-approve-<id>`, `ab-dashboard` and the rest in
 //     experiments/commands.ts) runs once per message, without the model. Experiments start and
 //     proposals apply only from here;
+//   - a lifecycle follow-up command (`fu-approve-<id>`, `fu-reject-<id>`) runs once per message,
+//     without the model. An approved follow-up goes through the send function after every check
+//     runs again (lifecycle/followup-commands.ts);
+//   - a self-improvement command (`learning-list`, `learning-show <id>`,
+//     `learning-approve-<id>-<code>`, `learning-reject-<id>`, `learnings`, `objection-list`,
+//     `objection-answer`, `voice-build`, `voice-status`, `fitness`) runs once per message, without
+//     the model. Proposals apply only from here or the dashboard, bound to the detail shown;
 //   - a command (/clean, /status, /help) runs without the model;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
@@ -54,8 +61,12 @@ import { parseConvertCommand, runConvertCommand } from "../convert/commands.ts";
 import { parseAutonomyCommand, runAutonomyCommand } from "../autonomy/commands.ts";
 // Experiments: create, start (two steps), stop, proposals and the A/B dashboard (docs/EXPERIMENTS.md).
 import { parseExperimentCommand, runExperimentCommand } from "../experiments/commands.ts";
+// Lifecycle follow-ups: approve or drop a follow-up drafted for a product user.
+import { parseFollowupCommand, runFollowupCommand } from "../lifecycle/followup-commands.ts";
 import { servedTemplates } from "../experiments/jobs.ts";
 import type { TemplateFile } from "../templates/store.ts";
+// Self-improvement: proposals apply only from here or the dashboard, bound to the detail shown (docs/LEARNING.md).
+import { parseLearningCommand, runLearningCommand } from "../learning/commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
@@ -64,6 +75,8 @@ export const REPORT_COMMAND_EFFECT = "operator_report_command";
 export const CONVERT_COMMAND_EFFECT = "operator_convert_command";
 export const AUTONOMY_COMMAND_EFFECT = "operator_autonomy_command";
 export const EXPERIMENT_COMMAND_EFFECT = "operator_experiment_command";
+export const FOLLOWUP_COMMAND_EFFECT = "operator_followup_command";
+export const LEARNING_COMMAND_EFFECT = "operator_learning_command";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -263,6 +276,53 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
         );
       } catch (error) {
         text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing changed; send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
+    // Lifecycle follow-ups: an approval sends through the send function after every check; once per message.
+    const followupCommand = parseFollowupCommand(message.text);
+    if (followupCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, FOLLOWUP_COMMAND_EFFECT))) {
+        log.warn("redelivered follow-up command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let send: SendOutreach | undefined;
+      try {
+        send = options.sendOutreach?.(env);
+      } catch {
+        send = undefined;
+      }
+      let text: string;
+      try {
+        text = await runFollowupCommand(
+          { db: env.DB, flags, config: options.config, send, operator: channel, chatId: message.chatId, userId: message.userId, ...(options.now ? { now: options.now } : {}), log },
+          followupCommand,
+        );
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing more was sent; send it again to retry.`;
+      }
+      await reply(text);
+      return;
+    }
+    // Self-improvement: list, show, approve and reject proposals, objection answers and the voice profile; once per message.
+    const learningCommand = parseLearningCommand(message.text);
+    if (learningCommand) {
+      if (!(await claimEffect(env.DB, message.updateId, LEARNING_COMMAND_EFFECT))) {
+        log.warn("redelivered learning command was not run again", { updateId: message.updateId });
+        return;
+      }
+      let inbox: InboxProvider | undefined;
+      try {
+        inbox = options.inbox?.(env);
+      } catch {
+        inbox = undefined;
+      }
+      let text: string;
+      try {
+        text = await runLearningCommand({ db: env.DB, kv: env.KV, flags, ...(inbox ? { inbox } : {}), userId: message.userId, ...(options.now ? { now: options.now } : {}) }, learningCommand);
+      } catch (error) {
+        text = `That command could not be completed (${sanitizeErrorMessage(error)}). Nothing was applied; send it again to retry.`;
       }
       await reply(text);
       return;

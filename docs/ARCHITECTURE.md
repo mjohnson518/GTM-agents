@@ -220,7 +220,7 @@ Email is plain text, with no tracking pixels or click tracking, so replies are t
 | `GET, POST /u/:token` | Signed unsubscribe token. GET only confirms; POST opts out, because link scanners prefetch |
 | `GET /b/:token` | Signed booking token |
 | `/admin/*` | Static assets; put them behind your access layer |
-| `/ws` | Token in the `connect` call |
+| `/ws` | Cloudflare Access, verified in the Worker, plus the operator allowlist ([DASHBOARD.md](DASHBOARD.md)) |
 
 Every webhook verifies its signature before returning 200, and returns 503 when its secret is not configured. Besides `fetch`, `scheduled` and `queue`, the Worker exports `email()` for mail that Cloudflare Email Routing delivers. Request bodies are limited to 100 KB, whether or not the request carries a `Content-Length` header.
 

@@ -228,7 +228,7 @@ GTM BRAIN (version 3f9a1c0b7d2e, operator-approved; task: replies)
 - `gtm brain validate --write-lock` writes the lock, and only when validation passes. `gtm brain upload` validates, requires that lock, and uploads the files first and the lock last to the deployment's KV namespace (`brain:file:<component>`, then `brain:lock`; templates likewise under `template:file:<id>` and `templates:lock`), so a half-finished upload is never served.
 - Editing an approved file without re-locking it takes that component out of every prompt until the operator re-locks it. That is deliberate: what is served is always what was approved.
 
-The system may propose brain changes in its weekly report, built from numbers and enum names only. Nothing in the system writes to the brain.
+The learning loops may propose brain changes ([LEARNING.md](LEARNING.md)). Each proposal shows the exact component diff and the hash of the file it replaces; a person approves it, and applying it writes the file and re-locks the brain through the same lock functions, refusing when the current file no longer matches. Direct writes without a person happen only for the `brain_edit` class at autonomy level 2 or above, and a regression afterwards rolls the edit back and demotes the class.
 
 ## Templates
 

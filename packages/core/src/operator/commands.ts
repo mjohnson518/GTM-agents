@@ -37,6 +37,16 @@
 // `experiment-start-<id>-<code>`, `experiment-stop`, `exp-list`, `exp-approve-<id>`,
 // `exp-reject-<id>`, `subject-test-create`, `subject-test-stop`, `ab-dashboard` and `sample-size`.
 // The chat consumer routes them to runExperimentCommand.
+//
+// Lifecycle follow-up commands (lifecycle/followup-commands.ts) never reach the model:
+// `fu-approve-<id>` sends a follow-up drafted for a product user after checking it again, and
+// `fu-reject-<id>` drops it. The chat consumer routes them to runFollowupCommand.
+//
+// Self-improvement commands (learning/commands.ts) never reach the model: `learning-list`,
+// `learning-show <id>`, `learning-approve-<id>-<code>`, `learning-reject-<id>`, `learnings`,
+// `objection-list`, `objection-answer <id> <answer>`, `voice-build <thread> ...`, `voice-status` and
+// `fitness`. A proposal applies only from `learning-approve-<id>-<code>`, bound to the detail shown.
+// The chat consumer routes them to runLearningCommand.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -66,6 +76,12 @@ import { AUTONOMY_HELP_LINES } from "../autonomy/commands.ts";
 // Experiments: pre-registered experiments, subject tests, proposals and the A/B dashboard.
 export { EXPERIMENT_HELP_LINES, parseExperimentCommand, runExperimentCommand, type ExperimentCommand, type ExperimentCommandDeps } from "../experiments/commands.ts";
 import { EXPERIMENT_HELP_LINES } from "../experiments/commands.ts";
+// Lifecycle follow-ups: approve or drop a follow-up drafted for a product user.
+export { FOLLOWUP_HELP_LINES, parseFollowupCommand, runFollowupCommand, type FollowupCommand, type FollowupCommandDeps } from "../lifecycle/followup-commands.ts";
+import { FOLLOWUP_HELP_LINES } from "../lifecycle/followup-commands.ts";
+// Self-improvement: proposals from every loop, the learnings document, objection answers, the voice profile and fitness.
+export { LEARNING_HELP_LINES, parseLearningCommand, runLearningCommand, type LearningCommand, type LearningCommandDeps } from "../learning/commands.ts";
+import { LEARNING_HELP_LINES } from "../learning/commands.ts";
 
 export interface ParsedCommand {
   name: string;
@@ -94,6 +110,8 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     ...CONVERT_HELP_LINES,
     ...AUTONOMY_HELP_LINES,
     ...EXPERIMENT_HELP_LINES,
+    ...FOLLOWUP_HELP_LINES,
+    ...LEARNING_HELP_LINES,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",

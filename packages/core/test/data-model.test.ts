@@ -149,6 +149,9 @@ describe("the schema", () => {
       followup_touches: "CASCADE", manual_touches: "CASCADE", reply_qualifications: "CASCADE", experiment_assignments: "SET NULL",
       subject_assignments: "SET NULL", candidates: "SET NULL", monitor_items: "SET NULL", signal_events: "CASCADE", inbound_emails: "CASCADE",
       events: "SET NULL", funnel_events: "SET NULL", engagement_events: "CASCADE", lifecycle_transitions: "CASCADE", feedback_items: "CASCADE",
+      lifecycle_followups: "CASCADE",
+      // Edit mining's pairs are the operator's correspondence with the contact (docs/LEARNING.md).
+      draft_edits: "CASCADE",
     };
     const actual: Record<string, string> = {};
     for (const table of (await tables()).keys()) {

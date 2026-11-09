@@ -49,6 +49,14 @@ export default defineConfig(async () => {
           },
         },
         {
+          // The dashboard's pure parts: the RPC client, state, formatting, URL checks and page hygiene.
+          test: {
+            name: "admin",
+            environment: "node",
+            include: ["apps/admin/test/**/*.test.ts"],
+          },
+        },
+        {
           plugins: [workers()],
           test: {
             name: "core",

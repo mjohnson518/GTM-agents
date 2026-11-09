@@ -98,6 +98,8 @@ describe("reconciliation", () => {
     mailbox.sendDraft((await row(inbound.id))?.provider_draft_id ?? "", new Date(REPLY_TEST_NOW.getTime() + 60_000).toISOString(), "Hi Jane, sure. Call me tomorrow?\n\nAvery");
     await mirror(mailbox, new Date(REPLY_TEST_NOW.getTime() + 15 * 60_000));
     expect((await db.prepare("SELECT outcome FROM autonomy_events WHERE subject_id = ?1").bind(draftId).first<{ outcome: string }>())?.outcome).toBe("approved_edited");
+    // Edit mining keeps the pair: what was written and what went out, signature stripped.
+    expect(await db.prepare("SELECT generated_body, sent_body FROM draft_edits WHERE draft_id = ?1").bind(draftId).first()).toEqual({ generated_body: BODY.replace(/\n\nAvery$/, ""), sent_body: "Hi Jane, sure. Call me tomorrow?" });
   });
 
   it("alerts once when the mailbox draft is gone with nothing sent, and keeps the reply owed", async () => {

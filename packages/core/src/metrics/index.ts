@@ -97,3 +97,9 @@ export {
   systematicCounts,
 } from "./experiment-stats.ts";
 export type { ArmCounts, Uniform } from "./experiment-stats.ts";
+// Fitness: the raw inputs of the daily fitness score (learning/fitness.ts scores them).
+export { GRADE_SCORES, fitnessInputs } from "./fitness.ts";
+export type { FitnessInputs } from "./fitness.ts";
+// The outcome of a sent reply, for scoring the objection answer it used.
+export { answerOutcome } from "./answer-outcome.ts";
+export type { AnswerOutcome } from "./answer-outcome.ts";

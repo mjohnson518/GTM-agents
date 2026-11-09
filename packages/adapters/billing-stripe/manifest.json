@@ -1,0 +1,19 @@
+{
+  "name": "billing-stripe",
+  "version": "0.1.0",
+  "ports": ["BillingProvider"],
+  "capabilities": ["webhooks", "idempotency"],
+  "requiredSecrets": ["STRIPE_WEBHOOK_SECRET", "STRIPE_SECRET_KEY"],
+  "optionalSecrets": [],
+  "flags": ["billing:enabled"],
+  "tools": {
+    "billing_customer_lookup": { "taint": "structured", "gate": "never", "rateCategory": "billing" },
+    "billing_subscriptions_list": { "taint": "structured", "gate": "never", "rateCategory": "billing" }
+  },
+  "costs": {
+    "api_request": { "usd": 0, "per": "API request (the billing API charges no per-call fee)" }
+  },
+  "limits": { "perSecond": 25 },
+  "webhook": { "path": "/api/webhooks/billing", "signature": "stripe-signature" },
+  "contract": "./contract.test.ts"
+}

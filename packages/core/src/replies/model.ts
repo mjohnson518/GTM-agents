@@ -26,7 +26,7 @@ export interface ModelCallDeps {
 }
 
 export interface ModelCallRequest {
-  role: Extract<ModelRole, "triage" | "writer">;
+  role: ModelRole;
   system: string;
   user: string;
   jsonSchema: Record<string, unknown>;

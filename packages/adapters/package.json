@@ -25,7 +25,9 @@
     "./email-cloudflare": "./email-cloudflare/index.ts",
     "./email-cloudflare/manifest.json": "./email-cloudflare/manifest.json",
     "./calendar-google": "./calendar-google/index.ts",
-    "./calendar-google/manifest.json": "./calendar-google/manifest.json"
+    "./calendar-google/manifest.json": "./calendar-google/manifest.json",
+    "./billing-stripe": "./billing-stripe/index.ts",
+    "./billing-stripe/manifest.json": "./billing-stripe/manifest.json"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

@@ -94,9 +94,11 @@ describe("who can change a level", () => {
     expect(kv.map.get("autonomy:reply_send")).toBe("1");
   });
 
-  it("only the operator chat reaches the commands, and no tool or agent module touches levels", () => {
+  it("only an operator path (the chat, or the Access-verified dashboard) confirms a change, and no tool or agent module touches levels", () => {
     expect(filesMatching(/\brunAutonomyCommand\(/)).toEqual(["autonomy/commands.ts", "operator/chat.ts"]);
-    expect(filesMatching(/\bconfirmProposal\(/)).toEqual(["autonomy/commands.ts", "autonomy/proposals.ts"]);
+    // The dashboard confirms only an existing proposal, with its confirm code, for an operator whose
+    // Cloudflare Access identity the Worker verified (gateway/proposals.ts).
+    expect(filesMatching(/\bconfirmProposal\(/)).toEqual(["autonomy/commands.ts", "autonomy/proposals.ts", "gateway/proposals.ts"]);
     const toolsAndAgents = Object.entries(sources).filter(([file]) => /\/src\/(?:tools|agents|runtime)\//.test(file));
     expect(toolsAndAgents.length).toBeGreaterThan(3);
     for (const [file, source] of toolsAndAgents) expect(code(source), file).not.toMatch(/autonomy|levelFlagKey|autonomy_level_changes/);

@@ -19,7 +19,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 9. Lifecycle | Done (behind `lifecycle:enabled` and `billing:enabled`; billing through the port, with no vendor adapter yet) |
 | 10. Autonomy | Done (levels raised only by a confirmed operator command; the weekly review behind `autonomy_review:enabled`; automatic replies behind `inbound:auto_send_tier` and level 2) |
 | 11. Signals and scale | Done (each source behind its own `signals:*` flag; the intent score in shadow until enforced) |
-| 12 to 14 | Planned |
+| 12. Self-improvement | Done (every loop behind its own `learning:*` flag; proposals only, except `brain_edit` at level 2) |
+| 13. Ship loop (module) | Planned |
+| 14. Dashboard | Done (behind Cloudflare Access and `admin:enabled`) |
 
 **What exists today:**
 - the workspace layout and its package boundaries;
@@ -44,6 +46,9 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - replies ([REPLIES.md](REPLIES.md)): model triage, routing by intent, the meeting qualifier, drafts from approved facts, approved sends from the warm mailbox with freshness checks, reply-owed reminders, mailbox draft mirroring, and the one definition of a positive reply;
 - measurement ([MEASUREMENT.md](MEASUREMENT.md)): one definition of each metric in one module (sends, matured samples, replies and positive replies, first-touch attribution, bounce and complaint rates, reply SLA, spend, failed jobs, measurement health, holdout lift), the daily scorecard, the funnel and cost digests and the conversion report, all reading the same definitions;
 - meetings ([CONVERT.md](CONVERT.md)): read-only Google Calendar sync with privacy-limited fields, attribution without click tracking, the one "meeting booked" definition, a booking that stops outreach and writes a prep brief, reminders, held and no-show handling, and post-meeting drafts;
+- the operator dashboard ([DASHBOARD.md](DASHBOARD.md)): every view (overview, cockpit, pipeline, inbound, proposals and learning, contacts, agents, chat, activity, settings, changelog) over a WebSocket gateway behind Cloudflare Access;
+- self-improvement ([LEARNING.md](LEARNING.md)): edit mining, the voice profile, the retrospective and agent review, learnings and brain proposals, objection answers, fitness, the benchmark and evolution;
+- a Stripe billing adapter and lifecycle follow-ups to product users;
 - experiments ([EXPERIMENTS.md](EXPERIMENTS.md)): Thompson sampling with a protected control, account-clustered assignment, template, subject and send-time tests, pre-registration with two-step approval, conclusions only on the pre-registered metric with healthy measurement, the copy-change gate, and a weekly rule-based self-review;
 - signals ([SIGNALS.md](SIGNALS.md)): Exa websets, search monitors and dated news, public hiring boards, responder lookalikes and coverage fill, signal carry to new contacts, an intent score, and openers built only from real, dated signals;
 - earned autonomy ([AUTONOMY.md](AUTONOMY.md)): one level reader that fails closed, permanently human-only classes capped by code and by the database, evidence from every decision point, weekly promotion proposals only a person confirms, immediate demotion after incidents, an outbound writer registry with evals, and narrow, rule-checked automatic replies;
@@ -52,7 +57,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
 - the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail`, `email-cloudflare` and `calendar-google`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. Self-improvement (12), the dashboard (14) and the optional ship loop module (13) remain.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. The optional ship loop module (13) and the first release remain.
 
 ## Milestones
 

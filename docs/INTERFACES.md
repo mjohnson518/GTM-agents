@@ -590,6 +590,7 @@ runEmailProviderContract(create, fixtures)        // _contract/email-provider.ts
 runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
 runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
 runInboxProviderContract(create, fixtures)        // _contract/inbox-provider.ts; capability-limited adapters declare what they cannot do
+runBillingProviderContract(create, fixtures)      // _contract/billing-provider.ts; signed, tampered, stale and multi-signature webhooks
 runCalendarProviderContract(create, fixtures)     // _contract/calendar-provider.ts; the request asks for no title or description
 // Runners for the other ports arrive with the adapters that need them.
 ```
@@ -611,7 +612,7 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
 | `data-xai` | SignalSource | Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
-| `billing-stripe` | BillingProvider | `t=,v1=` signature, 5-minute tolerance |
+| `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |
 | `llm-gateway` | ModelGateway | Anthropic is available; OpenAI and Workers AI are planned. AI Gateway optional |
 
 To request a new adapter, open an adapter request issue with:

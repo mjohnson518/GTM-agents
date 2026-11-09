@@ -2,7 +2,7 @@
 // into the Worker's fetch, scheduled and queue handlers.
 //
 // Built in:
-//   - GET /health, and /admin/* served from the ASSETS binding;
+//   - GET /health, and /admin/* served from the ASSETS binding, with headers that forbid framing;
 //   - bearer authentication on every /api/* route except /api/webhooks/*, which verify their own
 //     signatures (an unset GATEWAY_TOKEN answers 503: the gate fails closed);
 //   - POST /api/webhooks/operator and the chat queue consumer, which run the operator agent when
@@ -18,7 +18,10 @@
 //     until `lifecycle.billing` is given), and the EVENTS_QUEUE consumer that routes what they
 //     record. docs/LIFECYCLE.md covers them;
 //   - the JOBS_QUEUE consumer and its dead-letter consumer, when the binding is declared: each due
-//     job runs in its own queue invocation (packages/core/src/jobs/queue.ts).
+//     job runs in its own queue invocation (packages/core/src/jobs/queue.ts);
+//   - GET /ws, the operator dashboard's WebSocket: Cloudflare Access verified at the Worker (no
+//     bearer token), then handed to the OperatorGateway Durable Object. It answers 503 until the
+//     admin section and the admin:enabled flag are set. docs/DASHBOARD.md covers it.
 import type { TemplateFile } from "./templates/index.ts";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -45,6 +48,8 @@ import { BILLING_WEBHOOK_PATH, createBillingWebhook } from "./billing/webhook.ts
 import { createEventConsumer, isEventMessage } from "./events/consumer.ts";
 import type { LifecycleWiring } from "./lifecycle/jobs.ts";
 import { PRODUCT_WEBHOOK_PATH, createProductWebhook } from "./product-bridge/webhook.ts";
+import { GATEWAY_PATH, createGatewayRoute } from "./gateway/route.ts";
+import { registerGateway, type DashboardExtensions } from "./gateway/wiring.ts";
 
 export const MAX_BODY_BYTES = 100 * 1024;
 
@@ -154,6 +159,11 @@ export interface CreateWorkerOptions<E extends Env = Env> {
    */
   lifecycle?: LifecycleWiring<E>;
   /**
+   * Optional sources for the operator dashboard (docs/DASHBOARD.md): proposal sources such as
+   * learnings, fitness scores, and the link-intake status.
+   */
+  dashboard?: DashboardExtensions<E>;
+  /**
    * Called with the trigger's cron string and the outcomes of the jobs that ran, for observability:
    * after every scheduled invocation (empty when nothing was due that minute, or when every due job
    * went to the jobs queue), and, with the jobs queue, once per job its consumer ran.
@@ -164,6 +174,24 @@ export interface CreateWorkerOptions<E extends Env = Env> {
 export interface GtmWorker<E extends Env = Env> extends ExportedHandler<E> {
   readonly app: AppType<E>;
   readonly registry: JobRegistry<E>;
+}
+
+/**
+ * Headers on every /admin/* response: the dashboard may not be framed by any page (a meta tag
+ * cannot set frame-ancestors), and content types are not sniffed. The dashboard's own
+ * Content-Security-Policy still applies; browsers enforce both.
+ */
+export const ADMIN_RESPONSE_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  "Content-Security-Policy": "frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "no-referrer",
+});
+
+function withAdminHeaders(response: Response): Response {
+  const out = new Response(response.body, response);
+  for (const [name, value] of Object.entries(ADMIN_RESPONSE_HEADERS)) out.headers.set(name, value);
+  return out;
 }
 
 export function consoleLogger(scope: Record<string, unknown> = {}): JobLogger {
@@ -217,11 +245,32 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
   app.get("/admin", (c) => c.redirect("/admin/", 301));
   app.all("/admin/*", async (c) => {
     if (!c.env.ASSETS) return c.json({ error: "not_found" }, 404);
-    return c.env.ASSETS.fetch(c.req.raw);
+    return withAdminHeaders(await c.env.ASSETS.fetch(c.req.raw));
   });
 
   // Every /api/* route needs the bearer token, except webhooks, which verify their own signatures.
   app.use("/api/*", bearerAuth());
+
+  // The operator dashboard's WebSocket. Cloudflare Access is the authentication: the token is
+  // verified here, before the upgrade reaches the OperatorGateway Durable Object.
+  registerGateway<E>({
+    config,
+    registry: () => registry,
+    ...(options.operator ? { operator: options.operator } : {}),
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.email ? { email: options.email } : {}),
+    ...(options.inbox ? { inbox: options.inbox } : {}),
+    lifecycle: options.lifecycle !== undefined,
+    agent: {
+      ...(options.agent?.maxRounds !== undefined ? { maxRounds: options.agent.maxRounds } : {}),
+      ...(options.agent?.maxTokens !== undefined ? { maxTokens: options.agent.maxTokens } : {}),
+      ...(options.agent?.templates ? { templates: options.agent.templates } : {}),
+      ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
+      ...(options.agent?.owedWindowDays !== undefined ? { owedWindowDays: options.agent.owedWindowDays } : {}),
+    },
+    extensions: options.dashboard ?? {},
+  });
+  app.get(GATEWAY_PATH, createGatewayRoute<E>(config, { log: consoleLogger({ service: "gtm-agents", scope: "dashboard" }) }));
 
   const agentOptions = {
     config,

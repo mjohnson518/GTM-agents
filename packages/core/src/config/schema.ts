@@ -123,6 +123,23 @@ export const configSchema = z
         allowedUserIds: z.array(z.string().min(1)).default([]),
       })
       .prefault({}),
+    /**
+     * The operator dashboard (docs/DASHBOARD.md). Without this section `/ws` answers 503, and the
+     * admin:enabled flag must also be on. Cloudflare Access authenticates every dashboard
+     * connection; these fields say which Access application and which people to accept.
+     */
+    admin: z
+      .strictObject({
+        /** The Cloudflare One team domain, for example acme.cloudflareaccess.com. */
+        accessTeamDomain: domain,
+        /** The Access application's audience (AUD) tag. */
+        accessAud: z.string().regex(/^[A-Za-z0-9]{16,128}$/, "the AUD tag is the Access application's Application Audience tag"),
+        /** Emails allowed to use the dashboard. Access must also admit them; anyone else is refused. */
+        allowedEmails: z.array(z.email()).min(1).max(50),
+        /** Extra https origins the dashboard may connect from (a local dev server). The deployment's own origin is always allowed. */
+        allowedOrigins: z.array(z.url({ protocol: /^https?$/ })).max(10).default([]),
+      })
+      .optional(),
   })
   .superRefine((config, ctx) => {
     if (!config.sending.domain.endsWith(`.${config.company.domain}`)) {

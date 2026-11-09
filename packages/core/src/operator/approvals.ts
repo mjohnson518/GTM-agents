@@ -19,6 +19,7 @@
 import { recordDraftDecision } from "../autonomy/evidence.ts";
 import { approveDraft, draftDigest, markShown, wasShown, type DraftContent, type DraftStatus, type ShownStore } from "../security/approval-digest.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
+import { constantTimeEqual } from "../http/auth.ts";
 import type { OperatorChannel, OperatorUpdate } from "../ports/operator.ts";
 import { parseApprovalPayload, payloadMatchesDigest } from "./approval-payload.ts";
 
@@ -85,6 +86,71 @@ export async function requestDraftApproval(deps: ApprovalDeps, draftId: string, 
 
 export type ApprovalOutcome = { outcome: "approved" | "rejected"; draftId: string } | { outcome: "refused"; reason: string; draftId?: string };
 
+type Commit = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Mark a draft approved for `actor`, given the digest of its current content. The update is a
+ * compare-and-set on the status and the content, so an edit that lands in between is not approved.
+ */
+async function commitApproval(deps: Pick<ApprovalDeps, "db" | "now">, row: DraftRow, current: string, actor: string): Promise<Commit> {
+  const approval = await approveDraft({ ...contentOf(row), status: row.status, approved_digest: row.approved_digest }, current);
+  if (!approval.ok) return { ok: false, reason: `The approval was refused: ${approval.reason}.` };
+  const at = (deps.now?.() ?? new Date()).toISOString();
+  const result = await deps.db
+    .prepare(
+      `UPDATE drafts SET status = 'approved', approved_digest = ?2, approved_at = ?3, approved_by = ?4, updated_at = ?3
+        WHERE id = ?1 AND status = ?5 AND recipient_email IS ?6 AND subject IS ?7 AND body IS ?8`,
+    )
+    .bind(row.id, current, at, actor, row.status, row.recipient_email, row.subject, row.body)
+    .run();
+  if ((result.meta.changes ?? 0) === 0) return { ok: false, reason: "That draft changed while it was being approved, so the approval was refused." };
+  await recordDraftDecision(deps.db, row.id, "approved", deps.now?.() ?? new Date());
+  return { ok: true };
+}
+
+/** Mark a draft rejected. A sent or already rejected draft is refused. */
+async function commitRejection(deps: Pick<ApprovalDeps, "db" | "now">, row: DraftRow): Promise<Commit> {
+  if (row.status === "sent") return { ok: false, reason: "That draft was already sent and cannot be rejected." };
+  if (row.status === "rejected") return { ok: false, reason: "That draft was already rejected." };
+  const result = await deps.db
+    .prepare("UPDATE drafts SET status = 'rejected', updated_at = ?2 WHERE id = ?1 AND status IN ('draft', 'pending_approval', 'approved')")
+    .bind(row.id, (deps.now?.() ?? new Date()).toISOString())
+    .run();
+  if ((result.meta.changes ?? 0) === 0) return { ok: false, reason: "That draft changed state and was not rejected." };
+  await recordDraftDecision(deps.db, row.id, "rejected", deps.now?.() ?? new Date());
+  return { ok: true };
+}
+
+export type DraftDecision = { ok: true; draftId: string } | { ok: false; code: "not_found" | "conflict" | "stale"; reason: string };
+
+/**
+ * Approve a draft for an operator who was shown it outside a chat button (the dashboard). The same
+ * rules as a tap: the draft is re-resolved by id; `shownDigest`, the full digest the operator was
+ * shown, must equal the digest of its current content, and the shown record must confirm that
+ * content was shown (a gate: an unreadable record refuses); then the same compare-and-set approves
+ * it. Approving never sends anything.
+ */
+export async function approveShownDraft(deps: Pick<ApprovalDeps, "db" | "shown" | "now">, draftId: string, shownDigest: string, actor: string): Promise<DraftDecision> {
+  const row = await loadDraft(deps.db, draftId);
+  if (!row) return { ok: false, code: "not_found", reason: "That draft no longer exists." };
+  if (row.status === "approved") return { ok: false, code: "conflict", reason: "That draft is already approved." };
+  if (row.status !== "pending_approval" && row.status !== "draft") return { ok: false, code: "conflict", reason: `That draft is ${row.status} and cannot be approved.` };
+  const content = contentOf(row);
+  const current = await draftDigest(content);
+  const fresh = (await constantTimeEqual(shownDigest, current)) && (await wasShown(deps.shown, row.id, content));
+  if (!fresh) return { ok: false, code: "stale", reason: "This draft changed after it was shown, so the approval was refused. Reload it and review it again." };
+  const approved = await commitApproval(deps, row, current, actor);
+  return approved.ok ? { ok: true, draftId: row.id } : { ok: false, code: "conflict", reason: approved.reason };
+}
+
+/** Reject a draft by id (the dashboard's reject). Rejecting needs no digest: it can only stop a send. */
+export async function rejectDraftById(deps: Pick<ApprovalDeps, "db" | "now">, draftId: string): Promise<DraftDecision> {
+  const row = await loadDraft(deps.db, draftId);
+  if (!row) return { ok: false, code: "not_found", reason: "That draft no longer exists." };
+  const rejected = await commitRejection(deps, row);
+  return rejected.ok ? { ok: true, draftId: row.id } : { ok: false, code: "conflict", reason: rejected.reason };
+}
+
 type Callback = Extract<OperatorUpdate, { type: "callback" }>;
 
 async function answer(deps: ApprovalDeps, update: Callback, text: string): Promise<void> {
@@ -119,14 +185,8 @@ export async function handleApprovalCallback(deps: ApprovalDeps, update: Callbac
   const current = await draftDigest(content);
 
   if (update.action === "reject") {
-    if (row.status === "sent") return refuse("That draft was already sent and cannot be rejected.", row.id);
-    if (row.status === "rejected") return refuse("That draft was already rejected.", row.id);
-    const result = await deps.db
-      .prepare("UPDATE drafts SET status = 'rejected', updated_at = ?2 WHERE id = ?1 AND status IN ('draft', 'pending_approval', 'approved')")
-      .bind(row.id, (deps.now?.() ?? new Date()).toISOString())
-      .run();
-    if ((result.meta.changes ?? 0) === 0) return refuse("That draft changed state and was not rejected.", row.id);
-    await recordDraftDecision(deps.db, row.id, "rejected", deps.now?.() ?? new Date());
+    const rejected = await commitRejection(deps, row);
+    if (!rejected.ok) return refuse(rejected.reason, row.id);
     await answer(deps, update, "Rejected.");
     await settle(deps, update, `Rejected draft ${row.id} for ${row.recipient_email ?? "(none)"}.`);
     return { outcome: "rejected", draftId: row.id };
@@ -142,18 +202,8 @@ export async function handleApprovalCallback(deps: ApprovalDeps, update: Callbac
     return { outcome: "refused", reason: "the draft changed after it was shown", draftId: row.id };
   }
 
-  const approval = await approveDraft({ ...content, status: row.status, approved_digest: row.approved_digest }, current);
-  if (!approval.ok) return refuse(`The approval was refused: ${approval.reason}.`, row.id);
-  const at = (deps.now?.() ?? new Date()).toISOString();
-  const result = await deps.db
-    .prepare(
-      `UPDATE drafts SET status = 'approved', approved_digest = ?2, approved_at = ?3, approved_by = ?4, updated_at = ?3
-        WHERE id = ?1 AND status = ?5 AND recipient_email IS ?6 AND subject IS ?7 AND body IS ?8`,
-    )
-    .bind(row.id, current, at, `operator:${update.userId}`, row.status, row.recipient_email, row.subject, row.body)
-    .run();
-  if ((result.meta.changes ?? 0) === 0) return refuse("That draft changed while it was being approved, so the approval was refused.", row.id);
-  await recordDraftDecision(deps.db, row.id, "approved", deps.now?.() ?? new Date());
+  const approved = await commitApproval(deps, row, current, `operator:${update.userId}`);
+  if (!approved.ok) return refuse(approved.reason, row.id);
   await answer(deps, update, "Approved. Nothing was sent.");
   await settle(deps, update, `Approved draft ${row.id} for ${row.recipient_email ?? "(none)"}. Nothing was sent.`);
   return { outcome: "approved", draftId: row.id };

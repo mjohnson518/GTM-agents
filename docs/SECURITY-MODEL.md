@@ -191,6 +191,10 @@ Do not wrap a send in `runOnce`. A send can fail after the provider accepted it 
 
 `claimEffect` returns true for exactly one caller per (event id, effect) pair, including under concurrency, because the claim is a primary-key insert in D1. An empty event id or effect name throws rather than deduplicating nothing. A claim is a gate, so a database error propagates and the effect does not happen. `releaseEffect` undoes a claim whose effect did not happen; it is bookkeeping and never throws.
 
+## The dashboard
+
+The operator dashboard talks to the Worker over `/ws`, admitted only with a valid Cloudflare Access token (RS256, checked against the team's keys, audience, issuer and expiry) for an allowlisted email, from the deployment's own origin, with `admin:enabled` on; anything else is refused. Identity comes from the token, never from a request. Every action runs through the module that owns it, with the same gates, digest checks and claims as the chat commands; approvals carry the digest of exactly the text shown; autonomy levels, the halt and the auto-send switches cannot be changed from it; every mutation is audited; requests are rate-limited per connection; and `/admin` cannot be framed. [DASHBOARD.md](DASHBOARD.md) covers setup.
+
 ## Halt, kill switch and the send gates
 
 **The system halt** (`system:halt` in KV) stops every scheduled job and every send, replies included. Only an absent key means running: any value, an unparseable value, a KV error or a missing KV binding means halted. Only the operator sets or clears it; no agent tool writes it.

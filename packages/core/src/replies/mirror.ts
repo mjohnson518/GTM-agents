@@ -32,6 +32,7 @@ import { closeReplyEvidence, recordReplyEvidence, type ReplyEvidence } from "./e
 import { mailboxCan, mailboxDraftExists, ownMessagesAfter } from "./mailbox.ts";
 import { DAY_MS, daysAgo, inboundColumns, type InboundRow } from "./rows.ts";
 import { senderLabel, sentMatchesDraft } from "./text.ts";
+import { recordDraftEdit } from "../learning/edit-mining.ts";
 
 export const MIRROR_MAX_AGE_DAYS = 14;
 export const MIRROR_GONE_WAIT_DAYS = 7;
@@ -107,6 +108,10 @@ async function markAnsweredFromMailbox(deps: MirrorDeps, row: MirrorRow, sent: I
   const at = deps.now.toISOString();
   const outcome: ReplyEvidence = row.d_body && typeof sent.text === "string" && sentMatchesDraft(sent.text, row.d_body) ? "approved_unchanged" : "approved_edited";
   await recordReplyEvidence(deps.db, { draftId: row.d_id, actionClass: row.d_class, outcome, detail: "sent from the mailbox", now: deps.now });
+  // Edit mining (docs/LEARNING.md) reads what the operator changed. Bookkeeping: never throws.
+  if (outcome === "approved_edited" && row.d_body && typeof sent.text === "string") {
+    await recordDraftEdit(deps.db, { draftId: row.d_id, contactId: row.contact_id ?? null, kind: "reply", actionClass: row.d_class ?? null, generatedBody: row.d_body, sentText: sent.text, now: deps.now });
+  }
   const writes = [
     deps.db.prepare("UPDATE inbound_emails SET status = 'responded', updated_at = ?2 WHERE id = ?1 AND status IN ('new', 'notified', 'draft_created')").bind(row.id, at),
     deps.db.prepare("UPDATE drafts SET status = 'sent', sent_at = ?2, updated_at = ?2 WHERE id = ?1 AND status IN ('pending_approval', 'approved')").bind(row.d_id, at),

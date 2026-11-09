@@ -16,6 +16,8 @@ export const LIFECYCLE_FLAGS = Object.freeze({
   billing: "billing:enabled",
   /** Attribution tokens: identity resolution reads them only while this is on. */
   refTokens: "outreach:ref_tokens_enabled",
+  /** Lifecycle follow-ups to product users (followups.ts) and the fu-approve and fu-reject commands. Needs lifecycle:enabled too. */
+  followups: "lifecycle:followups_enabled",
 });
 
 /** The pull's state per resource: {since, cursor, fullAt}. A rebuildable cache in KV. */

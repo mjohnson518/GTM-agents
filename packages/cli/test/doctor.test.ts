@@ -83,14 +83,14 @@ describe("gtm doctor", () => {
   it("with --remote, passes when core and adapter secrets are set and the kill-switch flags are unset", async () => {
     const runner: CommandRunner = async (_cmd, args) => {
       if (args.includes("secret")) {
-        const names = ["GATEWAY_TOKEN", "UNSUBSCRIBE_SIGNING_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "ANTHROPIC_API_KEY", "EXA_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GOOGLE_CALENDAR_REFRESH_TOKEN"];
+        const names = ["GATEWAY_TOKEN", "UNSUBSCRIBE_SIGNING_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "ANTHROPIC_API_KEY", "EXA_API_KEY", "HUNTER_API_KEY", "RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN", "GOOGLE_CALENDAR_REFRESH_TOKEN", "STRIPE_WEBHOOK_SECRET", "STRIPE_SECRET_KEY"];
         return { code: 0, stdout: JSON.stringify(names.map((name) => ({ name }))), stderr: "" };
       }
       return bulkGet({}, args);
     };
     const io = captureIo();
     expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(0);
-    expect(io.text()).toMatch(/PASS\s+secrets\s+all 13 required secrets are set/);
+    expect(io.text()).toMatch(/PASS\s+secrets\s+all 15 required secrets are set/);
   });
 
   it("passes exactly one per-minute cron trigger and fails a missing or extra one", () => {

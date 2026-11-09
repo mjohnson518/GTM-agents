@@ -135,6 +135,11 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - The existing `calendar_meetings` hold booked meetings, `meetings.summary` the operator's notes (keyed `calendar:<code>:<contact>`), and `deal_handoffs` the static briefs (`trigger` `meeting_booked:<code>` or `stage:<stage>`). Indexes on `calendar_meetings (first_seen_at)` and `deal_handoffs (deal_id, trigger)`.
 - 0022 indexes `execution_runs (task_name, status, started_at)` for the retention job.
 
+### Learning and lifecycle follow-ups (0027, 0028)
+
+- `learnings_proposals` gains `kind`, `payload`, `expires_at` and `status_reason` (0027): one proposal record for every learning loop. New `draft_edits` (a draft and what was actually sent, deleted with the contact), `agent_reviews` and `memories`.
+- `lifecycle_followups` (0028): one row per contact, kind and lifecycle entry, which is the claim; a CHECK refuses an offer as sent unless a person decided it. The older `followups` table (0008) is unused.
+
 ### Experiments and calendar baseline (0024, 0026)
 
 - `experiments.control_template_sha256` and `treatment_template_sha256` (0024): both templates' copy hashes, recorded at start, so edited copy puts an experiment on hold rather than mixing versions. Experiments otherwise use the 0009 tables (`experiments`, `experiment_assignments` pinned per account, subject tests and variants, proposals).

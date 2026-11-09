@@ -238,9 +238,9 @@ None calls a model or spends, and each is safe to rerun. Change a schedule with 
 
 ## Limits
 
-- **No vendor billing adapter ships yet.** The port, the webhook, the routing and a fake provider for tests (`@gtm-agents/core/billing/testing`) are in core; an adapter is one folder under `packages/adapters/` ([INTERFACES.md](INTERFACES.md)).
+- **Stripe is the one billing adapter** (`billing-stripe`: signed webhooks, customer and subscription reads). Another provider is one folder under `packages/adapters`, behind the same port.
 - **No attribution tokens are issued yet.** Identity resolution reads `ref_tokens`; putting `?ref=` on outreach links belongs to the composer, behind `outreach:ref_tokens_enabled`.
-- **Lifecycle follow-ups are not built.** Moves are recorded and acted on as above, but no message goes to a product user because of them.
+- **Lifecycle follow-ups** (first-use nudges, a usefulness check, re-engage, at-risk check-ins) come from approved `lifecycle` templates, under `lifecycle:followups_enabled`, with gaps, a monthly cap and each kind's autonomy class; upgrade and win-back offers are always drafts a person approves. No lifecycle templates ship; write your own.
 - **The pull cannot see billing state.** The users endpoint has no subscription status, so a missed payment event is repaired only by the billing provider's own redelivery.
 - **A cancellation counts when it arrives**, even when the subscription runs to the end of its period.
 - **Pre-sign-up moves other than a booked meeting** (qualified, outreach sent, replied, sequence exhausted, unsubscribed) are in the table, but nothing calls them yet.

@@ -158,6 +158,10 @@ Replies and follow-ups add their own commands, documented with them:
 | `autonomy-set <class> <0-3>`, then `autonomy-confirm-<id>-<code>` | Propose a level change, then confirm it within 30 minutes; permanently human-only classes stay at 1 or below |
 | `experiment-create`, `experiment-show`, `experiment-list`, `experiment-stop`, then `experiment-start <id>` and `experiment-start-<id>-<code>` | Pre-register, start (two-step) and stop experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) |
 | `exp-list`, `exp-approve-<id>`, `exp-reject-<id>`, `ab-dashboard`, `sample-size` | Copy-change and self-review proposals, the A/B report, and the sample-size helper |
+| `learning-list`, `learning-show <id>`, `learning-approve-<id>-<code>`, `learning-reject-<id>`, `objection-answer <id> <text>`, `voice-build`, `fitness` | Learning proposals, objection answers, the voice profile and the fitness trend ([LEARNING.md](LEARNING.md)) |
+| `fu-approve-<id>`, `fu-reject-<id>` | Lifecycle follow-ups waiting for a person ([LIFECYCLE.md](LIFECYCLE.md)) |
+
+Everything here can also be done from the dashboard ([DASHBOARD.md](DASHBOARD.md)), with the same checks.
 | `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
 | `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 

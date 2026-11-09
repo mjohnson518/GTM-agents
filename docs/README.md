@@ -10,6 +10,8 @@
 | [SENDING.md](SENDING.md) | Send email safely: the sending domain, the provider and webhooks, the footer and unsubscribe, windows, caps, the ramp and the bounce monitor |
 | [SEQUENCES.md](SEQUENCES.md) | Turn on follow-ups: steps and timing, what stops a sequence, threading, release, the manual channel step |
 | [INBOX.md](INBOX.md) | Connect a mailbox: Gmail or Cloudflare Email Routing, detection, structural classification and what each class does |
+| [DASHBOARD.md](DASHBOARD.md) | Run the day from the dashboard: Cloudflare Access setup, the views and what each can do, and the security model |
+| [LEARNING.md](LEARNING.md) | Let the system propose improvements: each learning loop, its guardrail and how you approve its proposals |
 | [EXPERIMENTS.md](EXPERIMENTS.md) | Prove what works: allocation, assignment, experiment types, pre-registration, conclusion rules, the copy-change gate and the self-review |
 | [SIGNALS.md](SIGNALS.md) | Give outreach a dated reason: each signal source, signal rules and carry, the intent score, openers and template variables |
 | [AUTONOMY.md](AUTONOMY.md) | Decide how much the agent does on its own: levels, evidence, promotion and demotion, the writer registry and evals, automatic replies |

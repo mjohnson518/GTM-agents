@@ -81,6 +81,14 @@ export const OUTBOUND_WRITERS: readonly OutboundWriter[] = Object.freeze([
     evalFile: WRITER_EVAL_FILE,
   },
   {
+    id: "lifecycle-follow-ups",
+    writes: "follow-ups to product users (nudges, the usefulness check, re-engage and at-risk notes, upgrade and win-back offers), rendered from the operator's approved lifecycle templates",
+    module: "packages/core/src/lifecycle/followup-rules.ts",
+    actionClasses: ["lifecycle_activation", "feedback", "reengage", "at_risk", "offers"],
+    source: "template",
+    evalFile: WRITER_EVAL_FILE,
+  },
+  {
     id: "operator-agent-drafts",
     writes: "drafts the operator asks the chat agent for",
     module: "packages/core/src/tools/drafts-create.ts",

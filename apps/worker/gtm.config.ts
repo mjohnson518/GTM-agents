@@ -43,6 +43,7 @@ export default defineConfig({
     "email-cloudflare": { options: {} },
     "calendar-google": { options: {} },
     "data-jobboards": { options: {} },
+    "billing-stripe": { options: {} },
   },
 
   // Model id per role. Core asks for roles; only this file names models.
