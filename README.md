@@ -107,4 +107,4 @@ npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 
 ## Credits and contact
 
-Created and maintained by [Marc Johnson](https://marcjohnson.xyz). If you're interested in using this system for your product or services, I'm happy to work with you: [info@c12.space](mailto:info@c12.space).
+Created and maintained by [Marc Johnson](https://marcjohnson.xyz). If you're interested in using this system for your product or services, I'm happy to work with you: [m@c12.space](mailto:m@c12.space).
