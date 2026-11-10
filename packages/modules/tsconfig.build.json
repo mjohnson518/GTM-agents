@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "rewriteRelativeImportExtensions": true,
+    "rootDir": ".",
+    "outDir": "../../.release/stage/modules/dist",
+    "types": ["@cloudflare/workers-types"],
+    "paths": {
+      "@gtm-agents/core": ["../../.release/stage/core/dist/index.d.ts"],
+      "@gtm-agents/core/*": ["../../.release/stage/core/dist/*/index.d.ts", "../../.release/stage/core/dist/*.d.ts"]
+    }
+  },
+  "include": ["*/src/**/*.ts"],
+  "exclude": ["**/*.test.ts", "node_modules"]
+}

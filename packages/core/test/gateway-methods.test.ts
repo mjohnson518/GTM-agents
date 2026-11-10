@@ -10,6 +10,7 @@ import { handleFrame } from "../src/gateway/dispatch.ts";
 import { parseChangelog } from "../src/gateway/ops.ts";
 import type { ServerEvent } from "../src/gateway/protocol.ts";
 import { createJobRegistry } from "../src/jobs/registry.ts";
+import type { ModuleCommand } from "../src/operator/module-commands.ts";
 import { COLD_PAUSE_CRITICAL_KEY } from "../src/sending/kill-switch.ts";
 import { acmeConfig } from "./fixtures.ts";
 
@@ -24,7 +25,7 @@ class Kv {
   delete = async (k: string) => void this.map.delete(k);
 }
 
-function harness() {
+function harness(commands?: ReadonlyArray<ModuleCommand>) {
   const kv = new Kv();
   kv.map.set("admin:enabled", "true");
   const events: ServerEvent[] = [];
@@ -32,7 +33,7 @@ function harness() {
   const state: ConnectionState = { email: EMAIL, sub: "u", expiresAt: Date.now() + 3_600_000, connected: true, subscribed: false, rl: { start: Date.now(), requests: 0, mutations: 0, chats: 0 } };
   const ctx: GatewayContext = {
     env: { DB: db, KV: kv } as unknown as Env,
-    wiring: { config, registry: () => createJobRegistry([]), lifecycle: false, agent: {}, extensions: {} },
+    wiring: { config, registry: () => createJobRegistry([]), lifecycle: false, agent: {}, extensions: {}, ...(commands ? { commands } : {}) },
     state,
     now: () => new Date(),
     actor: `operator:${EMAIL}`,
@@ -103,6 +104,39 @@ describe("chat", () => {
     expect(h.events.some((e) => e.event === "chat.done")).toBe(true);
     expect((await h.call("chat.send", { text: "batch-release-abc123-def456" })).result).toHaveProperty("turnId");
     expect((await h.call("chat.send", { text: "summarize our pipeline" })).error?.code).toBe("unavailable");
+  });
+});
+
+describe("chat commands that run elsewhere", () => {
+  it("refuses a module command, a follow-up command and a learning command without running them or calling the model", async () => {
+    let ran = 0;
+    const ship: ModuleCommand = {
+      module: "ship",
+      helpLines: ["ship-themes  list the open themes"],
+      match: (text) => (/^ship-[a-z]+/.test(text.trim()) ? () => Promise.resolve(`ran ${(ran += 1)}`) : null),
+    };
+    const h = harness([ship]);
+    h.kv.map.set("operator:agent_enabled", "true");
+    // No model is wired: a message passed on as a task would answer "unavailable" instead of a turn.
+    for (const text of ["ship-approve-th1 0123456789abcdef0123456789abcdef", "fu-approve-0123456789", "learning-list"]) {
+      const before = h.events.length;
+      const sent = await h.call<{ turnId: string }>("chat.send", { text });
+      expect(sent.result, text).toHaveProperty("turnId");
+      await Promise.all(h.deferred);
+      const said = h.events.slice(before).find((e) => e.event === "chat.delta");
+      expect(said?.event === "chat.delta" && said.data.text, text).toContain("Nothing was run.");
+    }
+    expect(ran).toBe(0);
+  });
+
+  it("lists a module's commands in /help", async () => {
+    const ship: ModuleCommand = { module: "ship", helpLines: ["ship-themes  list the open themes"], match: () => null };
+    const h = harness([ship]);
+    h.kv.map.set("operator:agent_enabled", "true");
+    await h.call("chat.send", { text: "/help" });
+    await Promise.all(h.deferred);
+    const said = h.events.find((e) => e.event === "chat.delta");
+    expect(said?.event === "chat.delta" && said.data.text).toContain("ship-themes");
   });
 });
 

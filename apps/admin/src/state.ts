@@ -1,5 +1,6 @@
 // GTM-agents: the dashboard's pure state logic: reconnect backoff, connection outcomes, the live
-// activity feed, streaming chat turns, the pipeline kanban grouping and flag editing rules. Nothing
+// activity feed, streaming chat turns, what rejecting a proposal does, the pipeline kanban grouping
+// and flag editing rules. Nothing
 // here touches the DOM, so all of it is unit tested.
 import type { ActivityItem } from "@gtm-agents/core/gateway/protocol";
 
@@ -80,16 +81,21 @@ export function chatTurnStarted(state: ChatState, turnId: string, at: string): C
   return { messages: [...state.messages, message], early: rest };
 }
 
-export function chatDelta(state: ChatState, turnId: string, text: string): ChatState {
+/**
+ * A chat.delta: its text is appended to the turn's message, or, with `reset`, replaces what the turn
+ * showed so far (a later model call's answer, or the final reply). The text is kept as a plain
+ * string; the view renders it as text, never as HTML.
+ */
+export function chatDelta(state: ChatState, turnId: string, text: string, reset = false): ChatState {
   const index = state.messages.findIndex((message) => message.turnId === turnId);
   if (index === -1) {
     const early = state.early[turnId] ?? { text: "" };
-    return { ...state, early: { ...state.early, [turnId]: { ...early, text: early.text + text } } };
+    return { ...state, early: { ...state.early, [turnId]: { ...early, text: reset ? text : early.text + text } } };
   }
   const current = state.messages[index]!;
   if (current.status !== "streaming") return state;
   const messages = [...state.messages];
-  messages[index] = { ...current, text: current.text + text };
+  messages[index] = { ...current, text: reset ? text : current.text + text };
   return { ...state, messages };
 }
 
@@ -114,6 +120,14 @@ export function chatStreamingTurn(state: ChatState): string | null {
     if (message.status === "streaming" && message.turnId) return message.turnId;
   }
   return null;
+}
+
+// Proposals
+
+/** What rejecting a proposal does, shown before the operator confirms it. The server enforces it. */
+export function rejectConsequence(source: string): string {
+  if (source === "autonomy") return "Rejecting dismisses this proposal: no level changes, and it can never be confirmed afterwards.";
+  return "Rejecting closes this proposal without applying it.";
 }
 
 // Pipeline

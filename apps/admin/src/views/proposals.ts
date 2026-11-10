@@ -1,9 +1,12 @@
 // GTM-agents: the Proposals and Learning views. Approving echoes the digest of the detail text the
 // operator was shown. A two-step proposal (an autonomy change, an experiment start) first shows
-// the full record, then asks for its confirm code before anything is sent.
+// the full record, then asks for its confirm code before anything is sent. Every proposal can be
+// rejected; rejecting an autonomy proposal dismisses it, which changes no level and leaves it
+// impossible to confirm.
 import { html } from "lit";
 import type { MethodResult, Proposal } from "@gtm-agents/core/gateway/protocol";
 import { formatDateTime, humanizeKey, shortDigest } from "../format.ts";
+import { rejectConsequence } from "../state.ts";
 import { confirmAction } from "../ui/dialog.ts";
 import { renderValue } from "../ui/record.ts";
 import { GtmView, LOADING, describeError, section, settle } from "./base.ts";
@@ -70,7 +73,8 @@ async function approveFlow(view: GtmView, shown: Proposal): Promise<void> {
 async function rejectFlow(view: GtmView, shown: Proposal): Promise<void> {
   const answer = await confirmAction({
     title: "Reject the proposal",
-    body: html`<p class="text">${shown.title}</p>`,
+    body: html`<p class="text">${shown.title}</p>
+      <p class="small muted">${rejectConsequence(shown.source)}</p>`,
     fields: [{ name: "reason", label: "Reason", multiline: true }],
     confirmLabel: "Reject",
     danger: true,
@@ -80,6 +84,7 @@ async function rejectFlow(view: GtmView, shown: Proposal): Promise<void> {
     const params: { id: string; reason?: string } = { id: shown.id };
     if (answer.values.reason) params.reason = answer.values.reason;
     await view.rpc.call("proposals.reject", params);
+    return shown.source === "autonomy" ? "Proposal dismissed. No level changed." : "Proposal rejected.";
   });
 }
 

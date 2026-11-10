@@ -1,13 +1,13 @@
 // GTM-agents: security properties of earned autonomy's levels. A permanently human-only class can
 // never be recorded, set, proposed or read above level 1; a level is raised only by an allowlisted
 // operator's confirmed command, never by a tool, a job, a model or inbound text; promotion only
-// proposes; and every failure to read or write a level falls toward level 1. Every value is
-// synthetic.
+// proposes; dismissing a proposal changes no level and leaves it unconfirmable; and every failure to
+// read or write a level falls toward level 1. Every value is synthetic.
 /// <reference types="vite/client" />
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ACTION_CLASSES, PERMANENT_HUMAN, effectiveLevel } from "@gtm-agents/core/autonomy";
-import { createProposal, parseAutonomyCommand, readAutonomyLevel, runAutonomyCommand, runAutonomyReview, runAutonomyWatch } from "@gtm-agents/core/autonomy/runtime";
+import { confirmCommand, createProposal, dismissProposal, parseAutonomyCommand, readAutonomyLevel, runAutonomyCommand, runAutonomyReview, runAutonomyWatch } from "@gtm-agents/core/autonomy/runtime";
 import { defineConfig } from "@gtm-agents/core/config";
 import { readAutoApprove } from "@gtm-agents/core/outreach";
 import { MemoryKv, failingDb, flagsOf, silentLog } from "./helpers.ts";
@@ -102,6 +102,22 @@ describe("who can change a level", () => {
     const toolsAndAgents = Object.entries(sources).filter(([file]) => /\/src\/(?:tools|agents|runtime)\//.test(file));
     expect(toolsAndAgents.length).toBeGreaterThan(3);
     for (const [file, source] of toolsAndAgents) expect(code(source), file).not.toMatch(/autonomy|levelFlagKey|autonomy_level_changes/);
+  });
+
+  it("only an operator path dismisses a proposal, through one function, and dismissing writes no level", async () => {
+    // The chat's autonomy-dismiss-<id> and the dashboard's Reject both call dismissProposal.
+    expect(filesMatching(/\bdismissProposal\(/)).toEqual(["autonomy/commands.ts", "autonomy/proposals.ts", "gateway/proposals.ts"]);
+    const kv = new MemoryKv();
+    const proposal = await createProposal(db, { actionClass: "reply_send", from: 1, to: 3, origin: "review", basedOnChange: 0, requestedBy: "system:autonomy_review", ttlMs: 60_000, now: NOW });
+    const dismissed = await dismissProposal({ db, actor: "operator:user-1", now: NOW }, { id: proposal.id, reason: "not yet" });
+    expect(dismissed.ok).toBe(true);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM autonomy_level_changes").first()).toEqual({ n: 0 });
+    expect(kv.map.size).toBe(0);
+    const confirm = parseAutonomyCommand(confirmCommand(proposal));
+    expect(await runAutonomyCommand({ db, kv, flags: flagsOf(kv), config, userId: "user-1", now: () => NOW }, confirm as never)).toMatch(/is refused/);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM autonomy_level_changes").first()).toEqual({ n: 0 });
+    expect([...kv.map.keys()].some((k) => k.startsWith("autonomy:"))).toBe(false);
+    expect((await readAutonomyLevel({ flags: flagsOf(kv), db, config }, "reply_send")).level).toBe(1);
   });
 
   it("the review proposes and never applies", () => {

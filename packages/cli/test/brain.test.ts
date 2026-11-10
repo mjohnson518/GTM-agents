@@ -16,7 +16,7 @@ describe("gtm brain validate", () => {
   it("passes the example brain with its lock and templates", async () => {
     const io = captureIo();
     expect(await main(["brain", "validate", "examples/brains/acme"], io)).toBe(0);
-    expect(io.text()).toMatch(/14 component\(s\), 3 template\(s\), 0 error\(s\), 0 warning\(s\), version [0-9a-f]{12}/);
+    expect(io.text()).toMatch(/14 component\(s\), 10 template\(s\), 0 error\(s\), 0 warning\(s\), version [0-9a-f]{12}/);
   });
 
   it("fails when an approved file changed after it was locked, and --write-lock fixes it", async () => {

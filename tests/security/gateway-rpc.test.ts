@@ -4,6 +4,7 @@
 // autonomy and the permanently human-only cap out of reach; config.get carries no secret; and text
 // from outside comes back as the same plain string. Every person, company and message is invented.
 import type { Env } from "@gtm-agents/core";
+import { createProposal } from "@gtm-agents/core/autonomy/runtime";
 import { createJobRegistry } from "@gtm-agents/core/jobs";
 import { CLOSE, MUTATING_METHODS, RATE_LIMITS, dashboardEnabled, handleFrame, socketGate, type ConnectionState, type GatewayContext, type GatewayWiring, type ServerEvent } from "@gtm-agents/core/gateway";
 import { replyTestConfig, seedReplyContact } from "@gtm-agents/core/replies/testing";
@@ -230,6 +231,26 @@ describe("mutations", () => {
     const again = ((await h.call("proposals.list", { source: "experiment" })).result as Array<{ id: string; digest: string }>).find((p) => p.id === `experiment:${id}`);
     expect((await h.call("proposals.approve", { id: again?.id, shownDigest: again?.digest })).result).toMatchObject({ status: "applied" });
     expect(h.kv.map.get("outreach:holdout_rate")).toBe("0.2");
+  });
+
+  it("rejects an autonomy proposal by dismissing it: no level changes, it can never be confirmed, and only a pending one can be rejected", async () => {
+    const h = harness();
+    const proposal = await createProposal(db, { actionClass: "reply_send", from: 1, to: 2, origin: "review", basedOnChange: 0, requestedBy: "system:autonomy_review", ttlMs: 3_600_000, now: new Date() });
+    const listed = (await h.call("proposals.list", { source: "autonomy" })).result as Array<{ id: string; digest: string; confirmCode?: string }>;
+    const shown = listed.find((p) => p.id === `autonomy:${proposal.id}`);
+    expect(shown?.confirmCode).toBe(proposal.code);
+    expect((await h.call("proposals.reject", { id: shown?.id, reason: "not yet" })).result).toEqual({ ok: true });
+    const row = await db.prepare("SELECT status, decided_by, detail FROM autonomy_proposals WHERE id = ?1").bind(proposal.id).first();
+    expect(row).toEqual({ status: "refused", decided_by: ACTOR, detail: "dismissed: not yet" });
+    const audit = await db.prepare("SELECT agent_id FROM audit_log WHERE action = 'autonomy.proposal_dismissed' AND details LIKE ?1").bind(`%${proposal.id}%`).all();
+    expect(audit.results).toEqual([{ agent_id: ACTOR }]);
+
+    const approved = await h.call("proposals.approve", { id: shown?.id, shownDigest: shown?.digest, confirmCode: proposal.code });
+    expect(approved.result).toMatchObject({ status: "refused" });
+    expect((await h.call("proposals.reject", { id: shown?.id })).error?.code).toBe("conflict");
+    expect([...h.kv.map.keys()].some((k) => k.startsWith("autonomy:"))).toBe(false);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM autonomy_level_changes WHERE proposal_id = ?1").bind(proposal.id).first()).toEqual({ n: 0 });
+    expect(((await h.call("proposals.list", { source: "autonomy" })).result as Array<{ id: string }>).some((p) => p.id === shown?.id)).toBe(false);
   });
 });
 

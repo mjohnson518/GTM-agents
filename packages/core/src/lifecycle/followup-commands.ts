@@ -17,7 +17,10 @@
 //   fu-reject-<id>   drop it.
 // This is the only way an offer (the upgrade offer, the win-back) is ever sent: a person approving
 // it is what the permanently human class requires.
-import { recordDraftDecision } from "../autonomy/evidence.ts";
+// Each decision is autonomy evidence for the follow-up's class (followup-evidence.ts): an approval
+// handed to the send function is approved_unchanged, or approved_edited when the draft was changed
+// after the writer rendered it, and a rejection is rejected. Offers record none. Recording is
+// bookkeeping and never changes what is sent.
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
@@ -29,6 +32,7 @@ import { checkSuppression } from "../sending/suppression.ts";
 import { DEFAULT_TIMEZONE, recipientTimezone } from "../sending/timezone.ts";
 import type { SendOutreach } from "../sending/types.ts";
 import { isWithinWindow, windowForPath } from "../sending/window.ts";
+import { approvalEvidence, recordFollowupEvidence } from "./followup-evidence.ts";
 import { FOLLOWUP_LIMITS, FOLLOWUP_RULES, capProblem, isFollowupKind } from "./followup-rules.ts";
 import { countedHistory, followupDraftKey, followupPreview, personLabel, safeSend, settleSend, tellOperator } from "./followups.ts";
 import { LIFECYCLE_FLAGS } from "./flags.ts";
@@ -78,6 +82,7 @@ interface CommandRow {
   subject: string | null;
   body: string | null;
   draft_status: string | null;
+  draft_notes: string | null;
   email: string | null;
   email_sha256: string | null;
   mailbox_sha256: string | null;
@@ -109,7 +114,7 @@ export async function runFollowupCommand(deps: FollowupCommandDeps, command: Fol
   const row = await db
     .prepare(
       `SELECT f.id, f.contact_id, f.kind, f.state, f.entered_at, f.status, f.reason, f.draft_id, f.shown_digest, f.override_at, f.created_at, f.template_id,
-              d.recipient_email, d.recipient_name, d.subject, d.body, d.status AS draft_status,
+              d.recipient_email, d.recipient_name, d.subject, d.body, d.status AS draft_status, d.notes AS draft_notes,
               c.email, c.email_sha256, c.mailbox_sha256, c.first_name, c.last_name, c.timezone, c.location,
               l.state AS current_state, l.state_changed_at AS current_entered, l.product_user_id
          FROM lifecycle_followups f
@@ -128,7 +133,7 @@ export async function runFollowupCommand(deps: FollowupCommandDeps, command: Fol
 
   if (command.action === "reject") {
     if (!(await close(db, row, "rejected", "rejected by the operator", at, actor))) return `Follow-up ${row.id} was already decided, so nothing was changed.`;
-    if (row.draft_id) await recordDraftDecision(db, row.draft_id, "rejected", now);
+    await recordFollowupEvidence(db, { followupId: row.id, rule, outcome: "rejected", detail: "rejected by the operator", now });
     return `Dropped the ${rule.label} for ${who} [${row.id}]. Nothing was sent.`;
   }
 
@@ -217,7 +222,8 @@ export async function runFollowupCommand(deps: FollowupCommandDeps, command: Fol
     const outcome = outcomes[0];
     return `The ${rule.label} could not be sent now (${outcome && outcome.status === "failed" ? label(outcome.message, 120) : "no outcome"}). Nothing was sent; send the same command again later.`;
   }
-  await recordDraftDecision(db, row.draft_id, "approved", now);
+  const evidence = approvalEvidence(digest, row.draft_notes);
+  await recordFollowupEvidence(db, { followupId: row.id, rule, outcome: evidence, detail: evidence === "approved_unchanged" ? "approved as written" : "approved after an edit", now });
   if (settled === "sent") return `Sent the ${rule.label} to ${who} [${row.id}].`;
   if (settled === "queued") return `Approved the ${rule.label} for ${who} [${row.id}]. The send function holds it until it can go (the recipient's window or a send cap), then sends it.`;
   if (settled === "skipped") return `The send function refused the ${rule.label} for ${who} [${row.id}], so it was not sent.`;

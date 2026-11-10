@@ -21,6 +21,13 @@
 // the lower of its flag and its latest change (store.ts), so a flag write that fails may leave a
 // raise unapplied, and always leaves a lowering applied. Lowering a class to 1
 // or below also returns its automatically approved, unsent drafts to review.
+//
+// The operator can also dismiss an open proposal instead of letting it expire
+// (`autonomy-dismiss-<id>`, or Reject in the dashboard; both call dismissProposal). A dismissed
+// proposal is settled as `refused`, with the operator in decided_by and "dismissed" and the reason
+// in detail, so the confirm above can never apply it. Dismissing writes no level, no change row and
+// no flag: it can only leave the system as strict as it was. It writes an audit row.
+import { writeAudit } from "../events/audit.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import { DAY_MS } from "../metrics/window.ts";
@@ -99,6 +106,9 @@ const hex = (bytes: number) => [...crypto.getRandomValues(new Uint8Array(bytes))
 
 /** The command that applies a proposal. */
 export const confirmCommand = (p: Pick<Proposal, "id" | "code">): string => `autonomy-confirm-${p.id}-${p.code}`;
+
+/** The command that dismisses a proposal. It needs no code: dismissing never loosens anything. */
+export const dismissCommand = (p: Pick<Proposal, "id">): string => `autonomy-dismiss-${p.id}`;
 
 export interface NewProposal {
   actionClass: string;
@@ -254,4 +264,64 @@ export async function confirmProposal(deps: ConfirmDeps, command: { id: string; 
     };
   }
   return { ok: true, level: after.level, actionClass: proposal.actionClass, text: `${proposal.actionClass} is now at level ${after.level} (it was at ${proposal.from}).${flagNote}` };
+}
+
+export interface DismissDeps {
+  db: D1Database;
+  /** Who dismissed it, as recorded: "operator:<id>" for the chat, "operator:<email>" for the dashboard. */
+  actor: string;
+  now: Date;
+}
+
+export type DismissResult = { ok: true; proposal: Proposal; text: string } | { ok: false; text: string };
+
+/** The longest reason kept with a dismissed proposal. */
+export const DISMISS_REASON_MAX = 200;
+
+/** Text on one line: whitespace runs become one space, other control characters are dropped. */
+function oneLine(text: string): string {
+  const printable = [...text.replace(/\s+/g, " ")].filter((c) => {
+    const code = c.codePointAt(0) ?? 0;
+    return code >= 0x20 && code !== 0x7f;
+  });
+  return printable.join("").trim();
+}
+
+/**
+ * Dismiss an open proposal: it is settled as refused, with the actor and the reason, and can never be
+ * confirmed afterwards. Only an open, unexpired proposal can be dismissed. No level, change row or
+ * flag is written. Throws only on a database error before anything is written.
+ */
+export async function dismissProposal(deps: DismissDeps, input: { id: string; reason?: string }): Promise<DismissResult> {
+  const { db, now } = deps;
+  const proposal = await loadProposal(db, input.id);
+  if (!proposal) return { ok: false, text: `There is no autonomy proposal ${input.id.slice(0, 40)}. Nothing changed.` };
+  if (proposal.status !== "open") return { ok: false, text: `Proposal ${proposal.id} is ${proposal.status}, so there is nothing to dismiss. Nothing changed.` };
+  if (Date.parse(proposal.expiresAt) <= now.getTime()) {
+    await settle(db, proposal.id, "expired", deps.actor, `Proposal ${proposal.id} expired before it was dismissed.`, now);
+    return { ok: false, text: `Proposal ${proposal.id} has already expired, so it can no longer be confirmed. Nothing changed.` };
+  }
+  const reason = oneLine(input.reason ?? "").slice(0, DISMISS_REASON_MAX);
+  const at = now.toISOString();
+  const result = await db
+    .prepare("UPDATE autonomy_proposals SET status = 'refused', decided_by = ?2, decided_at = ?3, detail = ?4 WHERE id = ?1 AND status = 'open' AND expires_at > ?3")
+    .bind(proposal.id, deps.actor.slice(0, 120), at, `dismissed${reason ? `: ${reason}` : ""}`)
+    .run();
+  if ((result.meta.changes ?? 0) !== 1) {
+    // Confirmed, settled or expired while this ran: whatever it is now, it was not dismissed.
+    const current = await loadProposal(db, proposal.id).catch(() => null);
+    return { ok: false, text: `Proposal ${proposal.id} is ${current?.status ?? "no longer open"}, so it was not dismissed. Nothing changed.` };
+  }
+  // Bookkeeping: ids and enum values only, never the reason a person wrote.
+  await writeAudit(db, {
+    agentId: deps.actor,
+    action: "autonomy.proposal_dismissed",
+    details: { proposalId: proposal.id, actionClass: proposal.actionClass, from: proposal.from, to: proposal.to, origin: proposal.origin, withReason: reason !== "" },
+    now,
+  });
+  return {
+    ok: true,
+    proposal: { ...proposal, status: "refused" },
+    text: `Dismissed proposal ${proposal.id} (${proposal.actionClass} level ${proposal.from} to ${proposal.to}). It can no longer be confirmed, and no level changed: ${proposal.actionClass} stays where it is.`,
+  };
 }

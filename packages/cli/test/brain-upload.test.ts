@@ -25,7 +25,7 @@ describe("gtm brain upload", () => {
     const dir = await setUpDeployment(account, { brain: true });
     const { code, text } = await brain(dir, account, ["upload", "--yes"]);
     expect(code).toBe(0);
-    expect(text).toMatch(/uploaded brain version [0-9a-f]{12} \(14 component\(s\)\) and 3 approved template\(s\)/);
+    expect(text).toMatch(/uploaded brain version [0-9a-f]{12} \(14 component\(s\)\) and 10 approved template\(s\)/);
 
     const puts = account.callsTo("kv", "bulk", "put");
     expect(puts).toHaveLength(2);
@@ -45,7 +45,7 @@ describe("gtm brain upload", () => {
     expect(slice.missing).toEqual([]);
     expect(slice.included.length).toBeGreaterThan(0);
     const templates = await loadTemplates(kvReader(store), { companyDomain: "acme.example" });
-    expect(templates.templates.map((t) => t.id).sort()).toEqual(["breakup", "cold-intro", "follow-up"]);
+    expect(templates.templates.map((t) => t.id).sort()).toEqual(["breakup", "cold-intro", "follow-up", "lifecycle-at-risk", "lifecycle-first-use", "lifecycle-last-first-use", "lifecycle-reengage", "lifecycle-upgrade-offer", "lifecycle-usefulness", "lifecycle-win-back"]);
     expect(templates.skipped).toEqual([]);
   });
 

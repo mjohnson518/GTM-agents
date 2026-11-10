@@ -1,6 +1,6 @@
 # Lifecycle: sign-ups, payments, the event spine and billing
 
-This page is for deployers connecting their product and billing to a deployment, for host-application developers wiring the product side, and for contributors changing how product and billing events move contacts and deals. It covers the lifecycle states and what moves them, the event spine, connecting a product (with [EVENT-CONTRACT.md](EVENT-CONTRACT.md) and the SDK in [`packages/sdk/`](../packages/sdk/README.md)), identity resolution, the deal mirror, billing through the port, MRR, erasure, and the flags, jobs and limits involved. The code lives in `packages/core/src/lifecycle/` (`@gtm-agents/core/lifecycle`), `packages/core/src/product-bridge/`, `packages/core/src/billing/`, the spine in `packages/core/src/events/`, and the product metrics in `packages/core/src/metrics/product.ts`.
+This page is for deployers connecting their product and billing to a deployment, for host-application developers wiring the product side, and for contributors changing how product and billing events move contacts and deals. It covers the lifecycle states and what moves them, the event spine, connecting a product (with [EVENT-CONTRACT.md](EVENT-CONTRACT.md) and the SDK in [`packages/sdk/`](../packages/sdk/README.md)), identity resolution, the deal mirror, billing through the port and its test mode, MRR, erasure, the follow-ups to product users with their templates and autonomy evidence, and the flags, jobs and limits involved. The code lives in `packages/core/src/lifecycle/` (`@gtm-agents/core/lifecycle`), `packages/core/src/product-bridge/`, `packages/core/src/billing/`, the spine in `packages/core/src/events/`, and the product metrics in `packages/core/src/metrics/product.ts`.
 
 ## What it does
 
@@ -147,11 +147,14 @@ The contact's open deal steps one stage at a time through `transitionDeal`, so e
 
 Billing is a port, `BillingProvider` ([INTERFACES.md](INTERFACES.md#billingprovider)); core holds no vendor code. `POST /api/webhooks/billing` hands the request to the adapter's `parseWebhook`, which must verify the signature (5-minute tolerance, constant time) before reading anything else and throw an `AdapterError`: `auth` for a missing, bad or stale signature (the route answers 401), `invalid` for a payload it cannot map (400), `unavailable` when its secret is unset (503). With `billing:enabled` or `lifecycle:enabled` off the route answers 503 and records nothing. An event the adapter maps to `ignored` is acknowledged and not recorded.
 
+**Test mode.** A vendor's test mode sends real-looking events for invented payments, and none of them may move a contact, a deal or MRR in production. After the signature is verified, and before the billing switches are read, an event that is not marked `livemode: true` (one from the test mode, or one its adapter left unmarked) is answered `200 {"ok":true,"ignored":true,"reason":"test_mode"}` and changes nothing while `billing:accept_test_events` is off or cannot be read: it is not recorded on the spine and never routed, so no lifecycle move, deal or MRR change follows. An audit row (`billing_event_ignored_test_mode`, with the provider, the event type and the event id, never an address) and a log line say it was ignored. Turn the flag on only on a staging deployment whose webhook endpoint is the vendor's test mode; test events then route like live ones. An unsigned or tampered test event is still refused with 401 first.
+
 An adapter maps vendor events to `BillingEvent`:
 - `checkout_completed`, `subscription_created`, `subscription_updated`, `subscription_canceled`, `payment_failed`, or `ignored`;
 - amounts as integers in the currency's minor unit, with `interval` (`day`, `week`, `month` or `year`);
 - `email` when the vendor's payload carries it;
-- `providerEventId`, the vendor's stable event id.
+- `providerEventId`, the vendor's stable event id;
+- `livemode: true` for a live event; anything else counts as test mode, so an adapter that forgets the field fails closed. The Stripe adapter marks an event live only when Stripe says `livemode: true`; an adapter for a vendor with no test mode sets it to true on every event.
 
 Routing, claimed under the event's id:
 1. **Who.** The billing customer row for (provider, customer id) names the contact once linked; otherwise the address hashes find an existing contact. Billing resolves contacts and never creates one; an unknown customer is recorded without a contact.
@@ -169,6 +172,35 @@ Routing, claimed under the event's id:
    MRR comes from the amount by its interval, else the plan's list price.
 
 Creating a checkout link is an offer, so it is permanently human-only: core never calls `createCheckoutLink`. Pick one source of `billing.*` events per deployment, the host or the billing adapter, so one payment is not reported twice under two event ids.
+
+## Lifecycle follow-ups
+
+Short notes to product users, each a fixed delay after they entered a state, written only from your approved `lifecycle` templates (`packages/core/src/lifecycle/followups.ts`, the `lifecycle_followups` job). Turn them on with `lifecycle:followups_enabled` (which needs `lifecycle:enabled`), after wiring `createLifecycleFollowups` in `apps/worker/src/index.ts`.
+
+| Follow-up | State | After | Template id | Action class |
+|---|---|---|---|---|
+| First-use nudge | signed_up | 24 hours | `lifecycle-first-use` | `lifecycle_activation` |
+| Last first-use nudge | signed_up | 72 hours | `lifecycle-last-first-use` | `lifecycle_activation` |
+| Usefulness check | activated | 2 hours | `lifecycle-usefulness` | `feedback` |
+| Upgrade offer | at_wall | 10 minutes | `lifecycle-upgrade-offer` | `offers`, permanently human |
+| Re-engage note | stalled | 1 hour | `lifecycle-reengage` | `reengage` |
+| At-risk check-in | at_risk | 1 hour | `lifecycle-at-risk` | `at_risk` |
+| Win-back offer | churned | 30 days | `lifecycle-win-back` | `offers`, permanently human |
+
+A follow-up is decided only while it is fresh, at most 4 go to one person in 30 days, and each kind keeps a gap since the last one. Each passes a yes or no classifier call over structured facts (role `classifier`, budget-gated, failing closed) and the deterministic quality gate. At level 2 or above for its class it is sent through the send function, which runs every send check itself; otherwise it is drafted for `fu-approve-<id>` or `fu-reject-<id>`, which check the contact, the caps, the content and the window again. The offers are always drafts a person approves, whatever any level says.
+
+**Templates.** One approved template of kind `lifecycle` per follow-up, under the ids above (`createLifecycleFollowups({ templateIds })` names others). The writer fills only `{{first_name}}`, `{{last_name}}`, `{{sender_name}}` and `{{booking_url}}`, from the contact and the config, and nothing else: no product usage, no attributes. A template that uses any other variable skips every follow-up of its kind (skip rather than guess), and a kind with no approved template waits. Upload them with `gtm brain upload` like the rest ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#templates)). `examples/brains/acme/templates/lifecycle-*.md` is a complete set for a fictional company: plain text, no figures, and offer words (a plan) only in the two offers.
+
+**Autonomy evidence.** Every decision on a follow-up is evidence for its kind's action class, written once per follow-up through the autonomy module's evidence functions ([AUTONOMY.md](AUTONOMY.md#evidence)):
+
+| Decision | Outcome |
+|---|---|
+| `fu-approve-<id>`, handed to the send function, the text as the writer rendered it | `approved_unchanged` |
+| `fu-approve-<id>` after the draft was changed | `approved_edited` |
+| `fu-reject-<id>` | `rejected` |
+| Sent by the sweep at an earned level | `auto_sent` |
+
+Each draft keeps the digest of the text the writer rendered, which is how an approval tells an edit; a draft without one counts as edited. A follow-up that is withdrawn (the contact moved on), expires unapproved or is skipped records nothing, since no one judged its text. The offers record no evidence at all, under any class, so nothing about them can count toward a level. Recording is bookkeeping: a row that cannot be written is dropped and never blocks or changes a send. The weekly promotion review does not propose the lifecycle classes yet (it proposes only the classes in `AUTOMATIC_PATHS`); the evidence shows in `autonomy-status`, and a level is changed with `autonomy-set`.
 
 ## MRR
 
@@ -220,6 +252,8 @@ Without `lifecycle` both webhooks answer 503. Without `billing` the billing rout
 | `lifecycle:enabled` | off | The product webhook, routing, the lifecycle writer's moves from product and billing events, and the lifecycle jobs. Erasures are carried out whatever it says |
 | `lifecycle:reconcile_enabled` | off | The nightly pull (needs `PRODUCT_APP_URL` and `PRODUCT_READ_SECRET`; with `lifecycle:enabled` off it reads deletions only) |
 | `billing:enabled` | off | The billing webhook and routing billing events (also needs `lifecycle:enabled`) |
+| `billing:accept_test_events` | off | Routing billing events not marked live (`livemode` not true): the vendor's test mode, or an adapter that did not say. Off or unreadable, they are answered 200 and change nothing |
+| `lifecycle:followups_enabled` | off | The lifecycle follow-ups and the `fu-approve` and `fu-reject` commands (also needs `lifecycle:enabled`) |
 | `outreach:ref_tokens_enabled` | off | Attribution tokens: identity resolution reads them only while it is on |
 
 An unreadable flag counts as off. `lifecycle:pull:<resource>` holds the pull's place: a rebuildable cache.
@@ -233,14 +267,15 @@ An unreadable flag counts as off. `lifecycle:pull:<resource>` holds the pull's p
 | `lifecycle_reconcile` | 03:15 daily | `lifecycle:reconcile_enabled` | 3 pages of 200 per resource, 10 minutes |
 | `mrr_snapshot` | 23:55 daily | `lifecycle:enabled` | one row, 30 seconds |
 | `event_retention` | 03:50 daily | `lifecycle:enabled` | 500 payloads, 2 minutes |
+| `lifecycle_followups` | every 15 minutes, at :07, :22, :37 and :52 | `lifecycle:followups_enabled` | 25 follow-ups, 2 minutes, 50 cents a day |
 
-None calls a model or spends, and each is safe to rerun. Change a schedule with `createLifecycle({ schedules: { ... } })`.
+Only `lifecycle_followups` calls a model (the classifier, through the spend gate); none of the others calls a model or spends. Each is safe to rerun. Change a schedule with `createLifecycle({ schedules: { ... } })`, and the follow-ups' with `createLifecycleFollowups({ schedule })`.
 
 ## Limits
 
 - **Stripe is the one billing adapter** (`billing-stripe`: signed webhooks, customer and subscription reads). Another provider is one folder under `packages/adapters`, behind the same port.
 - **No attribution tokens are issued yet.** Identity resolution reads `ref_tokens`; putting `?ref=` on outreach links belongs to the composer, behind `outreach:ref_tokens_enabled`.
-- **Lifecycle follow-ups** (first-use nudges, a usefulness check, re-engage, at-risk check-ins) come from approved `lifecycle` templates, under `lifecycle:followups_enabled`, with gaps, a monthly cap and each kind's autonomy class; upgrade and win-back offers are always drafts a person approves. No lifecycle templates ship; write your own.
+- **Lifecycle follow-up templates are yours to write.** The worker template ships none; the example brain's set shows the shape. The weekly review does not propose the lifecycle classes yet, whatever their evidence.
 - **The pull cannot see billing state.** The users endpoint has no subscription status, so a missed payment event is repaired only by the billing provider's own redelivery.
 - **A cancellation counts when it arrives**, even when the subscription runs to the end of its period.
 - **Pre-sign-up moves other than a booked meeting** (qualified, outreach sent, replied, sequence exhausted, unsubscribed) are in the table, but nothing calls them yet.

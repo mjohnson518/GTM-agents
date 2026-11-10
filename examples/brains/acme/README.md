@@ -6,7 +6,7 @@ The folder is a complete brain written to [docs/BRAIN-SCHEMA.md](../../../docs/B
 
 - all fourteen components, from `market-profile.md` to `commercial.md`, each approved;
 - `brain.lock.json`, which locks the approved files so the runtime serves exactly what was approved;
-- `templates/`, with a cold intro, a follow-up and a breakup that thread together as a three-step sequence.
+- `templates/`, with a cold intro, a follow-up and a breakup that thread together as a three-step sequence, and one `lifecycle` template for each lifecycle follow-up: the first-use nudge (`lifecycle-first-use`), the last first-use nudge (`lifecycle-last-first-use`), the usefulness check (`lifecycle-usefulness`), the upgrade offer (`lifecycle-upgrade-offer`), the re-engage note (`lifecycle-reengage`), the at-risk check-in (`lifecycle-at-risk`) and the win-back offer (`lifecycle-win-back`). The lifecycle templates use only `{{first_name}}`, `{{last_name}}`, `{{sender_name}}` and `{{booking_url}}`, the variables the follow-up writer fills, and state no figure. The upgrade and win-back offers stay permanently human-only: a person approves each one ([LIFECYCLE.md](../../../docs/LIFECYCLE.md#lifecycle-follow-ups)).
 
 ## Try it
 
@@ -14,7 +14,7 @@ The folder is a complete brain written to [docs/BRAIN-SCHEMA.md](../../../docs/B
 npx gtm brain validate examples/brains/acme
 ```
 
-It reports 14 components, 3 templates and no errors. Edit any approved file and validation fails until you re-lock it with `--write-lock`. That is the mechanism that keeps unreviewed text out of prompts.
+It reports 14 components, 10 templates and no errors. Edit any approved file and validation fails until you re-lock it with `--write-lock`. That is the mechanism that keeps unreviewed text out of prompts.
 
 ## Use it as a starting point
 

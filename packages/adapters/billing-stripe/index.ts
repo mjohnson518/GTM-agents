@@ -13,6 +13,9 @@
 //     .deleted, and invoice.payment_failed. Every other event type is `ignored`, and so is a
 //     checkout with no customer (a guest payment core cannot link to anyone). The event id becomes
 //     providerEventId and event.created the event time;
+//   - every mapped event carries livemode: true only when the event says `livemode: true`, so an
+//     event from Stripe's test mode, or one that does not say, is marked livemode false. Whether a
+//     test-mode event is routed is core's decision (billing:accept_test_events, off by default);
 //   - amounts are integers in the currency's minor unit. A subscription's amount is the sum of unit
 //     amount times quantity over its items, with their interval, when every item recurs on the same
 //     interval once per period; items on mixed intervals or on a multi-period interval are turned
@@ -164,6 +167,8 @@ export function mapStripeEvent(payload: unknown): BillingEvent {
   if (!object) throw new AdapterError("the event carries no object", "invalid", false);
   const at = eventTime(payload.created);
   const customerId = idOf(object.customer);
+  // Live only when Stripe says so: a missing or malformed value counts as test mode.
+  const livemode = payload.livemode === true;
 
   if (type === "checkout.session.completed") {
     if (!customerId) return { type: "ignored", providerEventId, reason: "a checkout with no customer" };
@@ -172,7 +177,7 @@ export function mapStripeEvent(payload: unknown): BillingEvent {
     const plan = isRecord(object.metadata) ? planName(object.metadata.plan) : undefined;
     const amount = minorUnits(object.amount_total);
     const currency = currencyOf(object.currency);
-    return { type: "checkout_completed", customerId, ...(email ? { email } : {}), ...(plan ? { plan } : {}), ...(amount !== undefined ? { amount } : {}), ...(currency ? { currency } : {}), at, providerEventId };
+    return { type: "checkout_completed", customerId, ...(email ? { email } : {}), ...(plan ? { plan } : {}), ...(amount !== undefined ? { amount } : {}), ...(currency ? { currency } : {}), at, providerEventId, livemode };
   }
 
   if (type === "invoice.payment_failed") {
@@ -182,7 +187,7 @@ export function mapStripeEvent(payload: unknown): BillingEvent {
     const email = address(object.customer_email);
     const amount = minorUnits(object.amount_due);
     const currency = currencyOf(object.currency);
-    return { type: "payment_failed", customerId, ...(subscriptionId ? { subscriptionId } : {}), ...(email ? { email } : {}), ...(amount !== undefined ? { amount } : {}), ...(currency ? { currency } : {}), at, providerEventId };
+    return { type: "payment_failed", customerId, ...(subscriptionId ? { subscriptionId } : {}), ...(email ? { email } : {}), ...(amount !== undefined ? { amount } : {}), ...(currency ? { currency } : {}), at, providerEventId, livemode };
   }
 
   const subscriptionId = idOf(object.id);
@@ -205,6 +210,7 @@ export function mapStripeEvent(payload: unknown): BillingEvent {
     ...(priced.interval ? { interval: priced.interval } : {}),
     at,
     providerEventId,
+    livemode,
   };
 }
 

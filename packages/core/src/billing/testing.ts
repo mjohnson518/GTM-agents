@@ -4,7 +4,8 @@
 // real billing providers sign theirs: a header `t=<unix seconds>,v1=<hex HMAC-SHA256(secret,
 // "<t>.<body>")>`, a 5-minute tolerance and a constant-time compare, so tests can prove that core
 // rejects a tampered, unsigned or replayed webhook before touching the database. The body is
-// `{"event": <BillingEvent>}`. No vendor is involved.
+// `{"event": <BillingEvent>}`, and an event without `livemode` is returned as live. No vendor is
+// involved.
 import { constantTimeEqual } from "../http/auth.ts";
 import type { BillingEvent, BillingProvider } from "../ports/business.ts";
 import { AdapterError } from "../ports/types.ts";
@@ -56,7 +57,9 @@ export function fakeBillingProvider(options: { name?: string; webhookSecret?: st
       }
       const event = (parsed as { event?: unknown }).event;
       if (!event || typeof event !== "object" || typeof (event as { type?: unknown }).type !== "string") throw new AdapterError("fake billing: no event", "invalid", false);
-      return event as BillingEvent;
+      // The fake vendor's events are live unless a test marks one otherwise.
+      const mapped = event as BillingEvent;
+      return mapped.type === "ignored" || "livemode" in mapped ? mapped : { ...mapped, livemode: true };
     },
     getCustomerByEmail(email) {
       return Promise.resolve(provider.customers.get(email.trim().toLowerCase()) ?? null);

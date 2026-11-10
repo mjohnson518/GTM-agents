@@ -15,15 +15,20 @@ Every action class starts at "draft and ask". A class earns more only from evide
 
 Every action the system could take on its own belongs to one action class (`EARNABLE_ACTION_CLASSES` in `levels.ts`): `cold_batch` (which also covers the cold sequence's follow-up steps), `reply_send`, `reply_demo_link`, `reply_question`, `ship_spec`, `ship_notification`, `post_meeting_followup`, `rebook`, `retrospective_actuation`, `brain_edit`, `lifecycle_activation`, `feedback`, `reengage`, `at_risk`, `renewal` and `other`.
 
-Something acts on the level of only three classes today (`AUTOMATIC_PATHS` in `promotion.ts`):
+The code that owns an action reads its class's level when it acts. These classes act on their level today:
 
 | Class | At level 2 or 3 |
 |---|---|
 | `cold_batch` | The cold batch and its follow-up steps send drafts that pass the quality gate and the model reviewer without a release code ([OUTREACH.md](OUTREACH.md), [SEQUENCES.md](SEQUENCES.md)) |
 | `reply_send` | A reply to someone who wants a call, carrying your booking link, goes out at once when every auto-send rule passes, and you are told after |
 | `reply_demo_link` | A reply carrying one approved asset to someone who asked to see the product goes out at once when every auto-send rule passes, and you are told after |
+| `lifecycle_activation`, `feedback`, `reengage`, `at_risk` | The lifecycle follow-up of that class goes out from its approved template when the sweep drafts it, and you are told after ([LIFECYCLE.md](LIFECYCLE.md)). The upgrade and win-back offers never do: they belong to `offers` |
+| `brain_edit`, `retrospective_actuation` | A learning loop's own proposal of that class applies without you, only for changes that never reach a prospect on their own ([LEARNING.md](LEARNING.md)) |
+| `ship_spec`, `ship_notification` | With the optional ship module: a low-risk spec is approved without you (at most 2 a run), and an "it is live" note that passes the quality gate goes out ([SHIP.md](SHIP.md)). Merging stays with a person |
 
 Every other class drafts for approval at every level. Level 3 behaves like level 2 for now: every automatic action is still announced as it happens, and the digest-only mode is not built.
+
+The weekly review proposes a promotion only for the first three (`AUTOMATIC_PATHS` in `promotion.ts`), which have an outcome or auto-send rule set to judge them by. The others collect evidence, shown in `autonomy-status`, and change level only when you set it with `autonomy-set`.
 
 ## Permanently human-only actions
 
@@ -67,6 +72,7 @@ Who writes what:
 - **The follow-up sweep:** the same, under `cold_batch`: `sequence-release` is one decision, and each automatic sweep that sends is one `auto_sent`.
 - **Replies:** `approved_unchanged` or `approved_edited` when an approved reply is sent, from chat or from the mailbox ([REPLIES.md](REPLIES.md)); `rejected` when one is turned down or left unsent for 7 days; `auto_sent` when one went out automatically.
 - **Meeting drafts** (the recap, the rebook and the post-demo follow-ups, [CONVERT.md](CONVERT.md)): `approved_unchanged` when approved in chat, `rejected` when rejected there. Chat approval cannot change the text, and these drafts are sent from your mail client, so edits made there are not seen.
+- **Lifecycle follow-ups** ([LIFECYCLE.md](LIFECYCLE.md)): under the class its rule names (`lifecycle_activation`, `feedback`, `reengage` or `at_risk`), `approved_unchanged` or `approved_edited` on `fu-approve`, `rejected` on `fu-reject`, and `auto_sent` when the sweep sends at an earned level. The upgrade and win-back offers record nothing, under any class.
 - **Incidents:** below.
 
 Writing evidence is bookkeeping: it never throws, and a lost row never changes what was sent.
@@ -81,15 +87,17 @@ With `autonomy_review:enabled` on, the `autonomy_review` job (Mondays at 06:00 U
 - **Level 2 to 3:** at least 60 automatic sends in 60 days, with no incident and no rejection in 60 days.
 - **The outcome gate for the cold batch,** for either step: first touches sent 10 to 40 days ago (matured) against a baseline sent 40 to 130 days ago, at least 200 sends in each, a hard bounce rate under 2% in the recent window, and a positive reply rate at or above the baseline's. Every figure comes from `packages/core/src/metrics/` ([MEASUREMENT.md](MEASUREMENT.md)): `firstTouchOutcomes`, `hardBounceRate` and `replyRate`. Data that cannot be read blocks the proposal.
 - **Eval coverage:** a class can be proposed only when every writer of its text is in the writer registry with an eval (below).
-- A permanently human-only class, a class at level 0 (observe only was a person's choice) and a class nothing acts on are never proposed.
+- A permanently human-only class, a class at level 0 (observe only was a person's choice) and a class outside `AUTOMATIC_PATHS` are never proposed.
 - The same proposal (class, from, to) is made at most once every 14 days.
 
-Each proposal goes to the operator chat with its evidence and the command that applies it, `autonomy-confirm-<id>-<code>`, valid for 14 days. A proposal the chat could not deliver is withdrawn and made again the next week. Confirming applies it only when, at that moment:
+Each proposal goes to the operator chat with its evidence, the command that applies it, `autonomy-confirm-<id>-<code>`, valid for 14 days, and the command that dismisses it, `autonomy-dismiss-<id>`. A proposal the chat could not deliver is withdrawn and made again the next week. Confirming applies it only when, at that moment:
 
 1. the proposal is open and unexpired and the code matches (the code confirms intent; the operator allowlist is the control);
 2. the class's level reads cleanly and still equals the level the proposal was made against, and no change has been recorded for the class since (a demotion in between refuses it);
 3. for a raise, no incident was recorded for the class since the proposal (checked inside the write itself);
 4. the change row is written with a compare-and-set on the class's latest change, so two confirmations can never both apply.
+
+**Dismissing a proposal.** An open proposal can be dropped instead of left to expire: send `autonomy-dismiss-<id>`, optionally followed by a reason, in the operator chat, or reject it in the dashboard's Proposals view, which calls the same function (`dismissProposal` in `proposals.ts`). Dismissing needs no code, because it can only leave the system as strict as it was: it writes no level, no change row and no flag. The proposal is recorded as `refused`, with the operator in `decided_by` and `dismissed` and the reason in `detail`, and an audit row `autonomy.proposal_dismissed` records the proposal, the class, both levels and the operator (never the reason's text). Only an open, unexpired proposal can be dismissed, and a dismissed one can never be confirmed afterwards. The weekly review counts a dismissed proposal like any other, so it proposes the same change again no sooner than 14 days after it first did.
 
 ## Demotion: immediate, automatic, always on
 
@@ -174,6 +182,7 @@ Commands never reach the model, and only an allowlisted operator reaches them (t
 | `autonomy-status` | Every class: its level and why, its evidence over 60 days, whether it can be proposed, and open proposals with their commands |
 | `autonomy-set <class> <0-3>` | Step one: shows the class, its level, its evidence and a confirm command valid for 30 minutes. Nothing changes yet |
 | `autonomy-confirm-<id>-<code>` | Step two: applies that change, or a proposal from the weekly review, only if nothing changed since |
+| `autonomy-dismiss-<id> [reason]` | Drops an open proposal so it can never be confirmed. No level changes. The dashboard's Reject does the same |
 
 These commands are the only way a level is raised from the chat. No tool, job, model output or inbound text can set one. Lowering a class to 1 or below also returns its automatically approved, unsent drafts to review.
 
@@ -215,7 +224,7 @@ export default createWorker(config, {
 ## Limits
 
 - **Level 3 is announced like level 2.** Every automatic action still sends its own notice; the digest-only mode is not built.
-- **Only three classes act on their level.** Raising any other class changes nothing yet, so the review never proposes them.
+- **The review proposes only three classes** (`cold_batch`, `reply_send`, `reply_demo_link`). The lifecycle, learning and ship classes act on their level too, but only you raise them, with `autonomy-set`.
 - **The cold batch's rate check reads all outreach** in its window, not only the batches that went out on their own. The window restarts only when the operator raises the class: it then starts at that raise, so sends judged before it do not demote the class straight back. A lowering, or a level set again at the same value, does not restart it.
 - **A level set before any recorded change** (`gtm flags set`, or `autonomy.defaults`) applies without the two-step command. Use `autonomy-set` so every change is recorded.
 - **Automatic approval is read again before every handover:** the cold batch and the follow-up sweep check it once more after storing automatically approved drafts, and an automatic reply after its approval, so a demotion that lands mid-run sends nothing.

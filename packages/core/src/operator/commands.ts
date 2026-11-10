@@ -47,6 +47,9 @@
 // `objection-list`, `objection-answer <id> <answer>`, `voice-build <thread> ...`, `voice-status` and
 // `fitness`. A proposal applies only from `learning-approve-<id>-<code>`, bound to the detail shown.
 // The chat consumer routes them to runLearningCommand.
+//
+// Optional modules add commands of their own (module-commands.ts), passed to createWorker as
+// `commands`. They never reach the model either, cannot take a built-in name, and /help lists them.
 import { clearSession, loadSession } from "../agents/sessions.ts";
 import { CHAT_JOB } from "../agents/hub.ts";
 import type { KVReader } from "../brain/load.ts";
@@ -95,7 +98,11 @@ export function parseCommand(text: string): ParsedCommand | null {
   return { name: (match[1] ?? "").toLowerCase(), args: (match[2] ?? "").trim() };
 }
 
-export function helpText(agentName: string, domain = "your-prospect.example"): string {
+/**
+ * The /help text. `moduleLines` are the help lines of the optional modules' commands
+ * (module-commands.ts), listed after the built-in ones.
+ */
+export function helpText(agentName: string, domain = "your-prospect.example", moduleLines: readonly string[] = []): string {
   return [
     `${agentName} commands:`,
     "/clean  start a clean session (clears this chat's history and taint)",
@@ -112,6 +119,7 @@ export function helpText(agentName: string, domain = "your-prospect.example"): s
     ...EXPERIMENT_HELP_LINES,
     ...FOLLOWUP_HELP_LINES,
     ...LEARNING_HELP_LINES,
+    ...moduleLines,
     "",
     `Anything else is a task, for example: look at https://${domain}/pricing and summarize it, or draft a short intro to someone@${domain} with the facts you want used.`,
     "",
@@ -125,6 +133,8 @@ export interface CommandDeps {
   db: D1Database;
   agentName: string;
   strategistModel: string | undefined;
+  /** The optional modules' /help lines. */
+  moduleHelpLines?: readonly string[];
   now?: () => Date;
 }
 
@@ -137,7 +147,7 @@ export async function runCommand(deps: CommandDeps, command: ParsedCommand, sess
       return "Started a clean session. This chat's history and taint are cleared.";
     case "help":
     case "start":
-      return helpText(deps.agentName);
+      return helpText(deps.agentName, undefined, deps.moduleHelpLines ?? []);
     case "status": {
       const state = await loadSession(deps.db, session.sessionKey, session.chatId, now);
       const [pending, spent] = await Promise.all([

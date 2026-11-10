@@ -50,6 +50,8 @@ export type { ColdBatchRates, ContactIncident, IncidentKind, IncidentResult, Rat
 // Promotion and proposals.
 export {
   AUTOMATIC_PATHS,
+  OPERATOR_RAISED_PATHS,
+  levelPath,
   MAX_REJECTED_SHARE,
   MIN_AUTO_SENDS,
   MIN_CLEAN_SHARE,
@@ -64,8 +66,20 @@ export {
   runAutonomyReview,
 } from "./promotion.ts";
 export type { OutcomeEvidence, PromotionDecision, PromotionInput, ReviewDeps, ReviewResult } from "./promotion.ts";
-export { OPERATOR_PROPOSAL_TTL_MS, REVIEW_PROPOSAL_TTL_MS, confirmCommand, confirmProposal, createProposal, expireProposals, loadProposal, openProposals } from "./proposals.ts";
-export type { ConfirmDeps, ConfirmResult, NewProposal, Proposal, ProposalOrigin, ProposalStatus } from "./proposals.ts";
+export {
+  DISMISS_REASON_MAX,
+  OPERATOR_PROPOSAL_TTL_MS,
+  REVIEW_PROPOSAL_TTL_MS,
+  confirmCommand,
+  confirmProposal,
+  createProposal,
+  dismissCommand,
+  dismissProposal,
+  expireProposals,
+  loadProposal,
+  openProposals,
+} from "./proposals.ts";
+export type { ConfirmDeps, ConfirmResult, DismissDeps, DismissResult, NewProposal, Proposal, ProposalOrigin, ProposalStatus } from "./proposals.ts";
 // Operator commands.
 export { AUTONOMY_HELP_LINES, parseAutonomyCommand, runAutonomyCommand } from "./commands.ts";
 export type { AutonomyCommand, AutonomyCommandDeps } from "./commands.ts";

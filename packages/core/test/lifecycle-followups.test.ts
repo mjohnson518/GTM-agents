@@ -1,11 +1,14 @@
 // GTM-agents: lifecycle follow-ups to product users: the rules, the sweep's order of checks, the
 // classifier gate, sending through the send function at level 2, drafts at level 1, offers that are
-// always drafted, the caps, erasure, the window, and the fu-approve and fu-reject commands with
-// every re-check. Every person, address and id is invented.
+// always drafted, the caps, erasure, the window, the fu-approve and fu-reject commands with every
+// re-check, and the autonomy evidence each decision records (none for offers, and never at the cost
+// of a send). Every person, address and id is invented.
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { recordingOperator } from "../src/agents/testing.ts";
 import { defineConfig } from "../src/config/index.ts";
+import { isPermanentHuman } from "../src/autonomy/levels.ts";
+import { followupEvidenceClass } from "../src/lifecycle/followup-evidence.ts";
 import { FOLLOWUP_RULES, capProblem, dueWindow, predecessorPending } from "../src/lifecycle/followup-rules.ts";
 import { parseFollowupCommand, runFollowupCommand } from "../src/lifecycle/followup-commands.ts";
 import { runLifecycleFollowups, type FollowupDeps } from "../src/lifecycle/followups.ts";
@@ -41,6 +44,16 @@ const TEMPLATES: ServedTemplate[] = [
     "lifecycle-first-use",
     "Getting started with Acme Quarantine",
     "Hi {{first_name}},\n\nThanks for signing up for Acme Quarantine. The quickest way to see it work is to connect one CI pipeline and let it watch a few runs.\n\nIf anything gets in the way, just reply and I will help you get set up.\n\n{{sender_name}}",
+  ),
+  template(
+    "lifecycle-usefulness",
+    "Was Acme useful on your first runs?",
+    "Hi {{first_name}},\n\nI saw your team has started using Acme. Every quarantined test gets an owner and a history of its failures.\n\nWas it useful so far, and did anything get in the way? A short reply is plenty.\n\n{{sender_name}}",
+  ),
+  template(
+    "lifecycle-reengage",
+    "Picking up where you left off with Acme",
+    "Hi {{first_name}},\n\nIt looks like Acme has been quiet on your side lately. Connecting a pipeline again is usually quick.\n\nDid something get in the way that I could help with? A short reply is plenty.\n\n{{sender_name}}",
   ),
   template(
     "lifecycle-upgrade-offer",
@@ -141,6 +154,18 @@ describe("the rules", () => {
   it("keeps offers permanently human", () => {
     expect(FOLLOWUP_RULES.upgrade_offer).toMatchObject({ actionClass: "offers", offer: true });
     expect(FOLLOWUP_RULES.win_back).toMatchObject({ actionClass: "offers", offer: true });
+  });
+
+  it("counts each kind's decisions toward its own earnable class, and an offer's toward none", () => {
+    for (const rule of Object.values(FOLLOWUP_RULES)) {
+      const cls = followupEvidenceClass(rule);
+      if (rule.offer) expect(cls, rule.kind).toBeNull();
+      else expect(cls, rule.kind).toBe(rule.actionClass);
+      if (cls) expect(isPermanentHuman(cls), rule.kind).toBe(false);
+    }
+    // Even a rule that named an earnable class but was marked an offer counts toward none.
+    expect(followupEvidenceClass({ actionClass: "reengage", offer: true })).toBeNull();
+    expect(followupEvidenceClass({ actionClass: "offers", offer: false })).toBeNull();
   });
 
   it("parses the commands, and nothing else", () => {
@@ -312,5 +337,88 @@ describe("the commands", () => {
     expect(await command(`fu-approve-${id}`, { now: again, sendNow: again })).toContain("holds it");
     expect(h.provider.messages()).toHaveLength(0);
     expect((await followups(person.id))[0]?.status).toBe("queued");
+  });
+});
+
+describe("autonomy evidence from follow-up decisions", () => {
+  const evidence = () => db.prepare("SELECT action_class, outcome, subject_id FROM autonomy_events ORDER BY created_at").all<Record<string, string>>().then((r) => r.results);
+
+  /** The test database, refusing any statement that matches `pattern`. */
+  function refusing(pattern: RegExp): D1Database {
+    return new Proxy(db, {
+      get(target, prop) {
+        if (prop === "prepare")
+          return (sql: string) => {
+            if (pattern.test(sql)) throw new Error("the database refused the statement");
+            return target.prepare(sql);
+          };
+        const value: unknown = Reflect.get(target, prop);
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+  }
+
+  it("counts an approval as written toward the follow-up's own earnable class, once", async () => {
+    const person = await productUser("signed_up", 25 * HOUR);
+    await sweep();
+    const id = await idOf(person.id);
+    expect(await evidence()).toEqual([]);
+    expect(await command(`fu-approve-${id}`)).toContain("Sent");
+    expect(await command(`fu-approve-${id}`)).toContain("is sent");
+    expect(await evidence()).toEqual([{ action_class: "lifecycle_activation", outcome: "approved_unchanged", subject_id: id }]);
+  });
+
+  it("counts an approval after an edit as edited, and a rejection as rejected", async () => {
+    const edited = await productUser("activated", 3 * HOUR);
+    const dropped = await productUser("stalled", 2 * HOUR);
+    await sweep();
+    const editedId = await idOf(edited.id);
+    const droppedId = await idOf(dropped.id);
+    await db.prepare("UPDATE drafts SET body = body || ' Edited.' WHERE contact_id = ?1").bind(edited.id).run();
+    expect(await command(`fu-approve-${editedId}`)).toContain("review the version above");
+    expect(await evidence()).toEqual([]);
+    expect(await command(`fu-approve-${editedId}`)).toContain("Sent");
+    expect(await command(`fu-reject-${droppedId}`)).toContain("Dropped");
+    const rows = await evidence();
+    expect(rows).toHaveLength(2);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { action_class: "feedback", outcome: "approved_edited", subject_id: editedId },
+        { action_class: "reengage", outcome: "rejected", subject_id: droppedId },
+      ]),
+    );
+  });
+
+  it("records nothing for an offer, approved or rejected, under any class", async () => {
+    const approved = await productUser("at_wall", 20 * 60_000);
+    const rejected = await productUser("at_wall", 25 * 60_000);
+    await sweep({}, { "autonomy:offers": "3", "autonomy:lifecycle_activation": "3" });
+    expect(await command(`fu-approve-${await idOf(approved.id)}`)).toContain("Sent the upgrade offer");
+    expect(await command(`fu-reject-${await idOf(rejected.id)}`)).toContain("Dropped");
+    expect(h.provider.messages()).toHaveLength(1);
+    expect(await evidence()).toEqual([]);
+  });
+
+  it("counts a send at an earned level as auto_sent for its class", async () => {
+    const person = await productUser("signed_up", 25 * HOUR);
+    expect((await sweep({}, { "autonomy:lifecycle_activation": "2" })).sent).toBe(1);
+    expect(await evidence()).toEqual([{ action_class: "lifecycle_activation", outcome: "auto_sent", subject_id: await idOf(person.id) }]);
+  });
+
+  it("never blocks or fails a send when the evidence cannot be written", async () => {
+    const person = await productUser("signed_up", 25 * HOUR);
+    await sweep();
+    const parsed = parseFollowupCommand(`fu-approve-${await idOf(person.id)}`);
+    if (!parsed) throw new Error("not a follow-up command");
+    const reply = await runFollowupCommand({ db: refusing(/INSERT INTO autonomy_events/), flags: flagReader(ON), config, send: createOutreachSender(h.deps), operator: operator.channel, chatId: CHAT, userId: CHAT, now: () => NOW }, parsed);
+    expect(reply).toContain("Sent the first-use nudge");
+    expect(h.provider.messages()).toHaveLength(1);
+    expect((await followups(person.id))[0]?.status).toBe("sent");
+    expect(await evidence()).toEqual([]);
+    const auto = await productUser("signed_up", 26 * HOUR);
+    const result = await sweep({ db: refusing(/INSERT INTO autonomy_events/) }, { "autonomy:lifecycle_activation": "2" });
+    expect(result).toMatchObject({ sent: 1, failed: 0 });
+    expect((await followups(auto.id))[0]?.status).toBe("sent");
+    expect(await evidence()).toEqual([]);
   });
 });

@@ -34,8 +34,10 @@ export { DRIFT_EDIT_RATE, DRIFT_MIN_DECISIONS, buildVoiceProposal, voiceDrift, v
 export type { DriftReading, VoiceStats } from "./voice.ts";
 export { SCORE_WINDOW_DAYS, proposeObjectionAnswer, scoreObjectionAnswers, unansweredObjections } from "./objections.ts";
 export type { UnansweredObjection } from "./objections.ts";
-export { MEMORY_KINDS, recentMemories, storeMemory } from "./memory.ts";
-export type { MemoryKind } from "./memory.ts";
+export { MEMORY_KINDS, memoryBlock, readMemoryNotes, recentMemories, storeMemory } from "./memory.ts";
+export type { MemoryKind, MemoryNote, MemoryReadOptions } from "./memory.ts";
+export { MEMORY_NOTICE, WRITER_CONTEXT, writerContext } from "./context.ts";
+export type { LearningWriter, WriterContext, WriterContextBudget } from "./context.ts";
 export {
   DEFAULT_FITNESS_TARGETS,
   FITNESS_DIMENSIONS,

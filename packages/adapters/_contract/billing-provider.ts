@@ -137,6 +137,8 @@ export function runBillingProviderContract(create: (ctx: AdapterContext) => Bill
       it(`maps ${event.name}`, async () => {
         const mapped = await adapterWith().adapter.parseWebhook(await fixtures.request(event.body));
         expect(mapped).toEqual(event.expected);
+        // Core treats an event not marked live as test mode, so every event says which it is.
+        if (mapped.type !== "ignored") expect(typeof mapped.livemode, `${event.name}: livemode`).toBe("boolean");
         expect(mapped.providerEventId.length).toBeGreaterThan(0);
         if (mapped.type !== "ignored") {
           expect(mapped.at).toMatch(ISO_UTC);

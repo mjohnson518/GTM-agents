@@ -473,15 +473,15 @@ For booking detection, core asks only for the fields it needs: id, status, times
 
 Reads subscription state and parses billing webhooks. Anything that creates an offer (a checkout link, a coupon, a discount) is a permanently human-only action class. The port exposes it, and core refuses to call it without a person's approval.
 
-Amounts are integers in the currency's minor unit (cents). `email` is the customer's address when the vendor's payload carries it: core resolves an existing contact by it, never creates one, and refuses an erased person. [LIFECYCLE.md](LIFECYCLE.md) covers what each event does.
+Amounts are integers in the currency's minor unit (cents). `email` is the customer's address when the vendor's payload carries it: core resolves an existing contact by it, never creates one, and refuses an erased person. `livemode` is true only for a live event. Core acknowledges and drops any other event, from the vendor's test mode or left unmarked, unless `billing:accept_test_events` is on, so an adapter for a vendor with no test mode sets it to true on every event. The billing contract test requires the field. [LIFECYCLE.md](LIFECYCLE.md) covers what each event does.
 
 ```ts
 export type BillingInterval = "day" | "week" | "month" | "year";
 
 export type BillingEvent =
-  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string }
-  | { type: "subscription_created" | "subscription_updated" | "subscription_canceled"; customerId: string; subscriptionId: string; status: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string }
-  | { type: "payment_failed"; customerId: string; subscriptionId?: string; email?: string; amount?: number; currency?: string; at: string; providerEventId: string }
+  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string; livemode?: boolean }
+  | { type: "subscription_created" | "subscription_updated" | "subscription_canceled"; customerId: string; subscriptionId: string; status: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string; livemode?: boolean }
+  | { type: "payment_failed"; customerId: string; subscriptionId?: string; email?: string; amount?: number; currency?: string; at: string; providerEventId: string; livemode?: boolean }
   | { type: "ignored"; providerEventId: string; reason: string };
 
 export interface BillingProvider {
@@ -533,6 +533,13 @@ export interface CompletionResult {
 export interface ModelGateway {
   readonly name: string;
   complete(req: CompletionRequest): Promise<CompletionResult>;
+  /**
+   * Optional: complete(), streamed. Same request, same result once the vendor finishes (usage
+   * included, so core prices it the same way); the answer's text goes to onText as it arrives, and
+   * req.signal stops it. Core uses it only where a person watches the answer (the dashboard chat)
+   * and calls complete() on a gateway without it.
+   */
+  stream?(req: CompletionRequest, handlers: { onText(text: string): void }): Promise<CompletionResult>;
   embed(texts: string[], role?: "embedding"): Promise<{ vectors: number[][]; model: string; cost?: Cost }>;
   /** Optional cheap classifier tier: a small model returning a probability per label. */
   classify?(args: { labels: string[]; text: string; role?: "classifier" }): Promise<{ probabilities: Record<string, number>; model: string; cost?: Cost }>;
@@ -565,6 +572,94 @@ export interface Sandbox {
 }
 ```
 
+### CodeHost (ship module)
+
+Holds the repositories the ship loop works on: reads a file, makes one commit per task, opens a pull request, reads pull request and check state, and verifies its own webhooks. [SHIP.md](SHIP.md) describes the build that uses it. It is declared in core (`packages/core/src/ports/code.ts`) so that a code host for another vendor is one more adapter.
+
+- **Nothing in the port merges.** Merging code is a permanently human action class (`merge_code`), and an adapter must not add a way to do it.
+- **Every method checks the allowlist.** A repository outside `allowedRepos()` is refused with a non-retryable `invalid` error before any request, so the adapter's token can only touch the repositories its options list.
+- **`commit` is one commit, idempotent, and never forces.** It writes to `ship/<taskId>` (`shipBranch(taskId)`), with the base commit as the only parent. A retry that finds the branch at a commit with the same tree and parent returns it with `created: false`. A branch holding anything else is refused; the base branch is never written.
+- **`openPullRequest` is idempotent** per task branch: an existing pull request comes back with `created: false`.
+- **`verifyWebhook` checks the signature in constant time before it reads the body**, then maps the payload. Every event carries the vendor's delivery id so a redelivery can be recognized.
+- **Repository text is untrusted.** A file from `readFile` is full taint; check names and environment names are short third-party text (metadata taint).
+
+```ts
+export function shipBranch(taskId: string): string;           // "ship/<taskId>"
+
+export interface ChangedFile {                                // one file exactly as it would be committed
+  path: string;
+  change: "added" | "modified" | "deleted" | "renamed";
+  previousPath?: string;                                      // for a rename
+  additions: number;
+  deletions: number;
+  mode: string;                                               // "100644", "100755", "120000" (symlink), "160000" (submodule)
+  binary: boolean;
+  content: { encoding: "utf-8" | "base64"; data: string } | null;   // null when deleted
+}
+
+export interface RepoFile { size: number; encoding: "utf-8" | "base64"; data: string | null }   // data null: larger than maxBytes
+
+export type CodeHostEvent =
+  | { type: "ping"; deliveryId: string }
+  | { type: "pull_request"; deliveryId: string; repo: string; number: number; action: "opened" | "closed" | "reopened" | "synchronize" | "other"; merged: boolean; mergeCommitSha: string | null; headSha: string; headBranch: string; baseBranch: string }
+  | { type: "check"; deliveryId: string; repo: string; headSha: string; name: string; conclusion: "success" | "failure" | "pending" | "neutral"; pullRequests: number[] }
+  | { type: "deployment"; deliveryId: string; repo: string; sha: string; environment: string; productionEnvironment: boolean | null; state: "success" | "failure" | "pending" | "inactive" | "other" }
+  | { type: "ignored"; deliveryId: string; reason: string };
+
+export interface CodeHost {
+  readonly name: string;
+  allowedRepos(): readonly string[];                          // lowercase owner/name
+  branchHead(repo: string, branch: string): Promise<string | null>;
+  readFile(args: { repo: string; path: string; ref: string; maxBytes?: number }): Promise<RepoFile | null>;
+  commit(req: { repo: string; taskId: string; baseSha: string; message: string; files: readonly ChangedFile[] }): Promise<{ branch: string; commitSha: string; treeSha: string; created: boolean }>;
+  openPullRequest(req: { repo: string; taskId: string; base: string; title: string; body: string; draft?: boolean }): Promise<{ number: number; url: string; headSha: string; created: boolean }>;
+  pullRequest(repo: string, number: number): Promise<{ number: number; url: string; state: "open" | "closed"; merged: boolean; mergeCommitSha: string | null; headSha: string; headBranch: string; baseBranch: string } | null>;
+  checks(repo: string, sha: string): Promise<{ state: "pending" | "success" | "failure" | "none"; failing: string[] }>;
+  verifyWebhook(request: Request): Promise<CodeHostEvent>;    // "auth", "invalid" or "unavailable" AdapterError
+}
+```
+
+### CodingSandbox (ship module)
+
+Runs a coding agent on a read-only clone, in a container that holds no credentials, one build step at a time. A step is started and then polled, so a durable caller (the ship build's Workflow) never holds a long call open. The `Sandbox` port above runs single commands for other modules; this one runs a whole build.
+
+- **Steps.** `prepare` starts a fresh container, clones the base branch and runs the install command; `agent` runs the coding agent on the approved spec; `checks` runs the repository's checks; `repair` runs the agent once more after failed checks. The spec is the only description of the request the agent is given.
+- **`start` is idempotent per step id** and refuses a second step while one runs (`reason: "busy"`).
+- **`status` never carries the container's own text**: only a state, an exit code, whether the step hit its time limit, the base commit the clone recorded, and a fixed description of a failure.
+- **`collect` returns the changed files against the recorded base commit**, within `limits`, or the limit that was hit. The adapter validates what its container reports; everything that comes out is full taint all the same.
+- **`limits`** are at most 2 MB of changed content and 80 model requests per task; an adapter's options can only lower them.
+
+```ts
+export type CodingStep =
+  | { kind: "prepare"; repo: string; baseBranch: string; install: readonly string[] | null }
+  | { kind: "agent"; spec: string }
+  | { kind: "checks"; command: readonly string[] }
+  | { kind: "repair"; spec: string };
+
+export interface CodingStatus {
+  stepId: string | null;
+  kind: "prepare" | "agent" | "checks" | "repair" | null;
+  state: "idle" | "running" | "succeeded" | "failed" | "lost";   // lost: the container stopped before the step ended
+  exitCode: number | null;
+  timedOut: boolean;
+  baseSha: string | null;
+  detail: string | null;
+}
+
+export type CodingCollectResult =
+  | { ok: true; files: ChangedFile[]; diffBytes: number; log: string }
+  | { ok: false; reason: "not_ready" | "too_many_files" | "file_too_large" | "diff_too_large" | "invalid_output"; detail: string; log: string };
+
+export interface CodingSandbox {
+  readonly name: string;
+  readonly limits: { maxDiffBytes: number; maxFileBytes: number; maxFiles: number; maxModelTurns: number };
+  start(taskId: string, stepId: string, step: CodingStep): Promise<{ accepted: boolean; reason?: string }>;
+  status(taskId: string): Promise<CodingStatus>;
+  collect(taskId: string): Promise<CodingCollectResult>;
+  destroy(taskId: string): Promise<void>;                     // safe to call more than once
+}
+```
+
 ## How adapters become tools
 
 Core registers each manifest `tools` entry as an agent tool with:
@@ -588,10 +683,12 @@ runContactFinderContract(create, fixtures)        // _contract/contact-finder.ts
 runEmailVerifierContract(create, fixtures)        // _contract/email-verifier.ts; every vendor code maps to one of four statuses
 runEmailProviderContract(create, fixtures)        // _contract/email-provider.ts; a signed and a tampered webhook
 runOperatorChannelContract(create, fixtures)      // _contract/operator-channel.ts; a tampered webhook, a stale approval digest
-runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip
+runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts; usage is populated, tool calls round-trip, stream() matches complete()
 runInboxProviderContract(create, fixtures)        // _contract/inbox-provider.ts; capability-limited adapters declare what they cannot do
 runBillingProviderContract(create, fixtures)      // _contract/billing-provider.ts; signed, tampered, stale and multi-signature webhooks
 runCalendarProviderContract(create, fixtures)     // _contract/calendar-provider.ts; the request asks for no title or description
+runCodeHostContract(create, fixtures)             // _contract/code-host.ts; one idempotent commit, never the base branch, a force or a merge
+runCodingSandboxContract(fixtures)                // _contract/coding-sandbox.ts; a fake container: internet off, no secret inside, limits enforced
 // Runners for the other ports arrive with the adapters that need them.
 ```
 
@@ -613,6 +710,8 @@ Each adapter's `contract.test.ts` calls the runner with a recorded-response `fet
 | `data-xai` | SignalSource | Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |
+| `code-github` | CodeHost | GitHub over plain fetch, for the ship module: one commit per task through the git data API on `ship/<task>`, idempotent pull requests, `X-Hub-Signature-256` verified in constant time before parsing. It cannot merge. Available |
+| `sandbox-cloudflare` | CodingSandbox | A Cloudflare Container per ship task with internet access off and no credentials; the Worker lets through a read-only clone, package reads and the coder model only. Agent profiles `claude-code` (default) and `opencode`. Needs a plan with Containers. Available |
 | `llm-gateway` | ModelGateway | Anthropic is available; OpenAI and Workers AI are planned. AI Gateway optional |
 
 To request a new adapter, open an adapter request issue with:

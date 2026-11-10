@@ -49,18 +49,45 @@ export function sectionRoom(entries: readonly LearningEntry[], section: Learning
   return null;
 }
 
-/** The learnings document as prompt text, or "" when nothing is applied. Empty on a read error. */
-export async function learningsText(db: D1Database, sections: readonly LearningSection[] = LEARNING_SECTIONS): Promise<string> {
+const HEADER = "LEARNINGS (operator-approved)";
+
+/**
+ * The learnings document as prompt text, or "" when nothing is applied. Empty on a read error.
+ * With `maxBytes`, entries are added whole, section by section in the order given, while the text
+ * stays within the budget; an entry is never cut, and a closing line counts what was left out.
+ */
+export async function learningsText(db: D1Database, sections: readonly LearningSection[] = LEARNING_SECTIONS, options: { maxBytes?: number } = {}): Promise<string> {
   let entries: LearningEntry[];
   try {
     entries = await learningEntries(db);
   } catch {
     return "";
   }
+  const budget = options.maxBytes ?? Number.POSITIVE_INFINITY;
+  // The closing note is reserved up front, so the whole text stays within the budget.
+  const reserve = options.maxBytes === undefined ? 0 : bytes("\n\n(999 more approved entries left out for length.)");
+  let used = bytes(HEADER);
+  let omitted = 0;
   const blocks: string[] = [];
   for (const section of sections) {
-    const lines = entries.filter((e) => e.section === section).map((e) => `- ${e.text}`);
-    if (lines.length > 0) blocks.push([`## ${section}`, ...lines].join("\n"));
+    const heading = `## ${section}`;
+    const lines: string[] = [];
+    let size = bytes(heading) + 2;
+    for (const e of entries.filter((x) => x.section === section)) {
+      const line = `- ${e.text}`;
+      if (used + size + bytes(line) + 1 + reserve > budget) {
+        omitted += 1;
+        continue;
+      }
+      lines.push(line);
+      size += bytes(line) + 1;
+    }
+    if (lines.length > 0) {
+      blocks.push([heading, ...lines].join("\n"));
+      used += size;
+    }
   }
-  return blocks.length > 0 ? ["LEARNINGS (operator-approved)", ...blocks].join("\n\n") : "";
+  if (blocks.length === 0) return "";
+  const text = [HEADER, ...blocks].join("\n\n");
+  return omitted > 0 ? `${text}\n\n(${omitted} more approved entries left out for length.)` : text;
 }

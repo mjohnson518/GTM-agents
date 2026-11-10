@@ -75,27 +75,27 @@ runBillingProviderContract(createAdapter, {
     {
       name: "checkout.session.completed",
       body: event("evt_test0001", "checkout.session.completed", { id: "cs_test0001", object: "checkout.session", customer: "cus_test0001", customer_details: { email: "dana@globex.example" }, mode: "subscription", amount_total: 4900, currency: "USD", metadata: { plan: "pro" } }),
-      expected: { type: "checkout_completed", customerId: "cus_test0001", email: "dana@globex.example", plan: "pro", amount: 4900, currency: "usd", at: AT, providerEventId: "evt_test0001" },
+      expected: { type: "checkout_completed", customerId: "cus_test0001", email: "dana@globex.example", plan: "pro", amount: 4900, currency: "usd", at: AT, providerEventId: "evt_test0001", livemode: false },
     },
     {
       name: "customer.subscription.created",
       body: event("evt_test0002", "customer.subscription.created", subscription()),
-      expected: { type: "subscription_created", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "active", plan: "pro", amount: 4900, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0002" },
+      expected: { type: "subscription_created", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "active", plan: "pro", amount: 4900, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0002", livemode: false },
     },
     {
       name: "customer.subscription.updated, with an expanded customer",
       body: event("evt_test0003", "customer.subscription.updated", subscription({ status: "past_due", customer: { id: "cus_test0001", object: "customer", email: "dana@globex.example" }, items: { data: [proItem({ quantity: 3 })] } })),
-      expected: { type: "subscription_updated", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "past_due", email: "dana@globex.example", plan: "pro", amount: 14_700, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0003" },
+      expected: { type: "subscription_updated", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "past_due", email: "dana@globex.example", plan: "pro", amount: 14_700, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0003", livemode: false },
     },
     {
       name: "customer.subscription.deleted",
       body: event("evt_test0004", "customer.subscription.deleted", subscription({ status: "canceled" })),
-      expected: { type: "subscription_canceled", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "canceled", plan: "pro", amount: 4900, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0004" },
+      expected: { type: "subscription_canceled", customerId: "cus_test0001", subscriptionId: "sub_test0001", status: "canceled", plan: "pro", amount: 4900, currency: "usd", interval: "month", at: AT, providerEventId: "evt_test0004", livemode: false },
     },
     {
       name: "invoice.payment_failed, with the subscription under the invoice's parent",
       body: event("evt_test0005", "invoice.payment_failed", { id: "in_test0001", object: "invoice", customer: "cus_test0001", customer_email: "dana@globex.example", amount_due: 4900, currency: "usd", parent: { type: "subscription_details", subscription_details: { subscription: "sub_test0001" } } }),
-      expected: { type: "payment_failed", customerId: "cus_test0001", subscriptionId: "sub_test0001", email: "dana@globex.example", amount: 4900, currency: "usd", at: AT, providerEventId: "evt_test0005" },
+      expected: { type: "payment_failed", customerId: "cus_test0001", subscriptionId: "sub_test0001", email: "dana@globex.example", amount: 4900, currency: "usd", at: AT, providerEventId: "evt_test0005", livemode: false },
     },
     {
       name: "an event type it does not handle",
@@ -149,6 +149,15 @@ describe("billing-stripe specifics", () => {
     expect(subscriptionPlan(subscription({ metadata: { plan: "team" } }))).toBe("team");
     expect(subscriptionPlan(subscription())).toBe("pro");
     expect(subscriptionPlan(subscription({ items: { data: [proItem({ price: { id: "price_test_x", unit_amount: 1 } })] } }))).toBe("price_test_x");
+  });
+
+  it("marks an event live only when Stripe says livemode is true, so a test-mode or unmarked event is livemode false", () => {
+    const live = JSON.parse(event("evt_test0011", "customer.subscription.created", subscription())) as Record<string, unknown>;
+    expect(mapStripeEvent({ ...live, livemode: true })).toMatchObject({ type: "subscription_created", livemode: true });
+    expect(mapStripeEvent({ ...live, livemode: false })).toMatchObject({ type: "subscription_created", livemode: false });
+    for (const odd of [undefined, "true", 1, null]) expect(mapStripeEvent({ ...live, livemode: odd }), String(odd)).toMatchObject({ livemode: false });
+    // An event type that is not handled stays ignored, test mode or not.
+    expect(mapStripeEvent({ ...(JSON.parse(event("evt_test0012", "charge.refunded", { id: "ch_test0002" })) as Record<string, unknown>), livemode: true })).toEqual({ type: "ignored", providerEventId: "evt_test0012", reason: "not handled: charge.refunded" });
   });
 
   it("maps the older invoice shape, where the subscription sits on the invoice itself", () => {

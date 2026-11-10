@@ -156,6 +156,7 @@ Replies and follow-ups add their own commands, documented with them:
 | `meeting-link-<code> <contact>`, `meeting-unlink-<code>` | Attribute an ambiguous meeting to a contact, or make a meeting inert |
 | `autonomy-status` | Every action class with its level and evidence ([AUTONOMY.md](AUTONOMY.md)) |
 | `autonomy-set <class> <0-3>`, then `autonomy-confirm-<id>-<code>` | Propose a level change, then confirm it within 30 minutes; permanently human-only classes stay at 1 or below |
+| `autonomy-dismiss-<id> [reason]` | Drop an open autonomy proposal (yours or the weekly review's) so it can never be confirmed; no level changes |
 | `experiment-create`, `experiment-show`, `experiment-list`, `experiment-stop`, then `experiment-start <id>` and `experiment-start-<id>-<code>` | Pre-register, start (two-step) and stop experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) |
 | `exp-list`, `exp-approve-<id>`, `exp-reject-<id>`, `ab-dashboard`, `sample-size` | Copy-change and self-review proposals, the A/B report, and the sample-size helper |
 | `learning-list`, `learning-show <id>`, `learning-approve-<id>-<code>`, `learning-reject-<id>`, `objection-answer <id> <text>`, `voice-build`, `fitness` | Learning proposals, objection answers, the voice profile and the fitness trend ([LEARNING.md](LEARNING.md)) |

@@ -45,9 +45,27 @@ export interface CompletionResult {
   content?: Array<Record<string, unknown>>;
 }
 
+/** Receives a streamed completion's text while the vendor produces it. */
+export interface ModelStreamHandlers {
+  /**
+   * One piece of the answer's text, in order: the pieces joined are the result's `text`. Text the
+   * vendor produces inside a tool call's input or a reasoning block is never passed here. It is for
+   * display only: an exception it throws is ignored and never fails the call.
+   */
+  onText(text: string): void;
+}
+
 export interface ModelGateway {
   readonly name: string;
   complete(req: CompletionRequest): Promise<CompletionResult>;
+  /**
+   * Optional: the same call as complete(), streamed. It takes the same request, resolves to the same
+   * result once the vendor has finished (usage included, so core prices it exactly as a completion),
+   * and hands the answer's text to `handlers.onText` as it arrives. `req.signal` stops it mid-answer.
+   * Core uses it only where a person watches the answer arrive, and calls complete() on a gateway
+   * that does not have it.
+   */
+  stream?(req: CompletionRequest, handlers: ModelStreamHandlers): Promise<CompletionResult>;
   embed(texts: string[], role?: "embedding"): Promise<{ vectors: number[][]; model: string; cost?: Cost }>;
   /** Optional cheap classifier tier: a small model returning a probability per label. */
   classify?(args: { labels: string[]; text: string; role?: "classifier" }): Promise<{ probabilities: Record<string, number>; model: string; cost?: Cost }>;

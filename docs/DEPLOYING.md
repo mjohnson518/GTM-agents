@@ -351,7 +351,8 @@ These are vars, not secrets, set in `wrangler.jsonc`:
 | `models.pricing.<model>` | No | Per model id: `inputCentsPerMTok` and `outputCentsPerMTok` (US cents per million tokens), plus `cacheWriteMultiplier` (default 1.25) and `cacheReadMultiplier` (default 0.1) relative to input. A model without a price is never called | See the template; replace its numbers with your provider's current prices |
 | `autonomy.defaults` | No | Starting autonomy level (0 to 3) per action class; every class starts at 1, "draft and ask", unless set here. `merge_code`, `pricing_billing_auth`, `offers`, `proof_of_value_send` and `data_deletion` can never start above 1. Leave it empty to start | `{}` |
 | `sequences.cold.steps` | No | The cold sequence: 1 to 5 steps numbered 1, 2, 3 in order, each `{ step, kind, delayDays }` with `kind` one of `cold_intro`, `follow_up`, `breakup`, and `delayDays` (0 to 60) counted from the previous step | Default: `cold_intro` at 0, `follow_up` 3 days later, `breakup` 7 days after that |
-| `modules.ship`, `modules.linkIntake`, `modules.classifierTier`, `modules.codeMode` | No | `{ enabled }` for optional modules that have not shipped yet. Leave them off | (omitted) |
+| `modules.ship` | No | `{ enabled }` for the optional ship module, which turns product feedback into reviewed pull requests ([SHIP.md](SHIP.md)). Off by default; it also needs its own bindings, adapters and flags | (omitted) |
+| `modules.linkIntake`, `modules.classifierTier`, `modules.codeMode` | No | `{ enabled }` for optional modules that have not shipped yet. Leave them off | (omitted) |
 | `operator.allowedChatIds` | No | Chat ids allowed to command the agent. Empty denies everyone | `["123456789"]` |
 | `operator.allowedUserIds` | No | User ids allowed to command the agent; a chat is served only when both lists match | `["123456789"]` |
 
@@ -645,11 +646,15 @@ Put `/admin` and `/ws` behind a Cloudflare Access application, add the `admin` s
 
 ### Billing and lifecycle follow-ups
 
-Stripe: set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` and point a Stripe webhook endpoint at `/api/webhooks/billing`, then `billing:enabled`. Follow-ups to product users need approved `lifecycle` templates, a `classifier` model and price, and `lifecycle:followups_enabled` ([LIFECYCLE.md](LIFECYCLE.md)).
+Stripe: set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` and point a Stripe webhook endpoint at `/api/webhooks/billing`, then `billing:enabled`. Events from Stripe's test mode are verified, answered and ignored unless `billing:accept_test_events` is on, so turn it on in a staging deployment wired to test mode and leave it off in production. Follow-ups to product users need approved `lifecycle` templates, a `classifier` model and price, and `lifecycle:followups_enabled` ([LIFECYCLE.md](LIFECYCLE.md)).
 
 ### Self-improvement
 
 Each loop has its own `learning:*` flag and spend cap and only proposes; approve from the chat or the dashboard. The model-calling loops (retrospective, agent review, benchmark, evolution) need the `strategist`, `judge` and `writer` roles priced ([LEARNING.md](LEARNING.md)).
+
+### The ship loop (optional)
+
+The ship module turns product feedback into pull requests a person reviews and merges. It needs a paid Workers plan (containers), Docker where you deploy, a GitHub repository and token, a `coder` model with a price, and its own bindings, so it is not in the template: `examples/ship/` is a complete Worker with it wired. Turn on `ship:enabled`, then `ship:themes_enabled` and `ship:specs_enabled` to plan, and `ship:builds_enabled` only after a first build on a scratch repository. [SHIP.md](SHIP.md) walks through every step, the webhook events to subscribe to, and the limits.
 
 ### Stage 11: earned autonomy
 

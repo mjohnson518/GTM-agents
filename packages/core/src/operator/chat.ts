@@ -29,6 +29,10 @@
 //     `objection-answer`, `voice-build`, `voice-status`, `fitness`) runs once per message, without
 //     the model. Proposals apply only from here or the dashboard, bound to the detail shown;
 //   - a command (/clean, /status, /help) runs without the model;
+//   - a command an optional module contributed (`commands`, module-commands.ts) runs once per
+//     message, without the model, after every built-in command has had its turn. A built-in name
+//     is never matched as a module command. A handler that throws is answered with a generic
+//     error and an audit row, never with its error text;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest.
 // Every message is acknowledged after one attempt. A turn is not retried automatically: a retry
@@ -67,6 +71,9 @@ import { servedTemplates } from "../experiments/jobs.ts";
 import type { TemplateFile } from "../templates/store.ts";
 // Self-improvement: proposals apply only from here or the dashboard, bound to the detail shown (docs/LEARNING.md).
 import { parseLearningCommand, runLearningCommand } from "../learning/commands.ts";
+// Optional modules: commands they contribute, matched before the model.
+import { writeAudit } from "../events/audit.ts";
+import { matchModuleCommand, moduleHelpLines, type MatchedModuleCommand, type ModuleCommand } from "./module-commands.ts";
 
 export const RELEASE_EFFECT = "operator_batch_release";
 export const REPLY_COMMAND_EFFECT = "operator_reply_command";
@@ -77,6 +84,9 @@ export const AUTONOMY_COMMAND_EFFECT = "operator_autonomy_command";
 export const EXPERIMENT_COMMAND_EFFECT = "operator_experiment_command";
 export const FOLLOWUP_COMMAND_EFFECT = "operator_followup_command";
 export const LEARNING_COMMAND_EFFECT = "operator_learning_command";
+export const MODULE_COMMAND_EFFECT = "operator_module_command";
+/** What the operator reads when a module command throws. Its error text is never shown. */
+export const MODULE_COMMAND_FAILED_TEXT = "That command could not be completed. Nothing more was done; send it again to retry, and check the Worker's logs if it keeps failing.";
 
 export interface OperatorAgentOptions<E extends Env = Env> {
   config: GtmConfig;
@@ -109,6 +119,11 @@ export interface OperatorAgentOptions<E extends Env = Env> {
    * served from KV.
    */
   templates?: readonly TemplateFile[];
+  /**
+   * Commands contributed by optional modules (packages/modules). Each is matched before the model,
+   * after the allowlist, the agent flag and every built-in command; /help lists their help lines.
+   */
+  commands?: ReadonlyArray<ModuleCommand<E>>;
   now?: () => Date;
   logger?: AgentLogger;
 }
@@ -145,6 +160,28 @@ export function isChatMessage(body: unknown): body is ChatMessage {
     const value = b[k];
     return typeof value === "string" && value.length > 0;
   });
+}
+
+/**
+ * Run a matched module command once per message and return the reply. Never throws: a throwing
+ * handler is answered with MODULE_COMMAND_FAILED_TEXT and leaves an audit row naming the module.
+ * A redelivered message returns null: it was handled already, so nothing runs and nothing is sent.
+ */
+async function runModuleCommand<E extends Env>(options: OperatorAgentOptions<E>, env: E, message: ChatMessage, matched: MatchedModuleCommand<E>, log: AgentLogger): Promise<string | null> {
+  // Queue delivery is at least once: a redelivered command must not run twice.
+  if (!(await claimEffect(env.DB, message.updateId, MODULE_COMMAND_EFFECT))) {
+    log.warn("redelivered module command was not run again", { updateId: message.updateId, module: matched.module });
+    return null;
+  }
+  const now = options.now?.() ?? new Date();
+  try {
+    const text = await matched.handler({ env, now, actor: `operator:${message.userId}`, sessionKey: message.sessionKey });
+    return typeof text === "string" && text.trim() !== "" ? text : "Done.";
+  } catch (error) {
+    log.error("module command failed", { module: matched.module, error: sanitizeErrorMessage(error) });
+    await writeAudit(env.DB, { agentId: "operator", action: "module_command_failed", details: { module: matched.module.slice(0, 40), update: message.updateId.slice(0, 120) }, now });
+    return MODULE_COMMAND_FAILED_TEXT;
+  }
 }
 
 /** Handle one queued operator message. Never throws. */
@@ -380,11 +417,24 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       await reply(text);
       return;
     }
+    // Optional modules: a command a module contributed, once per message, never to the model.
+    const moduleCommand = matchModuleCommand(options.commands, message.text);
+    if (moduleCommand) {
+      const text = await runModuleCommand(options, env, message, moduleCommand, log);
+      if (text !== null) await reply(text);
+      return;
+    }
     if (command) {
       let text: string;
       try {
         text = await runCommand(
-          { db: env.DB, agentName: options.config.agent.name, strategistModel: options.config.models.roles.strategist, ...(options.now ? { now: options.now } : {}) },
+          {
+            db: env.DB,
+            agentName: options.config.agent.name,
+            strategistModel: options.config.models.roles.strategist,
+            moduleHelpLines: moduleHelpLines(options.commands),
+            ...(options.now ? { now: options.now } : {}),
+          },
           command,
           session,
         );

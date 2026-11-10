@@ -140,6 +140,12 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `learnings_proposals` gains `kind`, `payload`, `expires_at` and `status_reason` (0027): one proposal record for every learning loop. New `draft_edits` (a draft and what was actually sent, deleted with the contact), `agent_reviews` and `memories`.
 - `lifecycle_followups` (0028): one row per contact, kind and lifecycle entry, which is the claim; a CHECK refuses an offer as sent unless a person decided it. The older `followups` table (0008) is unused.
 
+### Ship loop planning (0029)
+
+- `themes` gains `centroid` (the running mean of the embeddings of its members' triage summaries, a JSON array), `centroid_model` and `member_count`, so theme matching is rebuilt from the database and never from an index; and `spec_digest` (the SHA-256 of the spec's exact content, which an approval binds to) with `spec_attempts`.
+- `feedback_items.triage_attempts`: triage answers that could not be used; the third declines the item.
+- `ship_notes`: one row per requester of a shipped theme, unique on (theme, contact), which is the claim that keeps a "you asked, it is live" note from being drafted or sent twice. It records the draft, the autonomy level it was decided at, its status and the reason. Erasing a contact deletes their notes ([SHIP.md](SHIP.md)).
+
 ### Experiments and calendar baseline (0024, 0026)
 
 - `experiments.control_template_sha256` and `treatment_template_sha256` (0024): both templates' copy hashes, recorded at start, so edited copy puts an experiment on hold rather than mixing versions. Experiments otherwise use the 0009 tables (`experiments`, `experiment_assignments` pinned per account, subject tests and variants, proposals).

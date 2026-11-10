@@ -12,6 +12,9 @@
 //     only at retrospective_actuation level 2 or above (apply.ts reads the level); everything else is
 //     a proposal a person approves;
 //   - the model's input is numbers, ids and operator-approved text; the data block is fenced anyway;
+//   - it reads the approved learnings (in the system prompt) and its own and the agent review's
+//     recent memory notes (in the user turn, fenced as data), each under its byte budget
+//     (context.ts); a memory read that fails is skipped and the retrospective runs without it;
 //   - the call is budget-gated through the spend gate, role strategist.
 import type { GtmConfig } from "../config/schema.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
@@ -24,8 +27,9 @@ import { callModel, jsonCandidates } from "../replies/model.ts";
 import { fenceUntrusted } from "../security/fence.ts";
 import { autoApplyLearningProposal } from "./apply.ts";
 import { itemsOf, readServedBrain, type BrainKv } from "./brain-edit.ts";
+import { MEMORY_NOTICE, writerContext } from "./context.ts";
 import { dimensionTrends, fitnessTrend } from "./fitness.ts";
-import { isLearningSection, learningsText } from "./learnings.ts";
+import { isLearningSection } from "./learnings.ts";
 import { storeMemory } from "./memory.ts";
 import { createLearningProposal, PLAYBOOK_FIELDS, type NewProposal, type PlaybookField } from "./proposals.ts";
 import { snippetProblems } from "./text.ts";
@@ -176,6 +180,7 @@ export async function runRetrospective(deps: RetrospectiveDeps): Promise<Retrosp
   const day = deps.now.toISOString().slice(0, 10);
   if (!(await claimEffect(deps.db, day, RETROSPECTIVE_EFFECT))) return { summary: `the retrospective for ${day} already ran` };
   const { data, templates, personas } = await context(deps);
+  const read = await writerContext(deps.db, "retrospective", deps.now, deps.log);
   const system = [
     "You run the daily retrospective of a B2B outreach system. Pick exactly one improvement, or none.",
     "Choices:",
@@ -187,12 +192,14 @@ export async function runRetrospective(deps: RetrospectiveDeps): Promise<Retrosp
     "- none: nothing is worth changing today.",
     "Base the choice on the numbers. Write plain sentences: under 400 characters, no links, no em or en dashes, no figures you were not given, no names of people.",
     'Answer with JSON: {"choice": "...", "rationale": "<one sentence>", ...the fields of that choice}.',
+    MEMORY_NOTICE,
     "",
-    await learningsText(deps.db),
+    read.learnings,
   ].join("\n");
+  const user = [fenceUntrusted({ source: "retrospective_numbers", text: data }), read.memory].filter((part) => part.length > 0).join("\n\n");
   const answer = await callModel(
     { model: deps.model, config: deps.config, spend: deps.spend, job: deps.job, ...(deps.runId ? { runId: deps.runId } : {}), timeoutMs: 60_000, ...(deps.log ? { log: deps.log } : {}) },
-    { role: "strategist", system, user: fenceUntrusted({ source: "retrospective_numbers", text: data }), jsonSchema: SCHEMA, maxTokens: 1200 },
+    { role: "strategist", system, user, jsonSchema: SCHEMA, maxTokens: 1200 },
   );
   if (!answer.ok) {
     if (!answer.called) await releaseEffect(deps.db, day, RETROSPECTIVE_EFFECT);

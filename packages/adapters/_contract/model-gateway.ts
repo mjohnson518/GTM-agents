@@ -10,16 +10,25 @@
 //   - a tool-use completion returns tool calls with an id, a name and an object input;
 //   - a tool call round-trips: core's neutral tool_result block, sent with the assistant turn the
 //     gateway returned, reaches the vendor under the same call id with the same content;
-//   - vendor failures become AdapterError with the right code and retryable flag.
+//   - vendor failures become AdapterError with the right code and retryable flag;
+//   - a gateway with the optional stream() hands the answer's text over in order, in more than one
+//     piece, and resolves to the same result a completion gives: the pieces joined are its text,
+//     tool calls are whole, and usage is populated so core prices a streamed call like any other.
+//     A gateway without stream() provides no streamed fixtures.
 import type { AdapterContext, CompletionRequest, CompletionResult, ModelContentBlock, ModelGateway } from "@gtm-agents/core/ports";
 import { describe, expect, it } from "vitest";
 
 /** Recorded responses a fixture must provide, answered in the order a test asks for them. */
 export type ModelScenario = "text" | "tool_use" | "after_tool" | "rate_limited" | "auth_failure" | "overloaded";
 
+/** Recorded streamed responses a gateway with stream() must provide: a text answer, and a tool call with some text before it. */
+export type StreamScenario = "text_stream" | "tool_use_stream";
+
 export interface ModelGatewayFixtures {
   /** A context whose fetch answers the given scenarios in order, and the requests it saw. */
   context(...scenarios: ModelScenario[]): { ctx: AdapterContext; calls: Request[] };
+  /** For a gateway with stream() (and only then): a context whose fetch answers streamed scenarios in order. */
+  streamed?: (...scenarios: StreamScenario[]) => { ctx: AdapterContext; calls: Request[] };
   /** The tool name the recorded "tool_use" response asks for. */
   toolName: string;
   /** Reads the tool result an outbound request carries, in the vendor's wire format. */
@@ -112,6 +121,49 @@ export function runModelGatewayContract(create: (ctx: AdapterContext) => ModelGa
     it("maps an overloaded vendor to a retryable unavailable AdapterError", async () => {
       const { ctx } = fixtures.context("overloaded");
       expect(await failure(create(ctx).complete(request()))).toEqual({ code: "unavailable", retryable: true, name: "AdapterError" });
+    });
+
+    /** The gateway for a streamed scenario, or null when it does not stream (and then must provide no streamed fixtures). */
+    function streaming(...scenarios: StreamScenario[]): ModelGateway | null {
+      const streams = "stream" in create(fixtures.context().ctx);
+      if (!streams) {
+        expect(fixtures.streamed, "a gateway without stream() provides no streamed fixtures").toBeUndefined();
+        return null;
+      }
+      if (!fixtures.streamed) throw new Error("a gateway with stream() must provide streamed fixtures");
+      return create(fixtures.streamed(...scenarios).ctx);
+    }
+
+    it("streams the answer's text in order and resolves to a completion's result, usage included", async () => {
+      const gateway = streaming("text_stream");
+      if (!gateway?.stream) return;
+      const pieces: string[] = [];
+      const result = await gateway.stream(request(), { onText: (text) => pieces.push(text) });
+      expect(pieces.length).toBeGreaterThan(1);
+      expect(pieces.join("")).toBe(result.text);
+      expect(result.text.length).toBeGreaterThan(0);
+      expect(result.stopReason).toBe("end");
+      expect(result.toolCalls).toEqual([]);
+      expect(result.usage.inputTokens).toBeGreaterThan(0);
+      expect(result.usage.outputTokens).toBeGreaterThan(0);
+      expect(typeof result.usage.cacheReadTokens).toBe("number");
+      expect(typeof result.usage.cacheWriteTokens).toBe("number");
+      expect(result.model.length).toBeGreaterThan(0);
+    });
+
+    it("streams a tool call whole: only answer text reaches onText, and the call has an id, a name and an object input", async () => {
+      const gateway = streaming("tool_use_stream");
+      if (!gateway?.stream) return;
+      const tools = [{ name: fixtures.toolName, description: "A tool for the contract test.", inputSchema: { type: "object", properties: {} } }];
+      const pieces: string[] = [];
+      const result = await gateway.stream(request({ tools }), { onText: (text) => pieces.push(text) });
+      expect(result.stopReason).toBe("tool_use");
+      expect(pieces.join("")).toBe(result.text);
+      const call = result.toolCalls[0];
+      expect(call?.name).toBe(fixtures.toolName);
+      expect(call?.id.length).toBeGreaterThan(0);
+      expect(call?.input !== null && typeof call?.input === "object" && !Array.isArray(call?.input) && Object.keys(call?.input ?? {}).length > 0).toBe(true);
+      for (const piece of pieces) expect(piece).not.toContain(JSON.stringify(call?.input));
     });
   });
 }

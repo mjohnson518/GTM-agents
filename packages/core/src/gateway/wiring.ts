@@ -10,6 +10,7 @@ import type { JobRegistry } from "../jobs/registry.ts";
 import type { EmailProvider, InboxProvider } from "../ports/email.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
+import type { ModuleCommand } from "../operator/module-commands.ts";
 import type { TemplateFile } from "../templates/store.ts";
 import type { Proposal } from "./protocol.ts";
 
@@ -65,6 +66,11 @@ export interface GatewayWiring<E extends Env = Env> {
   lifecycle: boolean;
   agent: { maxRounds?: number; maxTokens?: number; templates?: readonly TemplateFile[]; fetch?: typeof fetch; owedWindowDays?: number };
   extensions: DashboardExtensions<E>;
+  /**
+   * Chat commands optional modules contributed (createWorker's `commands`). The dashboard chat never
+   * runs one and never passes one to the model: they run from the operator chat. /help lists them.
+   */
+  commands?: ReadonlyArray<ModuleCommand<E>>;
 }
 
 let registered: GatewayWiring<Env> | undefined;

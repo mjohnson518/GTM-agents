@@ -35,9 +35,13 @@ packages/adapters/<name>/
 | `calendar-google` | CalendarProvider |
 | `billing-stripe` | BillingProvider |
 | `llm-gateway` | ModelGateway |
+| `code-github` | CodeHost (ship module: one commit per task, pull requests, checks, signed webhooks; never merges) |
+| `sandbox-cloudflare` | CodingSandbox (ship module: a coding agent in a Cloudflare Container with no credentials; profiles `claude-code` and `opencode`) |
 
 ## Status
 
 Available now: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier and people at a domain) `email-resend` (send, webhooks, Message-ID lookup), `inbox-gmail` (reading, drafts, sends and push from a Gmail mailbox, with the shared `_google-auth` helper) `email-cloudflare` (inbound mail from Cloudflare Email Routing) and `calendar-google` (read-only calendar events with privacy-limited fields) `data-jobboards` (role-kind counts from public hiring boards) and `billing-stripe` (signed billing webhooks and subscription reads). The others are planned; [docs/INTERFACES.md](../../docs/INTERFACES.md#v1-adapters) has the details.
+
+`code-github` and `sandbox-cloudflare` are available too. They serve the optional ship module ([docs/SHIP.md](../../docs/SHIP.md)): `sandbox-cloudflare` also ships the container images under `images/` and the Durable Object and egress classes a deployment exports from its Worker entry, and it is the one adapter with a runtime dependency on a Cloudflare package (`@cloudflare/sandbox`).
 
 `_contract/` holds the shared contract runners (one per port), `recordedFetch` for hermetic tests and `testContext`. Each adapter's `contract.test.ts` runs in `npm test` with recorded responses; nothing reaches the network.

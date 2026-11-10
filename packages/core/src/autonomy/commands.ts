@@ -7,6 +7,8 @@
 //   autonomy-confirm-<id>-<code>        step two: applies that change, or a promotion the weekly
 //                                       review proposed, only if the level has not changed since
 //                                       (proposals.ts)
+//   autonomy-dismiss-<id> [reason]      drops an open proposal so it can never be confirmed; no
+//                                       level changes (the dashboard's Reject runs the same function)
 // A permanently human-only class is refused above level 1 at both steps. These commands are the
 // only way a level is raised from the chat; no tool, job, model output or inbound text can set one.
 import type { GtmConfig } from "../config/schema.ts";
@@ -14,18 +16,20 @@ import type { FlagReader } from "../jobs/registry.ts";
 import type { KvStore } from "../shared/kv.ts";
 import { emptyEvidence, evidenceLine, loadEvidence, type ClassEvidence } from "./evidence.ts";
 import { ACTION_CLASSES, EARNABLE_ACTION_CLASSES, PERMANENT_HUMAN, isPermanentHuman, type AutonomyLevel } from "./levels.ts";
-import { AUTOMATIC_PATHS, decidePromotion } from "./promotion.ts";
-import { confirmCommand, confirmProposal, createProposal, openProposals, OPERATOR_PROPOSAL_TTL_MS } from "./proposals.ts";
+import { PROPOSAL_REPEAT_DAYS, decidePromotion, levelPath } from "./promotion.ts";
+import { confirmCommand, confirmProposal, createProposal, dismissCommand, dismissProposal, openProposals, OPERATOR_PROPOSAL_TTL_MS } from "./proposals.ts";
 import { readAutonomyLevel, type LevelReading } from "./store.ts";
 import { evalGap } from "./writers.ts";
 
 export type AutonomyCommand =
   | { kind: "status" }
   | { kind: "set"; actionClass: string; level: string }
-  | { kind: "confirm"; id: string; code: string };
+  | { kind: "confirm"; id: string; code: string }
+  | { kind: "dismiss"; id: string; reason?: string };
 
 const SET = /^\/?autonomy[-_]set(?:@[A-Za-z0-9_]{1,64})?(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i;
 const CONFIRM = /^\/?autonomy[-_]confirm[-_]([0-9a-f]{10})[-_]([0-9a-f]{6})$/i;
+const DISMISS = /^\/?autonomy[-_]dismiss[-_]([0-9a-f]{10})(?:@[A-Za-z0-9_]{1,64})?(?:\s+([\s\S]*))?$/i;
 const STATUS = /^\/?autonomy(?:[-_]status)?(?:@[A-Za-z0-9_]{1,64})?$/i;
 
 /** The autonomy command in a message, or null when it is not one. */
@@ -33,6 +37,11 @@ export function parseAutonomyCommand(text: string): AutonomyCommand | null {
   const trimmed = text.trim();
   const confirm = CONFIRM.exec(trimmed);
   if (confirm) return { kind: "confirm", id: (confirm[1] ?? "").toLowerCase(), code: (confirm[2] ?? "").toLowerCase() };
+  const dismiss = DISMISS.exec(trimmed);
+  if (dismiss) {
+    const reason = (dismiss[2] ?? "").trim();
+    return { kind: "dismiss", id: (dismiss[1] ?? "").toLowerCase(), ...(reason ? { reason } : {}) };
+  }
   const set = SET.exec(trimmed);
   if (set) return { kind: "set", actionClass: set[1] ?? "", level: set[2] ?? "" };
   if (STATUS.test(trimmed)) return { kind: "status" };
@@ -43,6 +52,7 @@ export const AUTONOMY_HELP_LINES: readonly string[] = Object.freeze([
   "autonomy-status  every action class's level, its evidence and open proposals",
   "autonomy-set <class> <0-3>  propose a level for a class; nothing changes until you send the confirm command it gives you",
   "autonomy-confirm-<id>-<code>  apply a proposed level (from autonomy-set or the weekly review), if the class has not changed since",
+  "autonomy-dismiss-<id> [reason]  drop a proposed level so it can never be confirmed; no level changes",
 ]);
 
 export interface AutonomyCommandDeps {
@@ -66,7 +76,7 @@ function levelLine(reading: LevelReading): string {
 }
 
 function pathLine(actionClass: string): string {
-  const path = AUTOMATIC_PATHS[actionClass as keyof typeof AUTOMATIC_PATHS];
+  const path = levelPath(actionClass);
   return path ? `At level 2 or 3, ${path}.` : "Nothing acts on this class's level yet: its drafts wait for a person at every level.";
 }
 
@@ -82,7 +92,7 @@ async function status(deps: AutonomyCommandDeps, now: Date): Promise<string> {
   for (const actionClass of EARNABLE_ACTION_CLASSES) {
     const reading = await readAutonomyLevel({ flags: deps.flags, db: deps.db, config: deps.config }, actionClass);
     const e = evidence?.get(actionClass) ?? emptyEvidence(actionClass);
-    const interesting = reading.level !== 1 || reading.demoted || reading.error !== null || AUTOMATIC_PATHS[actionClass] !== undefined || e.approvedUnchanged + e.approvedEdited + e.rejected + e.autoSent + e.incidents > 0;
+    const interesting = reading.level !== 1 || reading.demoted || reading.error !== null || levelPath(actionClass) !== undefined || e.approvedUnchanged + e.approvedEdited + e.rejected + e.autoSent + e.incidents > 0;
     if (!interesting) {
       quiet.push(actionClass);
       continue;
@@ -96,7 +106,9 @@ async function status(deps: AutonomyCommandDeps, now: Date): Promise<string> {
     const open = await openProposals(deps.db, now);
     if (open.length > 0) {
       lines.push("", "Open proposals:");
-      for (const p of open) lines.push(`- ${p.actionClass} level ${p.from} to ${p.to} (${p.origin === "review" ? "weekly review" : "autonomy-set"}, until ${p.expiresAt.slice(0, 16).replace("T", " ")} UTC): ${confirmCommand(p)}`);
+      for (const p of open) {
+        lines.push(`- ${p.actionClass} level ${p.from} to ${p.to} (${p.origin === "review" ? "weekly review" : "autonomy-set"}, until ${p.expiresAt.slice(0, 16).replace("T", " ")} UTC): ${confirmCommand(p)}, or drop it with ${dismissCommand(p)}`);
+      }
     }
   } catch {
     lines.push("", "Open proposals could not be read.");
@@ -144,7 +156,10 @@ async function set(deps: AutonomyCommandDeps, command: Extract<AutonomyCommand, 
       if (actionClass === "cold_batch") lines.push("Note: the weekly review also checks the cold batch's matured reply and bounce rates before proposing this.");
     }
   }
-  lines.push(`To set ${actionClass} to level ${level}, send within ${OPERATOR_PROPOSAL_TTL_MS / 60_000} minutes: ${confirmCommand(proposal)}`, `It applies only if the class is still at level ${reading.level} then.`);
+  lines.push(
+    `To set ${actionClass} to level ${level}, send within ${OPERATOR_PROPOSAL_TTL_MS / 60_000} minutes: ${confirmCommand(proposal)}`,
+    `It applies only if the class is still at level ${reading.level} then. To drop it now, send ${dismissCommand(proposal)}.`,
+  );
   return lines.join("\n");
 }
 
@@ -161,6 +176,11 @@ export async function runAutonomyCommand(deps: AutonomyCommandDeps, command: Aut
       if (!result.ok || result.level < 2) return result.text;
       const proposalClass = result.actionClass;
       return `${result.text} ${pathLine(proposalClass)} An incident (a hard bounce, a complaint or an unsubscribe after an automatic send) drops it back to level 1 at once. To lower it yourself, send autonomy-set ${proposalClass} 1.`;
+    }
+    case "dismiss": {
+      const result = await dismissProposal({ db: deps.db, actor: `operator:${deps.userId}`, now }, { id: command.id, ...(command.reason ? { reason: command.reason } : {}) });
+      if (!result.ok || result.proposal.origin !== "review") return result.text;
+      return `${result.text} The weekly review proposes the same change again no sooner than ${PROPOSAL_REPEAT_DAYS} days after it first did.`;
     }
   }
 }

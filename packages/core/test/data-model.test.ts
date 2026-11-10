@@ -150,6 +150,8 @@ describe("the schema", () => {
       subject_assignments: "SET NULL", candidates: "SET NULL", monitor_items: "SET NULL", signal_events: "CASCADE", inbound_emails: "CASCADE",
       events: "SET NULL", funnel_events: "SET NULL", engagement_events: "CASCADE", lifecycle_transitions: "CASCADE", feedback_items: "CASCADE",
       lifecycle_followups: "CASCADE",
+      // The ship loop's "you asked, it is live" notes belong to the person they were for (docs/SHIP.md).
+      ship_notes: "CASCADE",
       // Edit mining's pairs are the operator's correspondence with the contact (docs/LEARNING.md).
       draft_edits: "CASCADE",
     };

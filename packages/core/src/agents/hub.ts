@@ -10,7 +10,10 @@
 //      every model call (each fails closed), call the model gateway with role "strategist", record
 //      the cost, and run every tool call it asked for, one at a time, through executeToolCall with
 //      the rate-limit and budget checks. Tool results go back in the user turn exactly as the
-//      dispatcher returned them: sanitized and, when untrusted, fenced;
+//      dispatcher returned them: sanitized and, when untrusted, fenced. When the caller shows the
+//      answer live (input.onText) and the gateway streams, the call is ModelGateway.stream: the same
+//      request, the same gates before it and the same cost record after it; only the text arrives
+//      early. The reply is decided from the finished results either way;
 //   5. record the session's taint, which only rises, and only then append the operator's message
 //      and the reply to the history;
 //   6. finish the run row. Run rows and cost rows are bookkeeping: if they cannot be written, the
@@ -23,7 +26,8 @@ import { checkBudget, checkRunCeiling, checkTurnCeiling, readBudgetSettings } fr
 import { microCentsToCents, recordCost, tokenCostMicroCents, type ModelPrice } from "../budget/cost-ledger.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader } from "../jobs/registry.ts";
-import type { CompletionResult, ModelContentBlock, ModelGateway } from "../ports/model.ts";
+import type { CompletionRequest, CompletionResult, ModelContentBlock, ModelGateway } from "../ports/model.ts";
+import { AdapterError } from "../ports/types.ts";
 import { budgetCheck, rateLimitCheck } from "../runtime/checks.ts";
 import { executeToolCall, type ToolHandler, type ToolSession } from "../runtime/dispatcher.ts";
 import { createToolRegistry, type ToolRegistry } from "../security/registry.ts";
@@ -75,6 +79,14 @@ export interface TurnInput {
   /** The operator's message. Trusted: it comes from an allowlisted operator. */
   text: string;
   signal?: AbortSignal;
+  /**
+   * Receives the answer's text while the model produces it, when the gateway streams
+   * (ModelGateway.stream); a gateway that does not is called as before and this is never called.
+   * `round` counts this turn's model calls from 1, so a caller can tell a later answer from an
+   * earlier one. It is for display only: the reply and the history are decided exactly as without
+   * it, and an exception it throws is ignored.
+   */
+  onText?: (text: string, round: number) => void;
 }
 
 export type TurnStop = "end" | "max_tokens" | "round_limit" | "turn_ceiling" | "budget" | "unpriced" | "no_model" | "model_error" | "session_unreadable";
@@ -331,23 +343,50 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
       break;
     }
 
+    const request: CompletionRequest = {
+      role: "strategist",
+      model: modelId,
+      system,
+      messages,
+      tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
+      maxTokens,
+      metadata: { run_id: runId, turn_id: turnId, job: CHAT_JOB },
+      ...(input.signal ? { signal: input.signal } : {}),
+    };
     let completion: CompletionResult;
     try {
-      completion = await deps.model.complete({
-        role: "strategist",
-        model: modelId,
-        system,
-        messages,
-        tools: tools.map((t) => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })),
-        maxTokens,
-        metadata: { run_id: runId, turn_id: turnId, job: CHAT_JOB },
-        ...(input.signal ? { signal: input.signal } : {}),
-      });
+      const onText = input.onText;
+      const round = rounds + 1;
+      completion =
+        onText && deps.model.stream
+          ? await deps.model.stream(request, {
+              onText: (text) => {
+                try {
+                  onText(text, round);
+                } catch {
+                  // Display only: a failing viewer never fails the turn.
+                }
+              },
+            })
+          : await deps.model.complete(request);
     } catch (error) {
       failure = sanitizeErrorMessage(error);
       stop = "model_error";
       notice = `The model call failed: ${failure}`;
       log.warn("strategist model call failed", { turnId, error: failure });
+      // A call that failed after the vendor started billing it (an aborted or cut-off stream) is
+      // still spend: record what the adapter says was billed, so the budget and ceilings see it.
+      const billed = error instanceof AdapterError ? error.usage : undefined;
+      if (billed) {
+        let lost: number;
+        try {
+          lost = tokenCostMicroCents(billed, price);
+        } catch {
+          lost = 0;
+        }
+        const kept = await recordCost(deps.db, { provider: deps.model.name, capability: "model", model: modelId, usage: billed, costMicroCents: lost, job: CHAT_JOB, runId, turnId }, now());
+        if (!kept) log.warn("chat model cost could not be recorded", { turnId, runId });
+      }
       break;
     }
     rounds += 1;

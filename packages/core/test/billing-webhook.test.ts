@@ -1,14 +1,17 @@
 // GTM-agents: POST /api/webhooks/billing through the BillingProvider port, with a fake provider:
 // the signature is checked before anything else, effects are claimed per event, contacts are only
-// ever resolved (never created), erased people are refused, and payments move the lifecycle, the
-// deal mirror and MRR. No vendor is involved; every person and company is invented.
+// ever resolved (never created), erased people are refused, payments move the lifecycle, the deal
+// mirror and MRR, and an event from the provider's test mode changes nothing unless
+// billing:accept_test_events is on. No vendor is involved; every person and company is invented.
 import { beforeEach, describe, expect, it } from "vitest";
 import { fakeBillingProvider, fakeBillingWebhook } from "../src/billing/testing.ts";
+import { isTestModeEvent } from "../src/billing/webhook.ts";
 import { billingTransition, normalizeStatus } from "../src/billing/route.ts";
 import { monthlyCents, mrrDirection, planDirection } from "../src/billing/mrr.ts";
 import { eraseContact } from "../src/data/erasure.ts";
 import type { BillingEvent } from "../src/ports/business.ts";
-import { BILLING_SECRET, PRICES, bucket, call, count, db, dealsOf, lifecycleWorker, person, resetLifecycle, state, testEnv, uid } from "./lifecycle-fixtures.ts";
+import { memoryKv } from "../src/agents/testing.ts";
+import { BILLING_SECRET, ON, PRICES, bucket, call, count, db, dealsOf, lifecycleWorker, person, resetLifecycle, state, testEnv, uid } from "./lifecycle-fixtures.ts";
 
 const provider = fakeBillingProvider({ webhookSecret: BILLING_SECRET });
 const { worker } = lifecycleWorker({ billing: () => provider });
@@ -61,6 +64,72 @@ describe("the billing webhook's answers", () => {
     const stored = (await (await bucket.get(key))?.text()) ?? "";
     expect(stored).not.toMatch(/private@acme/i);
     expect((JSON.parse(stored) as { emailSha256: string }).emailSha256).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("billing events from the provider's test mode", () => {
+  const ignoredRows = () => count("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'billing_event_ignored_test_mode'");
+  const nothingChanged = async (contactId: string, customerId: string) => {
+    expect(await count("SELECT COUNT(*) AS n FROM events WHERE source = 'billing'")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM billing_customers WHERE provider_customer_id = ?1", customerId)).toBe(0);
+    expect(await state(contactId)).toBeNull();
+    expect(await dealsOf(contactId)).toEqual([]);
+    expect(await count("SELECT COUNT(*) AS n FROM funnel_events WHERE contact_id = ?1", contactId)).toBe(0);
+  };
+
+  it("are answered 200 and change nothing while billing:accept_test_events is off, with an audit row", async () => {
+    const ada = await person({ email: "ada@test-mode.example" });
+    const checkout: BillingEvent = { type: "checkout_completed", customerId: "cus_tm", email: "ada@test-mode.example", plan: "pro", at: at(-2), providerEventId: uid("bevt"), livemode: false };
+    const answer = await send(checkout);
+    expect(answer.status).toBe(200);
+    expect(await answer.json()).toEqual({ ok: true, ignored: true, reason: "test_mode" });
+    expect((await send(sub("subscription_created", "cus_tm", "active", { plan: "pro", amount: 4900, at: at(-1), livemode: false }))).status).toBe(200);
+    await nothingChanged(ada.id, "cus_tm");
+    expect(await ignoredRows()).toBe(2);
+    const audit = await db.prepare("SELECT details FROM audit_log WHERE action = 'billing_event_ignored_test_mode' ORDER BY id LIMIT 1").first<{ details: string }>();
+    expect(audit?.details).not.toContain("ada@");
+    expect(JSON.parse(audit?.details ?? "{}")).toMatchObject({ provider: "fake-billing", type: "checkout_completed", event: checkout.providerEventId });
+  });
+
+  it("change nothing when the flag cannot be read", async () => {
+    const ada = await person({ email: "ada@unreadable-flag.example" });
+    const kv = memoryKv({ ...ON, "billing:accept_test_events": "true" });
+    const values = kv.map;
+    kv.get = (key) => (key === "billing:accept_test_events" ? Promise.reject(new Error("kv unavailable")) : Promise.resolve(values.get(key) ?? null));
+    const event: BillingEvent = { type: "checkout_completed", customerId: "cus_tm_kv", email: "ada@unreadable-flag.example", at: at(), providerEventId: uid("bevt"), livemode: false };
+    const answer = await call(worker, await fakeBillingWebhook(event, { secret: BILLING_SECRET }), testEnv({ kv }));
+    expect(await answer.json()).toEqual({ ok: true, ignored: true, reason: "test_mode" });
+    await nothingChanged(ada.id, "cus_tm_kv");
+  });
+
+  it("are still refused with 401 when unsigned or tampered with, before anything is written", async () => {
+    const event: BillingEvent = { type: "checkout_completed", customerId: "cus_tm_bad", email: "nobody@test-mode.example", at: at(), providerEventId: uid("bevt"), livemode: false };
+    expect((await send(event, { unsigned: true })).status).toBe(401);
+    expect((await send(event, { tamper: true })).status).toBe(401);
+    expect(await ignoredRows()).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM events")).toBe(0);
+  });
+
+  it("count an event its adapter left unmarked as test mode, so a forgotten field fails closed", () => {
+    const base = { type: "checkout_completed", customerId: "cus_x", at: at(), providerEventId: "bevt_x" } as const;
+    expect(isTestModeEvent({ ...base })).toBe(true);
+    expect(isTestModeEvent({ ...base, livemode: false })).toBe(true);
+    expect(isTestModeEvent({ ...base, livemode: "true" })).toBe(true);
+    expect(isTestModeEvent({ ...base, livemode: true })).toBe(false);
+    expect(isTestModeEvent({ type: "ignored", providerEventId: "bevt_y", reason: "not handled" })).toBe(false);
+  });
+
+  it("are routed like live events once the flag is on, and live events never wait on it", async () => {
+    const accept = { ...ON, "billing:accept_test_events": "true" };
+    const tester = await person({ email: "qa@staging-billing.example" });
+    await send({ type: "checkout_completed", customerId: "cus_tm_on", email: "qa@staging-billing.example", at: at(-2), providerEventId: uid("bevt"), livemode: false }, { flags: accept });
+    await send(sub("subscription_created", "cus_tm_on", "active", { plan: "pro", amount: 4900, at: at(-1), livemode: false }), { flags: accept });
+    expect(await state(tester.id)).toMatchObject({ state: "paying", mrr_cents: 4900 });
+    const live = await person({ email: "cfo@live-billing.example" });
+    await send({ type: "checkout_completed", customerId: "cus_live", email: "cfo@live-billing.example", at: at(-2), providerEventId: uid("bevt"), livemode: true });
+    await send(sub("subscription_created", "cus_live", "active", { plan: "pro", amount: 4900, at: at(-1) }));
+    expect(await state(live.id)).toMatchObject({ state: "paying", mrr_cents: 4900 });
+    expect(await ignoredRows()).toBe(0);
   });
 });
 

@@ -1,6 +1,6 @@
 // GTM-agents: tests for the operator's autonomy commands: autonomy-set in two steps, the confirm
-// that applies a change only while nothing changed since, the refusals, autonomy-status, and the
-// chat consumer routing them without the model. Every value is synthetic.
+// that applies a change only while nothing changed since, the refusals, dismissing a proposal,
+// autonomy-status, and the chat consumer routing them without the model. Every value is synthetic.
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { parseAutonomyCommand, runAutonomyCommand, type AutonomyCommandDeps } from "../src/autonomy/commands.ts";
@@ -27,6 +27,12 @@ async function run(kv: MemoryKvNamespace, text: string, at: Date = NOW): Promise
   return runAutonomyCommand(deps(kv, at), command);
 }
 
+const dismissIn = (text: string): string => {
+  const match = /autonomy-dismiss-[0-9a-f]{10}/.exec(text);
+  if (!match) throw new Error(`no dismiss command in: ${text}`);
+  return match[0];
+};
+
 const confirmIn = (text: string): string => {
   const match = /autonomy-confirm-[0-9a-f]{10}-[0-9a-f]{6}/.exec(text);
   if (!match) throw new Error(`no confirm command in: ${text}`);
@@ -40,7 +46,10 @@ beforeEach(async () => {
 });
 
 describe("parsing", () => {
-  it("knows the three commands and nothing else", () => {
+  it("knows the four commands and nothing else", () => {
+    expect(parseAutonomyCommand("autonomy-dismiss-0123456789")).toEqual({ kind: "dismiss", id: "0123456789" });
+    expect(parseAutonomyCommand("/autonomy_dismiss_0123456789@AcmeBot  not this quarter ")).toEqual({ kind: "dismiss", id: "0123456789", reason: "not this quarter" });
+    expect(parseAutonomyCommand("autonomy-dismiss-0123456789-abcdef")).toBeNull();
     expect(parseAutonomyCommand("autonomy-status")).toEqual({ kind: "status" });
     expect(parseAutonomyCommand("/autonomy")).toEqual({ kind: "status" });
     expect(parseAutonomyCommand("autonomy-set reply_send 2")).toEqual({ kind: "set", actionClass: "reply_send", level: "2" });
@@ -59,6 +68,16 @@ describe("autonomy-set", () => {
     expect(text).toMatch(/autonomy-confirm-[0-9a-f]{10}-[0-9a-f]{6}/);
     expect(kv.map.get("autonomy:reply_send")).toBeUndefined();
     expect(await changes()).toEqual([]);
+  });
+
+  it("says what will act on its own before a class that is raised only by a person is set to 2", async () => {
+    const kv = memoryKv();
+    const reengage = await run(kv, "autonomy-set reengage 2");
+    expect(reengage).toMatch(/At level 2 or 3, the lifecycle sweep sends the re-engage note/);
+    expect(reengage).not.toMatch(/Nothing acts on this class/);
+    expect(await run(kv, "autonomy-set brain_edit 2")).toMatch(/At level 2 or 3, a learning loop's own edit/);
+    // A class no code reads still says so.
+    expect(await run(kv, "autonomy-set renewal 2")).toMatch(/Nothing acts on this class's level yet/);
   });
 
   it("applies on the confirm, writes the flag and records the change", async () => {
@@ -201,6 +220,68 @@ describe("autonomy-set", () => {
   });
 });
 
+describe("autonomy-dismiss", () => {
+  const proposalRow = async (id: string) => db.prepare("SELECT status, decided_by, detail FROM autonomy_proposals WHERE id = ?1").bind(id).first();
+  const idOf = (command: string) => command.slice("autonomy-dismiss-".length);
+
+  it("dismisses an open proposal with who and why, writes an audit row, and changes no level", async () => {
+    const kv = memoryKv();
+    const proposed = await run(kv, "autonomy-set reply_send 2");
+    const dismiss = dismissIn(proposed);
+    const text = await run(kv, `${dismiss} waiting for more replies`, later(1));
+    expect(text).toMatch(/Dismissed proposal [0-9a-f]{10} \(reply_send level 1 to 2\)\. It can no longer be confirmed, and no level changed/);
+    expect(await proposalRow(idOf(dismiss))).toEqual({ status: "refused", decided_by: "operator:user-1", detail: "dismissed: waiting for more replies" });
+    const audit = await db.prepare("SELECT agent_id, details FROM audit_log WHERE action = 'autonomy.proposal_dismissed' ORDER BY id DESC LIMIT 1").first<{ agent_id: string; details: string }>();
+    expect(audit?.agent_id).toBe("operator:user-1");
+    expect(JSON.parse(audit?.details ?? "{}")).toEqual({ proposalId: idOf(dismiss), actionClass: "reply_send", from: 1, to: 2, origin: "operator", withReason: true });
+    expect(audit?.details).not.toContain("waiting");
+    expect(kv.map.get("autonomy:reply_send")).toBeUndefined();
+    expect(await changes()).toEqual([]);
+    expect(await run(kv, "autonomy-status", later(2))).not.toMatch(/Open proposals/);
+  });
+
+  it("leaves a dismissed proposal impossible to confirm", async () => {
+    const kv = memoryKv();
+    const proposed = await run(kv, "autonomy-set reply_send 2");
+    await run(kv, dismissIn(proposed), later(1));
+    expect(await run(kv, confirmIn(proposed), later(2))).toMatch(/is refused\. Nothing changed/);
+    expect(kv.map.get("autonomy:reply_send")).toBeUndefined();
+    expect(await changes()).toEqual([]);
+  });
+
+  it("refuses to dismiss a proposal that is not pending: applied, already dismissed, expired or unknown", async () => {
+    const kv = memoryKv();
+    const applied = await run(kv, "autonomy-set reply_send 2");
+    await run(kv, confirmIn(applied), later(1));
+    expect(await run(kv, dismissIn(applied), later(2))).toMatch(/is applied, so there is nothing to dismiss/);
+    expect(kv.map.get("autonomy:reply_send")).toBe("2");
+    expect(await proposalRow(idOf(dismissIn(applied)))).toMatchObject({ status: "applied" });
+
+    const twice = await run(kv, "autonomy-set reply_demo_link 2");
+    await run(kv, dismissIn(twice), later(1));
+    expect(await run(kv, dismissIn(twice), later(2))).toMatch(/is refused, so there is nothing to dismiss/);
+
+    const stale = await run(kv, "autonomy-set cold_batch 2");
+    expect(await run(kv, dismissIn(stale), later(31))).toMatch(/has already expired/);
+    expect(await proposalRow(idOf(dismissIn(stale)))).toMatchObject({ status: "expired" });
+
+    expect(await run(kv, "autonomy-dismiss-0000000000")).toMatch(/There is no autonomy proposal 0000000000/);
+    const audits = await db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'autonomy.proposal_dismissed' AND details LIKE ?1").bind(`%${idOf(dismissIn(stale))}%`).first();
+    expect(audits).toEqual({ n: 0 });
+  });
+
+  it("says when a dismissed weekly-review proposal can come back, and lists the dismiss command with open proposals", async () => {
+    const kv = memoryKv();
+    await run(kv, "autonomy-set reply_send 2");
+    expect(await run(kv, "autonomy-status")).toMatch(/autonomy-confirm-[0-9a-f]{10}-[0-9a-f]{6}, or drop it with autonomy-dismiss-[0-9a-f]{10}/);
+    await db
+      .prepare("INSERT INTO autonomy_proposals (id, code, action_class, from_level, to_level, origin, based_on_change, requested_by, status, expires_at, created_at) VALUES ('abcdef0123', 'abcdef', 'cold_batch', 1, 2, 'review', 0, 'system:autonomy_review', 'open', ?1, ?2)")
+      .bind(later(60 * 24).toISOString(), NOW.toISOString())
+      .run();
+    expect(await run(kv, "autonomy-dismiss-abcdef0123", later(1))).toMatch(/proposes the same change again no sooner than 14 days after it first did/);
+  });
+});
+
 describe("autonomy-status", () => {
   it("lists levels, evidence, permanently human-only classes and open proposals", async () => {
     const kv = memoryKv({ "autonomy:cold_batch": "2" });
@@ -237,5 +318,19 @@ describe("the chat consumer", () => {
     await processChatMessage(options, chatEnv(kv), { ...stranger, userId: "user-1", updateId: "u-3" });
     expect(operator.messages.at(-1)?.text).toMatch(/now at level 2/);
     expect(kv.map.get("autonomy:reply_send")).toBe("2");
+  });
+
+  it("routes autonomy-dismiss for allowlisted operators only, recording the operator who sent it", async () => {
+    const kv = memoryKv({ "operator:agent_enabled": "true" });
+    const operator = recordingOperator();
+    const options = { config, operator: () => operator.channel, now: () => NOW };
+    const message = { updateId: "u-10", chatId: "chat-1", userId: "user-1", sessionKey: "s-10", text: "autonomy-set reply_send 2" };
+    await processChatMessage(options, chatEnv(kv), message);
+    const dismiss = dismissIn(operator.messages[0]?.text ?? "");
+    await processChatMessage(options, chatEnv(kv), { ...message, updateId: "u-11", userId: "user-2", text: dismiss });
+    expect(await db.prepare("SELECT status FROM autonomy_proposals WHERE id = ?1").bind(dismiss.slice(-10)).first()).toEqual({ status: "open" });
+    await processChatMessage(options, chatEnv(kv), { ...message, updateId: "u-12", text: dismiss });
+    expect(operator.messages.at(-1)?.text).toMatch(/Dismissed proposal/);
+    expect(await db.prepare("SELECT status, decided_by FROM autonomy_proposals WHERE id = ?1").bind(dismiss.slice(-10)).first()).toEqual({ status: "refused", decided_by: "operator:user-1" });
   });
 });

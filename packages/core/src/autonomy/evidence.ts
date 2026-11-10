@@ -17,6 +17,9 @@
 //     (replies/evidence.ts);
 //   - meeting drafts (the recap, the rebook and the post-demo follow-ups): approved_unchanged when
 //     approved in chat, rejected when rejected there (recordDraftDecision, from the approval tap);
+//   - lifecycle follow-ups: under the class the follow-up's rule names, approved_unchanged or
+//     approved_edited on fu-approve, rejected on fu-reject, auto_sent when the sweep sends at an
+//     earned level; the offers record nothing (lifecycle/followup-evidence.ts);
 //   - incidents.ts: incident.
 // Writing evidence is bookkeeping: it never throws, and a lost row never changes what was sent.
 import { claimEffect, releaseEffect } from "../events/effects.ts";

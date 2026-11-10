@@ -1,0 +1,83 @@
+// GTM-agents: an example Worker configuration with the optional ship build added.
+//
+// The first half is the Worker template's configuration (apps/worker/wrangler.jsonc) for one
+// environment, with the same ${...} placeholders and without the dashboard assets and the jobs
+// queue; keep your own copy of those. The blocks marked "ship" are what the ship build adds:
+//   - containers: the sandbox's container, managed by the ShipSandbox Durable Object
+//     (scheduling_policy "durable_object"), with one named image per agent profile. Wrangler builds
+//     and pushes the images on deploy, which needs Docker and a plan with Containers. Keep only the
+//     profile you use to build one image instead of two;
+//   - durable_objects and migrations: the SHIP_SANDBOX binding and its SQLite class, in a new
+//     migration tag after the template's v1;
+//   - workflows: the SHIP_BUILD binding for the build Workflow, one instance per ship task.
+// The class names here are the names examples/ship/src/index.ts exports. The egress entrypoint
+// (ShipSandboxEgress) needs no entry: the sandbox reaches it through ctx.exports, which needs a
+// compatibility_date of 2025-11-17 or later.
+//
+// The image paths below point into this repository. In a deployment that installs the published
+// packages, they are node_modules/@gtm-agents/adapters/sandbox-cloudflare/images/<profile>/Dockerfile
+// with build_context node_modules/@gtm-agents/adapters/sandbox-cloudflare/images.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "gtm-agent",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+
+  "vars": { "AGENT_BASE_URL": "${AGENT_BASE_URL}", "ENVIRONMENT": "production" },
+
+  "d1_databases": [
+    { "binding": "DB", "database_name": "${DB_NAME}", "database_id": "${DB_ID}", "migrations_dir": "../../packages/core/migrations" }
+  ],
+  "kv_namespaces": [{ "binding": "KV", "id": "${KV_ID}" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "gtm-agent-bucket" }],
+  "vectorize": [{ "binding": "MEMORY", "index_name": "${VECTOR_INDEX_NAME}" }],
+  "ai": { "binding": "AI" },
+  "queues": {
+    "producers": [
+      { "binding": "EVENTS_QUEUE", "queue": "${EVENTS_QUEUE_NAME}" },
+      { "binding": "CHAT_QUEUE", "queue": "${CHAT_QUEUE_NAME}" }
+    ],
+    "consumers": [
+      { "queue": "${EVENTS_QUEUE_NAME}", "max_batch_size": 10, "max_batch_timeout": 5, "max_retries": 5, "dead_letter_queue": "${EVENTS_DLQ_NAME}" },
+      { "queue": "${CHAT_QUEUE_NAME}", "max_batch_size": 1, "max_batch_timeout": 0, "max_concurrency": 1, "max_retries": 0 }
+    ]
+  },
+  "triggers": { "crons": ["* * * * *"] },
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "GATEWAY", "class_name": "OperatorGateway" },
+      { "name": "FOLLOWUP_AGENT", "class_name": "FollowupAgent" },
+      // ship: one sandbox per ship task, named by the task id.
+      { "name": "SHIP_SANDBOX", "class_name": "ShipSandbox" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["OperatorGateway", "FollowupAgent"] },
+    // ship: the sandbox class needs SQLite storage, in a tag of its own after the ones already applied.
+    { "tag": "v2", "new_sqlite_classes": ["ShipSandbox"] }
+  ],
+
+  // ship: the sandbox's container and its images.
+  "containers": [
+    {
+      "class_name": "ShipSandbox",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "claude-code": {
+          "dockerfile": "../../packages/adapters/sandbox-cloudflare/images/claude-code/Dockerfile",
+          "build_context": "../../packages/adapters/sandbox-cloudflare/images"
+        },
+        "opencode": {
+          "dockerfile": "../../packages/adapters/sandbox-cloudflare/images/opencode/Dockerfile",
+          "build_context": "../../packages/adapters/sandbox-cloudflare/images"
+        }
+      }
+    }
+  ],
+
+  // ship: the build Workflow. StartShipBuild creates one instance per task, with the task id as its id.
+  "workflows": [{ "name": "gtm-agent-ship-build", "binding": "SHIP_BUILD", "class_name": "ShipBuildWorkflow" }]
+}

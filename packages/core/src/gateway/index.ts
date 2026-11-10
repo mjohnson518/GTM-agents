@@ -4,6 +4,8 @@
 export { ACCESS_JWT_HEADER, AccessKeyCache, CLOCK_SKEW_S, KEY_MAX_AGE_MS, KEY_REFETCH_MS, accessIssuer, certsUrl, isAllowedEmail, verifyAccessRequest, verifyAccessToken } from "./access.ts";
 export type { AccessIdentity, AccessResult, AccessVerifyOptions, AdminConfig } from "./access.ts";
 export { activityItem, csvCell } from "./activity.ts";
+export { ChatStream, STREAM_FLUSH_MS, STREAM_MAX_CHARS, chunkText } from "./chat-stream.ts";
+export type { ChatStreamOptions } from "./chat-stream.ts";
 export { RpcError } from "./context.ts";
 export type { ConnectionState, GatewayContext, RunningTurn } from "./context.ts";
 export { CLOSE, HANDLERS, MAX_FRAME_BYTES, RATE_CLOSE_AT, RATE_LIMITS, RATE_WINDOW_MS, dashboardEnabled, handleFrame, socketGate } from "./dispatch.ts";

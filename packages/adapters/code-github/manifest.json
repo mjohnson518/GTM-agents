@@ -1,0 +1,21 @@
+{
+  "name": "code-github",
+  "version": "0.1.0",
+  "ports": ["CodeHost"],
+  "capabilities": ["git_data_commit", "pull_requests", "checks", "webhooks"],
+  "requiredSecrets": ["GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET"],
+  "optionalSecrets": [],
+  "flags": ["ship:enabled", "ship:builds_enabled"],
+  "tools": {
+    "code_host_file_read": { "taint": "full", "gate": "never" },
+    "code_host_pr_status": { "taint": "metadata", "gate": "never" },
+    "code_host_commit": { "taint": "none", "gate": "metadata", "rateCategory": "git_write" },
+    "code_host_pr_open": { "taint": "none", "gate": "metadata", "rateCategory": "git_write" }
+  },
+  "costs": {
+    "api_request": { "usd": 0, "per": "API request (the GitHub REST API charges nothing per call)" }
+  },
+  "limits": { "perSecond": 10 },
+  "webhook": { "path": "/api/webhooks/code", "signature": "x-hub-signature-256" },
+  "contract": "./contract.test.ts"
+}

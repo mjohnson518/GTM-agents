@@ -60,10 +60,13 @@ export type BillingInterval = "day" | "week" | "month" | "year";
 /**
  * A billing webhook, as an adapter maps it. Amounts are integers in the currency's minor unit
  * (cents). `email` is the customer's address when the vendor's payload carries it: core resolves an
- * existing contact by it and never creates one. `at` is ISO 8601 UTC.
+ * existing contact by it and never creates one. `at` is ISO 8601 UTC. `livemode` is true only for a
+ * live event. Core drops any other event (from the vendor's test mode, or one an adapter left
+ * unmarked) unless billing:accept_test_events is on, so an adapter for a vendor with no test mode
+ * sets it to true on every event.
  */
 export type BillingEvent =
-  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string }
+  | { type: "checkout_completed"; customerId: string; email?: string; plan?: string; amount?: number; currency?: string; interval?: BillingInterval; at: string; providerEventId: string; livemode?: boolean }
   | {
       type: "subscription_created" | "subscription_updated" | "subscription_canceled";
       customerId: string;
@@ -77,8 +80,9 @@ export type BillingEvent =
       interval?: BillingInterval;
       at: string;
       providerEventId: string;
+      livemode?: boolean;
     }
-  | { type: "payment_failed"; customerId: string; subscriptionId?: string; email?: string; amount?: number; currency?: string; at: string; providerEventId: string }
+  | { type: "payment_failed"; customerId: string; subscriptionId?: string; email?: string; amount?: number; currency?: string; at: string; providerEventId: string; livemode?: boolean }
   | { type: "ignored"; providerEventId: string; reason: string };
 
 export interface BillingProvider {

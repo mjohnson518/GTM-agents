@@ -20,7 +20,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 | 10. Autonomy | Done (levels raised only by a confirmed operator command; the weekly review behind `autonomy_review:enabled`; automatic replies behind `inbound:auto_send_tier` and level 2) |
 | 11. Signals and scale | Done (each source behind its own `signals:*` flag; the intent score in shadow until enforced) |
 | 12. Self-improvement | Done (every loop behind its own `learning:*` flag; proposals only, except `brain_edit` at level 2) |
-| 13. Ship loop (module) | Planned |
+| 13. Ship loop (module) | Built ([SHIP.md](SHIP.md)); not yet run against a live repository |
 | 14. Dashboard | Done (behind Cloudflare Access and `admin:enabled`) |
 
 **What exists today:**
@@ -48,6 +48,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - meetings ([CONVERT.md](CONVERT.md)): read-only Google Calendar sync with privacy-limited fields, attribution without click tracking, the one "meeting booked" definition, a booking that stops outreach and writes a prep brief, reminders, held and no-show handling, and post-meeting drafts;
 - the operator dashboard ([DASHBOARD.md](DASHBOARD.md)): every view (overview, cockpit, pipeline, inbound, proposals and learning, contacts, agents, chat, activity, settings, changelog) over a WebSocket gateway behind Cloudflare Access;
 - self-improvement ([LEARNING.md](LEARNING.md)): edit mining, the voice profile, the retrospective and agent review, learnings and brain proposals, objection answers, fitness, the benchmark and evolution;
+- the optional ship loop ([SHIP.md](SHIP.md)): feedback themes, specs approved against a digest, a path policy, a coding agent (Claude Code by default, OpenCode as a swap) in a Cloudflare container with no credentials and only allowlisted egress, one commit and a pull request a person merges, and deploy detection with "it is live" notes;
 - a Stripe billing adapter and lifecycle follow-ups to product users;
 - experiments ([EXPERIMENTS.md](EXPERIMENTS.md)): Thompson sampling with a protected control, account-clustered assignment, template, subject and send-time tests, pre-registration with two-step approval, conclusions only on the pre-registered metric with healthy measurement, the copy-change gate, and a weekly rule-based self-review;
 - signals ([SIGNALS.md](SIGNALS.md)): Exa websets, search monitors and dated news, public hiring boards, responder lookalikes and coverage fill, signal carry to new contacts, an intent score, and openers built only from real, dated signals;
@@ -57,7 +58,7 @@ GTM-agents is built in milestones. Each one is deployable and useful on its own,
 - sequences ([SEQUENCES.md](SEQUENCES.md)): the follow-up sweep, steps threaded under the first email, a reply check from anyone at the account right before each send, and release like the cold batch;
 - the first adapters: `operator-telegram`, `llm-gateway` (Anthropic), `data-exa` (search), `data-hunter` (finder, verifier, people), `email-resend`, `inbox-gmail`, `email-cloudflare` and `calendar-google`, each with a hermetic contract test.
 
-Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle and the autonomy review are each off by default, and none has yet been run against live providers. The optional ship loop module (13) and the first release remain.
+Nothing runs until you turn it on: the agent, discovery, the cold batch, real sends, the inbox, reply handling, follow-ups, calendar sync, lifecycle, the autonomy review and the optional ship loop are each off by default, and none has yet been run against live providers. The first release remains.
 
 ## Milestones
 

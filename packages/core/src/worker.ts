@@ -6,7 +6,8 @@
 //   - bearer authentication on every /api/* route except /api/webhooks/*, which verify their own
 //     signatures (an unset GATEWAY_TOKEN answers 503: the gate fails closed);
 //   - POST /api/webhooks/operator and the chat queue consumer, which run the operator agent when
-//     the `operator` and `model` factories are given and the operator:agent_enabled flag is on;
+//     the `operator` and `model` factories are given and the operator:agent_enabled flag is on,
+//     with any chat commands optional modules contribute (`commands`);
 //   - POST /api/webhooks/email, the email provider's delivery events (answers 503 until the `email`
 //     factory is given), and GET and POST /u/:token, the one-click unsubscribe link (GET confirms,
 //     POST opts out). docs/SENDING.md covers both;
@@ -35,6 +36,7 @@ import { MAX_JOB_DURATION_MS, SCHEDULER_CRON, createJobRegistry, type FlagReader
 import { createInboundEmailHandler, type InboundEmailHandler, type InboundEmailOptions } from "./inbox/email-handler.ts";
 import { MAIL_WEBHOOK_PATH, createInboxPushWebhook } from "./inbox/webhook.ts";
 import { createChatConsumer, isChatMessage } from "./operator/chat.ts";
+import type { ModuleCommand } from "./operator/module-commands.ts";
 import { OPERATOR_WEBHOOK_PATH, createOperatorWebhook } from "./operator/webhook.ts";
 import type { EmailProvider, InboxProvider } from "./ports/email.ts";
 import type { ModelGateway } from "./ports/model.ts";
@@ -164,6 +166,13 @@ export interface CreateWorkerOptions<E extends Env = Env> {
    */
   dashboard?: DashboardExtensions<E>;
   /**
+   * Operator chat commands contributed by optional modules (packages/modules), for example the ship
+   * module's commands. Each is matched in the chat consumer after the allowlist, the agent flag and
+   * every built-in command, and never reaches the model; /help lists their help lines. Register the
+   * module's jobs in `jobs`.
+   */
+  commands?: ReadonlyArray<ModuleCommand<E>>;
+  /**
    * Called with the trigger's cron string and the outcomes of the jobs that ran, for observability:
    * after every scheduled invocation (empty when nothing was due that minute, or when every due job
    * went to the jobs queue), and, with the jobs queue, once per job its consumer ran.
@@ -269,6 +278,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
       ...(options.agent?.owedWindowDays !== undefined ? { owedWindowDays: options.agent.owedWindowDays } : {}),
     },
     extensions: options.dashboard ?? {},
+    ...(options.commands && options.commands.length > 0 ? { commands: options.commands } : {}),
   });
   app.get(GATEWAY_PATH, createGatewayRoute<E>(config, { log: consoleLogger({ service: "gtm-agents", scope: "dashboard" }) }));
 
@@ -286,6 +296,7 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     ...(options.agent?.owedWindowDays !== undefined ? { owedWindowDays: options.agent.owedWindowDays } : {}),
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
     ...(options.agent?.templates ? { templates: options.agent.templates } : {}),
+    ...(options.commands && options.commands.length > 0 ? { commands: options.commands } : {}),
     logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
   };
   app.post(OPERATOR_WEBHOOK_PATH, createOperatorWebhook<E>(agentOptions));

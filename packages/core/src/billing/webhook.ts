@@ -6,15 +6,19 @@
 //   2. the adapter verifies the signature (5-minute tolerance, constant time) and maps the payload:
 //      a bad or stale signature answers 401, a payload it cannot map 400, an adapter that cannot
 //      verify (its secret unset) 503;
-//   3. with billing:enabled or lifecycle:enabled off, or unreadable, the route answers 503 and
+//   3. an event from the provider's test mode (livemode false) while billing:accept_test_events is
+//      off, or unreadable, answers 200 and changes nothing: it is not recorded or routed, so no
+//      lifecycle move, deal or MRR change follows. An audit row and a log line say it was ignored;
+//   4. with billing:enabled or lifecycle:enabled off, or unreadable, the route answers 503 and
 //      records nothing. An event the adapter marks ignored answers 200 and records nothing;
-//   4. the event is recorded on the spine, keyed by provider and the provider's event id, with the
+//   5. the event is recorded on the spine, keyed by provider and the provider's event id, with the
 //      customer's address replaced by its hashes. A duplicate answers 200 with duplicate: true;
-//   5. it is dispatched to EVENTS_QUEUE, or routed inline after the response.
+//   6. it is dispatched to EVENTS_QUEUE, or routed inline after the response.
 // Routing (route.ts) resolves existing contacts only, refuses erased people, and claims every
 // effect under the event's id.
 import type { Context } from "hono";
 import type { Env } from "../env.ts";
+import { writeAudit } from "../events/audit.ts";
 import { dispatchEvent, recordEvent, routeEvent, type EventRouters } from "../events/spine.ts";
 import type { JobLogger } from "../jobs/registry.ts";
 import { LIFECYCLE_FLAGS } from "../lifecycle/flags.ts";
@@ -33,6 +37,16 @@ export interface BillingWebhookOptions<E> {
   logger: JobLogger;
   now?: () => Date;
 }
+
+/** The action of the audit row a dropped test-mode event leaves. */
+export const TEST_MODE_AUDIT_ACTION = "billing_event_ignored_test_mode";
+
+/**
+ * True for a mapped event that is not marked live: from the vendor's test mode, or from an adapter
+ * that did not say. Only `livemode: true` is live, so a missing field fails closed. Pure.
+ */
+export const isTestModeEvent = (event: unknown): boolean =>
+  Boolean(event) && typeof event === "object" && (event as { type?: unknown }).type !== "ignored" && (event as { livemode?: unknown }).livemode !== true;
 
 const errorCode = (error: unknown): string | undefined => (error instanceof AdapterError ? error.code : typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : undefined);
 
@@ -72,6 +86,15 @@ export function createBillingWebhook<E extends Env>(options: BillingWebhookOptio
       return c.json({ error: "verification_unavailable" }, 503);
     }
     const flags = kvFlags(c.env.KV);
+    // A test-mode event changes nothing unless the operator chose to accept them. An unreadable
+    // flag counts as off.
+    if (isTestModeEvent(event) && !(await readSwitch(flags, LIFECYCLE_FLAGS.acceptTestEvents))) {
+      const id = typeof event.providerEventId === "string" ? event.providerEventId.replace(/[^\w.:-]/g, "").slice(0, 200) : "";
+      const type = String((event as { type?: unknown }).type).replace(/[^a-z_]/g, "").slice(0, 40);
+      options.logger.info("a billing event from the provider's test mode was ignored", { provider: provider.name, type, event: id });
+      await writeAudit(c.env.DB, { agentId: "billing", action: TEST_MODE_AUDIT_ACTION, details: { provider: provider.name, type, event: id }, now: (options.now ?? (() => new Date()))() });
+      return c.json({ ok: true, ignored: true, reason: "test_mode" });
+    }
     if (!(await readSwitch(flags, LIFECYCLE_FLAGS.billing)) || !(await readSwitch(flags, LIFECYCLE_FLAGS.enabled))) return c.json({ error: "billing_disabled" }, 503);
     if (!event || typeof event !== "object" || typeof event.providerEventId !== "string" || event.providerEventId.length === 0 || event.providerEventId.length > 200) {
       return c.json({ error: "invalid_event" }, 400);

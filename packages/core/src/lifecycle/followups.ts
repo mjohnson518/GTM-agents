@@ -28,6 +28,9 @@
 //      here;
 //   8. otherwise it is drafted for the operator with `fu-approve-<id>` and `fu-reject-<id>`
 //      (followup-commands.ts), which check everything again before sending.
+// Every draft records the digest of the text the writer rendered, so an approval can tell whether
+// it was edited first; an automatic send records auto_sent evidence for its class, and the commands
+// record the operator's decision (followup-evidence.ts). Offers record none.
 // A sweep never throws for one contact: a failure is logged and the next sweep tries again.
 import { readAutonomyLevel } from "../autonomy/store.ts";
 import type { ReviewSpend } from "../quality/reviewer.ts";
@@ -47,6 +50,7 @@ import type { OutreachOutcome, SendOutreach } from "../sending/types.ts";
 import { isWithinWindow, windowForPath } from "../sending/window.ts";
 import { createSpendGate } from "../sourcing/spend.ts";
 import { loadTemplates, serveTemplateFiles, type ServedTemplate, type TemplateFile } from "../templates/store.ts";
+import { followupDraftNotes, recordFollowupEvidence } from "./followup-evidence.ts";
 import {
   COUNTED_STATUSES,
   FOLLOWUP_KINDS,
@@ -399,7 +403,7 @@ async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule,
       rule.actionClass,
       template.id,
       template.sha256,
-      JSON.stringify({ followup: id, kind: rule.kind }),
+      followupDraftNotes({ followupId: id, kind: rule.kind, generatedDigest: digest }),
       at,
     )
     .run();
@@ -454,6 +458,7 @@ async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule,
     const why = outcome && outcome.status === "failed" ? label(outcome.message, 120) : "no outcome";
     return offerDraft([`The automatic send could not run (${why}), so it waits for you.`]);
   }
+  if (settled === "sent" || settled === "queued") await recordFollowupEvidence(db, { followupId: id, rule, outcome: "auto_sent", detail: `sent at level ${level}`, now });
   if (settled === "sent" && level === 2) await tellOperator(deps, `Sent the ${rule.label} to ${who} [${id}]: ${rule.actionClass} is at level 2 (act and notify).`);
   return settled;
 }

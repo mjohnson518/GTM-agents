@@ -7,8 +7,10 @@
 //   1. skips while any evolution ran in the last COOLDOWN_DAYS (7);
 //   2. picks the declining dimension with the steepest weighted slope over the last 14 days;
 //   3. benchmarks the served component (the baseline), then asks the strategist for up to
-//      CANDIDATES (3) edits; the current file and the numbers are its input, past judge notes are
-//      fenced as data;
+//      CANDIDATES (3) edits; the current file, the approved writing and template learnings and the
+//      numbers are its input, and past judge notes and the relevant agent memory are fenced as data
+//      in the user turn, each under its byte budget (context.ts). A memory read that fails is
+//      skipped and the run goes on without it;
 //   4. drops any candidate that breaks the mutation constraints (editProblems: at most 3 items
 //      changed, no link, no dash, no figure the brain does not hold, no injection pattern) or would
 //      not validate with the rest of the brain, benchmarks the rest, and keeps the best when it beats
@@ -36,8 +38,8 @@ import { fenceUntrusted } from "../security/fence.ts";
 import { autoApplyLearningProposal } from "./apply.ts";
 import { applyBrainEdit, editProblems, fileMeta, itemsOf, readServedBrain, renderBrainFile, type BrainItemInput, type BrainKv } from "./brain-edit.ts";
 import { REGRESSION_DROP, runBenchmark, type BenchDimension, type BenchmarkRun } from "./benchmark.ts";
+import { MEMORY_NOTICE, writerContext } from "./context.ts";
 import { dimensionTrends, FITNESS_WEIGHTS, fitnessTrend, type FitnessDimension } from "./fitness.ts";
-import { learningsText } from "./learnings.ts";
 import { createLearningProposal } from "./proposals.ts";
 
 export const COOLDOWN_DAYS = 7;
@@ -177,20 +179,23 @@ export async function runEvolution(deps: EvolutionDeps): Promise<EvolutionResult
   const before = itemsOf(current, component);
   const knownText = [...served.files.values()].join("\n");
   const notes = baseline.scenarios.map((s) => `${s.id}: ${s.score ?? "unscored"} ${s.note}`).join("\n");
+  const read = await writerContext(deps.db, "evolution", deps.now, deps.log);
   const system = [
     `You improve one component of a B2B company's brain: ${component}. The current file is below; it is operator-approved.`,
     `The ${target.dimension} fitness dimension is declining. Propose up to ${CANDIDATES} alternative versions of the component's items.`,
     "Each version changes at most 3 items (added, removed or rewritten) and keeps every other item exactly as it is.",
     "Use only the fields the current items use. Write plain sentences: no links, no em or en dashes, no figures, customers or claims the current brain does not hold.",
     'Answer with JSON: {"candidates": [{"rationale": "<one sentence>", "items": [{"id": "<item id>", "fields": {"<field>": "<value>"}}]}]}.',
+    MEMORY_NOTICE,
     "",
     current,
     "",
-    await learningsText(deps.db, ["writing_rules", "template_performance"]),
+    read.learnings,
   ].join("\n");
+  const user = [fenceUntrusted({ source: "benchmark_notes", text: `${reason}\nbaseline ${baseline.aggregate}\n${notes}` }), read.memory].filter((part) => part.length > 0).join("\n\n");
   const answer = await callModel(
     { model: deps.model, config: deps.config, spend: deps.spend, job: deps.job, ...(deps.runId ? { runId: deps.runId } : {}), timeoutMs: 60_000, ...(deps.log ? { log: deps.log } : {}) },
-    { role: "strategist", system, user: fenceUntrusted({ source: "benchmark_notes", text: `${reason}\nbaseline ${baseline.aggregate}\n${notes}` }), jsonSchema: CANDIDATE_SCHEMA, maxTokens: 3000 },
+    { role: "strategist", system, user, jsonSchema: CANDIDATE_SCHEMA, maxTokens: 3000 },
   );
   const candidates = answer.ok ? parseCandidates(answer.text) : [];
   const meta = fileMeta(current, component);

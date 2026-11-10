@@ -1,5 +1,6 @@
 // GTM-agents: tests for the dashboard's pure state: backoff, connection outcomes, the activity
-// feed, streaming chat turns, the kanban grouping, flag editing and hash routes.
+// feed, streaming chat turns, what rejecting a proposal does, the kanban grouping, flag editing and
+// hash routes.
 import { describe, expect, it } from "vitest";
 import type { ActivityItem } from "@gtm-agents/core/gateway/protocol";
 import { parseRoute, routeHash } from "../src/router.ts";
@@ -19,6 +20,7 @@ import {
   groupByStage,
   isFlagEditable,
   parseFlagInput,
+  rejectConsequence,
 } from "../src/state.ts";
 
 const item = (id: string, kind = "send"): ActivityItem => ({ id, at: "2026-01-05T10:00:00Z", kind, actor: "system", summary: `item ${id}` });
@@ -75,6 +77,20 @@ describe("chat", () => {
     expect(chatDelta(chat, "t1", " more")).toBe(chat);
   });
 
+  it("replaces the turn's text on a reset delta, early or not, and keeps markup as plain text", () => {
+    let chat = chatTurnStarted(emptyChat, "t3", "2026-01-05T10:00:00Z");
+    chat = chatDelta(chat, "t3", "Let me look.");
+    chat = chatDelta(chat, "t3", "No contacts", true);
+    chat = chatDelta(chat, "t3", " at <b>Acme</b> yet.");
+    expect(chat.messages[0]?.text).toBe("No contacts at <b>Acme</b> yet.");
+    chat = chatDelta(chat, "t3", "", true);
+    expect(chat.messages[0]?.text).toBe("");
+    let early = chatDelta(emptyChat, "t4", "Draft answer");
+    early = chatDelta(early, "t4", "Final answer", true);
+    early = chatTurnStarted(early, "t4", "2026-01-05T10:00:00Z");
+    expect(early.messages[0]?.text).toBe("Final answer");
+  });
+
   it("keeps tokens and a finish that arrive before the turn id", () => {
     let chat = chatDelta(emptyChat, "t2", "Early ");
     chat = chatDelta(chat, "t2", "tokens");
@@ -82,6 +98,13 @@ describe("chat", () => {
     chat = chatTurnStarted(chat, "t2", "2026-01-05T10:00:00Z");
     expect(chat.messages[0]).toMatchObject({ text: "Early tokens", status: "aborted", note: "Stopped by the operator." });
     expect(chat.early).toEqual({});
+  });
+});
+
+describe("rejectConsequence", () => {
+  it("tells the operator that rejecting an autonomy proposal dismisses it and changes no level", () => {
+    expect(rejectConsequence("autonomy")).toMatch(/dismisses this proposal: no level changes, and it can never be confirmed afterwards/);
+    expect(rejectConsequence("experiment")).toMatch(/without applying it/);
   });
 });
 

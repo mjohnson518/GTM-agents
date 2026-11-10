@@ -14,38 +14,73 @@ export type ScriptStep = Partial<CompletionResult> | ((request: CompletionReques
 
 export interface ScriptedModel extends ModelGateway {
   requests: CompletionRequest[];
+  /** How each call was made, in order: "complete", or "stream" for a gateway built with `stream`. */
+  modes: Array<"complete" | "stream">;
   /** Steps not yet used. */
   remaining(): number;
 }
 
-/** A gateway that answers from a script. A call past the end of the script throws. */
-export function scriptedModel(steps: ScriptStep[], options: { name?: string; model?: string } = {}): ScriptedModel {
+export interface ScriptedStreamOptions {
+  /** Characters per streamed piece (default 4). */
+  chunkChars?: number;
+  /** Awaited before each piece after the first, with its index, so a test can act mid-answer. */
+  between?: (index: number) => void | Promise<void>;
+}
+
+/**
+ * A gateway that answers from a script. A call past the end of the script throws. With `stream`, it
+ * also streams: each step's text is handed to onText in pieces before the result is returned, and an
+ * aborted request signal stops it between pieces with the error a real gateway gives.
+ */
+export function scriptedModel(steps: ScriptStep[], options: { name?: string; model?: string; stream?: boolean | ScriptedStreamOptions } = {}): ScriptedModel {
   const queue = [...steps];
   const requests: CompletionRequest[] = [];
-  return {
+  const modes: ScriptedModel["modes"] = [];
+  const answer = async (request: CompletionRequest, mode: "complete" | "stream"): Promise<CompletionResult> => {
+    // Keep a deep copy: the loop appends to the same messages array after the call.
+    requests.push({ ...request, messages: JSON.parse(JSON.stringify(request.messages)) as CompletionRequest["messages"] });
+    modes.push(mode);
+    const step = queue.shift();
+    if (!step) throw new Error("the scripted model has no more steps");
+    const partial = typeof step === "function" ? await step(request) : step;
+    const toolCalls = partial.toolCalls ?? [];
+    return {
+      text: partial.text ?? "",
+      toolCalls,
+      stopReason: partial.stopReason ?? (toolCalls.length ? "tool_use" : "end"),
+      usage: partial.usage ?? { inputTokens: 1000, outputTokens: 200 },
+      model: partial.model ?? options.model ?? request.model ?? "scripted-model",
+      ...(partial.content ? { content: partial.content } : {}),
+    };
+  };
+  const gateway: ScriptedModel = {
     name: options.name ?? "scripted",
     requests,
+    modes,
     remaining: () => queue.length,
-    async complete(request) {
-      // Keep a deep copy: the loop appends to the same messages array after the call.
-      requests.push({ ...request, messages: JSON.parse(JSON.stringify(request.messages)) as CompletionRequest["messages"] });
-      const step = queue.shift();
-      if (!step) throw new Error("the scripted model has no more steps");
-      const partial = typeof step === "function" ? await step(request) : step;
-      const toolCalls = partial.toolCalls ?? [];
-      return {
-        text: partial.text ?? "",
-        toolCalls,
-        stopReason: partial.stopReason ?? (toolCalls.length ? "tool_use" : "end"),
-        usage: partial.usage ?? { inputTokens: 1000, outputTokens: 200 },
-        model: partial.model ?? options.model ?? request.model ?? "scripted-model",
-        ...(partial.content ? { content: partial.content } : {}),
-      };
-    },
+    complete: (request) => answer(request, "complete"),
     embed() {
       return Promise.reject(new Error("the scripted model does not embed"));
     },
   };
+  if (options.stream) {
+    const streaming: ScriptedStreamOptions = options.stream === true ? {} : options.stream;
+    const size = Math.max(1, streaming.chunkChars ?? 4);
+    gateway.stream = async (request, handlers) => {
+      const result = await answer(request, "stream");
+      for (let at = 0, index = 0; at < result.text.length; at += size, index += 1) {
+        if (index > 0) await streaming.between?.(index);
+        if (request.signal?.aborted) throw new AdapterError("the model call was cancelled", "timeout", false);
+        try {
+          handlers.onText(result.text.slice(at, at + size));
+        } catch {
+          // As the port requires: a failing viewer never fails the call.
+        }
+      }
+      return result;
+    };
+  }
+  return gateway;
 }
 
 /** A tool call step: the model asks for one or more tools. */

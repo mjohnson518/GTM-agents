@@ -3,15 +3,16 @@
 // Each source keeps its own rules; the dashboard is never a second path around them:
 //   - autonomy: level proposals (autonomy/proposals.ts). Approving is the second step,
 //     confirmProposal, with the confirm code shown with the record; it re-checks the class's level,
-//     its latest change, incidents and the permanently human-only cap. They are not rejected: one
-//     that is not confirmed expires;
+//     its latest change, incidents and the permanently human-only cap. Rejecting is dismissProposal,
+//     the function behind the chat's autonomy-dismiss-<id>: the proposal can never be confirmed
+//     afterwards and no level changes. One that is neither confirmed nor rejected expires;
 //   - experiment: setting and copy proposals (experiments/proposals.ts), applied by approveProposal
 //     under its locks, only while the setting still holds the value proposed against;
 //   - learning: proposals from the self-improvement module when it is installed (a ProposalSource
 //     given to createWorker's `dashboard.proposals`); without it, pending rows are listed read-only.
 // A proposal's id in the dashboard is "<source>:<id>". Its digest covers the source, the id and the
 // exact detail text; approving re-reads the proposal and refuses when the digest no longer matches.
-import { confirmProposal, loadProposal as loadAutonomyProposal, openProposals, type Proposal as AutonomyProposal } from "../autonomy/proposals.ts";
+import { confirmProposal, dismissProposal, loadProposal as loadAutonomyProposal, openProposals, type Proposal as AutonomyProposal } from "../autonomy/proposals.ts";
 import { servedTemplates } from "../experiments/jobs.ts";
 import { approveProposal, loadProposal as loadExperimentProposal, pendingProposals, rejectProposal, type ExperimentProposal } from "../experiments/proposals.ts";
 import { constantTimeEqual } from "../http/auth.ts";
@@ -66,7 +67,10 @@ function autonomySource(ctx: GatewayContext): ProposalSource {
       const result = await confirmProposal({ db, kv: ctx.env.KV, flags: ctx.flags, config: ctx.wiring.config, userId: ctx.state.email, now: input.now }, { id, code: input.confirmCode });
       return { ok: result.ok, message: result.text };
     },
-    reject: () => Promise.reject(new RpcError("invalid", "autonomy proposals are not rejected: one that is not confirmed expires on its own")),
+    reject: async (id, input) => {
+      const result = await dismissProposal({ db, actor: input.actor, now: input.now }, { id, ...(input.reason ? { reason: input.reason } : {}) });
+      return { ok: result.ok, message: result.text };
+    },
   };
 }
 

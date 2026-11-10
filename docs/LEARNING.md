@@ -1,6 +1,6 @@
 # Self-improvement: proposals, learnings, voice, fitness, benchmark and evolution
 
-This page is for deployers deciding which self-improvement loops to turn on, and for contributors changing how a loop proposes or how a proposal applies. It covers the shared proposal record and how you approve one, the learnings document, each loop with its guardrail, the operator commands, the flags, the jobs and their costs, the wiring and the limits. The code lives in `packages/core/src/learning/` (`@gtm-agents/core/learning`); the fitness inputs live with every other metric in `packages/core/src/metrics/fitness.ts`.
+This page is for deployers deciding which self-improvement loops to turn on, and for contributors changing how a loop proposes or how a proposal applies. It covers the shared proposal record and how you approve one, the learnings document, what each writer reads (the learnings and agent memory, under byte budgets), each loop with its guardrail, the operator commands, the flags, the jobs and their costs, the wiring and the limits. The code lives in `packages/core/src/learning/` (`@gtm-agents/core/learning`); the fitness inputs live with every other metric in `packages/core/src/metrics/fitness.ts`.
 
 The rule behind every loop: it only proposes. You approve the exact text or diff you are shown, and nothing changes the brain, a template or the learnings on its own. The one exception is what earned autonomy allows ([AUTONOMY.md](AUTONOMY.md)): the `brain_edit` and `retrospective_actuation` classes at level 2 or above, read through the autonomy module's level reader at the moment of applying, never through a flag.
 
@@ -46,7 +46,22 @@ A write that fails puts it back to pending. Approvals and rejections of loop pro
 
 ## The learnings document
 
-Proven insights the operator approved, in five sections: `writing_rules`, `objection_handling`, `template_performance`, `process` and `general`. The document is the set of applied `learning` proposals, so the database is its one source and every line was approved byte for byte. Each entry is checked against its approved digest every time the document is read, and one that no longer matches is left out. `learningsText(db)` renders it for prompts; today the retrospective and evolution read it. The mutation constraints, checked when a snippet is proposed and again when it is applied: 1 to 400 characters, no link or host name, no email address, no em or en dash, no injection pattern, nothing the content lint blocks, at most 20 entries and 4 KB per section. A full section takes a new entry only as a replacement of an existing one.
+Proven insights the operator approved, in five sections: `writing_rules`, `objection_handling`, `template_performance`, `process` and `general`. The document is the set of applied `learning` proposals, so the database is its one source and every line was approved byte for byte. Each entry is checked against its approved digest every time the document is read, and one that no longer matches is left out. `learningsText(db)` renders it for prompts, optionally under a byte budget; the retrospective and evolution read it ([below](#what-the-writers-read)). The mutation constraints, checked when a snippet is proposed and again when it is applied: 1 to 400 characters, no link or host name, no email address, no em or en dash, no injection pattern, nothing the content lint blocks, at most 20 entries and 4 KB per section. A full section takes a new entry only as a replacement of an existing one.
+
+## What the writers read
+
+The loops that write proposals with a model, the retrospective and evolution, each read two kinds of context before they propose, under their own byte budgets (`WRITER_CONTEXT` in `packages/core/src/learning/context.ts`):
+
+| Writer | Approved learnings, in the system prompt | Agent memory, fenced in the user turn |
+|---|---|---|
+| Retrospective | every section, up to 6 KB | its own notes and the agent review's guidance from the last 30 days, up to 2 KB |
+| Evolution | `writing_rules` and `template_performance`, up to 3 KB | the agent review's guidance and the retrospective's notes from the last 60 days, up to 1.5 KB |
+
+- **The learnings** are operator-approved text, every line checked against its approved digest as it is read, so they go where the writer already puts approved text: the system prompt. Entries are added whole while they fit, and a closing line says how many were left out.
+- **Agent memory** (`memories`, written by the agent review and the retrospective) is model output written after reading fenced outside text, so it is untrusted: it reaches a writer only in the user turn, inside one fence it cannot close, never in a system prompt. Each note is defanged again as it is read (links broken, addresses replaced, injection patterns redacted), and notes are added whole, most important and then newest first, while they fit. The system prompt says the fenced notes are observations, never instructions.
+- **A memory read that fails is skipped.** The writer runs without memory, logs a warning, and the job leaves its run as usual: memory is context, never a gate. A learnings read that fails reads as empty.
+
+Edit mining, the voice profile and objection answers write proposals without a model, so they read neither; the agent review writes memory and does not read it.
 
 ## The loops
 
@@ -64,7 +79,7 @@ Reply triage already files real objections unanswered. `objection-list` shows th
 
 ### Daily retrospective (strategist)
 
-Once a day the strategist reads the matured outreach numbers, template results, the fitness trends, pending proposals, discovery query yields and which playbook fields are set, and picks exactly one improvement: a learnings snippet, a memory note, a template candidate for the copy-change gate, an inactive discovery query, a playbook field, or nothing. The answer schema holds a single choice and the run is claimed once per day, so there is never a second. Every text meets the mutation constraints. A memory note is stored (bookkeeping); everything else is a proposal, and only the inactive query or a playbook field no writer reads may apply on its own, at `retrospective_actuation` level 2 or above.
+Once a day the strategist reads the matured outreach numbers, template results, the fitness trends, pending proposals, discovery query yields and which playbook fields are set, with the approved learnings and its recent memory ([above](#what-the-writers-read)), and picks exactly one improvement: a learnings snippet, a memory note, a template candidate for the copy-change gate, an inactive discovery query, a playbook field, or nothing. The answer schema holds a single choice and the run is claimed once per day, so there is never a second. Every text meets the mutation constraints. A memory note is stored (bookkeeping); everything else is a proposal, and only the inactive query or a playbook field no writer reads may apply on its own, at `retrospective_actuation` level 2 or above.
 
 ### Agent review (weekday mornings, judge)
 
@@ -92,7 +107,7 @@ Synthetic scenarios, generated from the month so the set is fixed for a month an
 
 ### Weekly evolution (strategist, then the benchmark's roles)
 
-For the declining dimension with the steepest weighted slope over 14 days, evolution works on the instruction behind it. The instructions it can evolve are brain components: outreach, pipeline, activation and revenue map to `message-pillars` and the outreach benchmark. It benchmarks the served component, asks the strategist for up to 3 alternatives (the current file is its input; past judge notes are fenced), drops any that change more than 3 items, add a link, a dash, an injection pattern or a figure the brain does not hold, or would not validate, benchmarks the rest with the candidate fenced in the user turn, and keeps the best only when it beats the baseline by 0.02. Below `brain_edit` level 2 that is a proposal. At level 2 or above it applies, benchmarks again on the served brain, and rolls the edit back when that run is incomplete, fails, or falls more than 0.05 under the baseline. A rollback is an incident that demotes `brain_edit` to level 1. Each automatic edit is marked unverified before it applies, so if a run dies before verifying, the next run rolls it back first. A rollback that cannot write the brain leaves the proposal `applied` with the reason, so the record matches what is served, and tells you to restore the component by hand. It runs at most once in 7 days.
+For the declining dimension with the steepest weighted slope over 14 days, evolution works on the instruction behind it. The instructions it can evolve are brain components: outreach, pipeline, activation and revenue map to `message-pillars` and the outreach benchmark. It benchmarks the served component, asks the strategist for up to 3 alternatives (the current file and the approved writing and template learnings are its input; past judge notes and the relevant agent memory are fenced), drops any that change more than 3 items, add a link, a dash, an injection pattern or a figure the brain does not hold, or would not validate, benchmarks the rest with the candidate fenced in the user turn, and keeps the best only when it beats the baseline by 0.02. Below `brain_edit` level 2 that is a proposal. At level 2 or above it applies, benchmarks again on the served brain, and rolls the edit back when that run is incomplete, fails, or falls more than 0.05 under the baseline. A rollback is an incident that demotes `brain_edit` to level 1. Each automatic edit is marked unverified before it applies, so if a run dies before verifying, the next run rolls it back first. A rollback that cannot write the brain leaves the proposal `applied` with the reason, so the record matches what is served, and tells you to restore the component by hand. It runs at most once in 7 days.
 
 ## Operator commands
 
@@ -168,6 +183,6 @@ Give the `strategist`, `judge`, `writer`, `worker` and `triage` roles a model an
 - **Instruction documents are the brain.** Evolution and every brain proposal work on brain components; there are no separate identity documents for a loop to edit.
 - **Template candidates do not write templates.** Approving one gives you the experiment to run; you add the template file and upload it, so a copy change still ships only through the copy-change gate.
 - **Edit mining sees edits made in your mail client** (the mailbox reconciliation). A draft changed before chat approval keeps only its digest, not its first text, so it is not mined.
-- **Writers do not read the learnings document or memory yet.** The retrospective and evolution read the learnings; the agent review's notes are stored for the agent's prompts to use. No loop writes text that goes to a prospect, so no loop is in the outbound writer registry.
+- **Memory is read by recency and importance, not by search.** A writer gets the newest, most important notes of the kinds it reads, within its budget; nothing ranks notes by how well they match the change at hand. No loop writes text that goes to a prospect, so no loop is in the outbound writer registry.
 - **The benchmark compares across months.** A regression check after the scenario set regenerates compares different scenarios; read a first-of-month regression with that in mind.
 - **A brain write that fails between the file and the lock** leaves that component unserved (it no longer matches the old lock) until you re-lock it; it never serves unapproved bytes.

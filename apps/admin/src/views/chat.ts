@@ -1,6 +1,7 @@
-// GTM-agents: the Chat view: a streaming conversation with the hub agent. Tokens arrive as
-// chat.delta events and the turn ends with chat.done; a running turn can be aborted. The agent's
-// reply is shown as text, never as HTML.
+// GTM-agents: the Chat view: a streaming conversation with the hub agent. The reply grows as
+// chat.delta events arrive (a delta with `reset` replaces what the turn showed so far) and the turn
+// ends with chat.done; a running turn can be aborted, which stops the stream. The agent's reply is
+// shown as text, never as HTML.
 import { css, html } from "lit";
 import type { PropertyValues } from "lit";
 import { formatDateTime } from "../format.ts";
@@ -80,7 +81,7 @@ export class GtmChat extends GtmView {
     if (!client) return;
     this.#unsubscribe.push(
       client.on("chat.delta", (data) => {
-        this.chat = chatDelta(this.chat, data.turnId, data.text);
+        this.chat = chatDelta(this.chat, data.turnId, data.text, data.reset === true);
       }),
       client.on("chat.done", (data) => {
         this.chat = chatDone(this.chat, data.turnId, data.status, data.message);

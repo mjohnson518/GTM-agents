@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { emptyEvidence, loadEvidence, recordDraftDecision, type ClassEvidence } from "../src/autonomy/evidence.ts";
 import { PERMANENT_HUMAN } from "../src/autonomy/levels.ts";
-import { AUTOMATIC_PATHS, decidePromotion, loadColdBatchOutcome, outcomeBlock, runAutonomyReview, type OutcomeEvidence } from "../src/autonomy/promotion.ts";
+import { AUTOMATIC_PATHS, OPERATOR_RAISED_PATHS, decidePromotion, loadColdBatchOutcome, outcomeBlock, runAutonomyReview, type OutcomeEvidence } from "../src/autonomy/promotion.ts";
 import { evalGap, OUTBOUND_WRITERS, writersFor } from "../src/autonomy/writers.ts";
 import { memoryKv, recordingOperator } from "../src/agents/testing.ts";
 import { defineConfig } from "../src/config/define-config.ts";
@@ -73,6 +73,15 @@ describe("the ladder", () => {
     for (const actionClass of PERMANENT_HUMAN) expect(decidePromotion({ actionClass, level: 1, evidence: { ...lots, actionClass } })).toMatchObject({ propose: false, reason: "permanently human-only" });
     expect(decidePromotion({ actionClass: "reply_send", level: 0, evidence: lots }).propose).toBe(false);
     expect(why({ actionClass: "post_meeting_followup", level: 1, evidence: lots })).toMatch(/nothing acts/);
+  });
+
+  it("never proposes a class only a person raises, whatever its evidence, and no such class is permanently human-only", () => {
+    const lots = ev("x", { approvedUnchanged: 500, autoSent: 500 });
+    for (const actionClass of Object.keys(OPERATOR_RAISED_PATHS)) {
+      expect(Object.keys(AUTOMATIC_PATHS)).not.toContain(actionClass);
+      expect(PERMANENT_HUMAN as readonly string[]).not.toContain(actionClass);
+      for (const level of [1, 2] as const) expect(why({ actionClass, level, evidence: { ...lots, actionClass } }), actionClass).toMatch(/a person raises it with autonomy-set/);
+    }
   });
 });
 

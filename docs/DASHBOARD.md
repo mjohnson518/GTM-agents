@@ -56,8 +56,8 @@ Every action runs through the module that owns it, with the same gates, digests 
 | Pipeline | Deals by stage, value, weighted forecast (value times probability, open deals), win rate | Create a deal for a contact, update its value or notes, move it forward (or to closed_lost) through `transitionDeal` |
 | Contacts | Search, details, history, a plain summary, who to look at next | Edit first name, last name, job title and notes only |
 | Inbound | Mail, its triage, its reply draft | Done, ignore, archive (through the reply commands' code, so drafts, reminders and evidence close the same way); send a reply draft |
-| Drafts | Drafts waiting for approval, of any kind | Approve (nothing is sent), reject. A lifecycle follow-up is approved with `fu-approve-<id>` (or dropped with `fu-reject-<id>`) in the operator chat instead, which checks the contact again and closes the follow-up record; the dashboard refuses both for one |
-| Proposals | Autonomy level proposals, experiment proposals, learnings | Approve (autonomy needs its confirm code), reject (experiments and learnings) |
+| Drafts | Drafts waiting for approval, of any kind | Approve (nothing is sent), reject. A draft of kind `lifecycle` (a lifecycle follow-up, or mail an optional module sends to product users, such as the ship module's "it is live" notes) is approved or dropped in the operator chat instead, with the command shown when it was drafted (`fu-approve-<id>` or `fu-reject-<id>` for a follow-up), which checks the contact again and closes the module's record; the dashboard refuses both for one |
+| Proposals | Autonomy level proposals, experiment proposals, learnings | Approve (autonomy needs its confirm code), reject. Rejecting an autonomy proposal dismisses it, as `autonomy-dismiss-<id>` does in the operator chat: no level changes, and it can never be confirmed afterwards |
 | Agents | Model roles and their models; every registered job with its schedule, flag and last run | |
 | Chat | The hub agent, in a session of its own per operator | Send, abort |
 | Activity | The audit log, live while subscribed | Export a CSV (at most 31 days, 5,000 rows or 512 KB) |
@@ -74,7 +74,17 @@ Every action runs through the module that owns it, with the same gates, digests 
 
 `flags.list` marks each entry `editable` accordingly.
 
-**Chat.** The same hub turn as the operator chat: the same tools, taint rules and budgets, while `operator:agent_enabled` is on. `/clean`, `/status` and `/help` work; release and confirm commands do not run here, because their codes are shown in the operator chat. Drafts a turn creates wait in the Drafts view. The model gateway does not stream, so an answer arrives in one piece.
+**Chat.** The same hub turn as the operator chat: the same tools, taint rules and budgets, while `operator:agent_enabled` is on. `/clean`, `/status` and `/help` work. Every other command (release, sequence, meeting, autonomy, experiment, lifecycle follow-up and learning commands, and any command an optional module adds) does not run here and is never passed to the model as a task: it is refused, because those commands are shown with their codes in the operator chat. To dismiss an autonomy proposal or decide a learning from the dashboard, use the Proposals view. Drafts a turn creates wait in the Drafts view.
+
+When the model gateway streams (`llm-gateway` does), the answer appears as the model writes it:
+
+- the Worker batches the text into `chat.delta` events, one at most every 100 ms or every 2,048 characters, so a frame stays far under the 64 KB limit;
+- when a later model call in the same turn (after a tool) starts writing, its first delta carries `reset`, and its answer replaces the text written before the tool call;
+- at the end of the turn the dashboard is brought to exactly the final reply, then `chat.done` arrives. `chat.history` keeps only final replies, never the pieces;
+- tool calls, the turn ceiling, the budget checks and the cost records run exactly as for a call that does not stream;
+- abort stops the model's stream and every further delta. The turn then ends with the reply it recorded, marked aborted.
+
+A gateway without streaming answers in one `chat.delta` carrying the whole reply. The Telegram channel always gets the whole reply in one message.
 
 ## The security model
 
@@ -90,6 +100,6 @@ Every action runs through the module that owns it, with the same gates, digests 
 
 - One OperatorGateway instance serves every dashboard; a chat turn runs one at a time per operator.
 - The activity stream polls the audit log every 10 seconds while a dashboard subscribes; between polls, `activity.list` is the source.
-- Autonomy proposals are not rejected from the dashboard: one that is not confirmed expires.
 - Learnings, fitness scores and link triage appear when their modules are installed and passed to `createWorker` as `dashboard: { proposals, fitness, learning, linkTriage }`. Until then, pending learnings are listed read-only, fitness is empty and link triage reports `installed: false`.
 - Contact summaries are built from the database, without a model call.
+- A model call aborted part way records no cost row, streamed or not: usage comes back only with a finished call. The vendor may still bill the tokens it produced before the abort.

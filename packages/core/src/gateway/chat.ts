@@ -2,19 +2,33 @@
 //
 // A message runs the same hub turn as the operator chat (agents/hub.ts): the same tools, taint rules,
 // budgets and turn ceiling, in a session of its own per operator email. It runs only while
-// operator:agent_enabled is on. /clean, /status and /help work as in the chat; the release and
-// confirm commands do not run here: they stay in the operator chat, where their codes are shown.
-// Drafts a turn creates wait for approval in the drafts view. The model gateway does not stream, so
-// a turn's answer arrives as one chat.delta followed by chat.done.
+// operator:agent_enabled is on. /clean, /status and /help work as in the chat. Every other command
+// (release, sequence, meeting, autonomy, experiment, lifecycle follow-up and learning commands, and
+// any command an optional module contributed) does not run here and never reaches the model: it
+// stays in the operator chat, where it is shown with its code. An autonomy proposal is dismissed
+// here with Reject in the proposals view, and learnings are decided there too. Drafts a turn
+// creates wait for approval in the drafts view.
+//
+// When the model gateway streams (ModelGateway.stream), the answer arrives as it is written: the hub
+// loop hands its text to a ChatStream (chat-stream.ts), which pushes batched chat.delta events and,
+// when the turn ends, makes the dashboard show exactly the final reply before chat.done. Tool calls,
+// budgets, the turn ceiling and cost records run exactly as without streaming. chat.abort aborts the
+// turn's signal, which stops the model's stream and every further delta. A gateway that does not
+// stream, and every command, answers with one chat.delta carrying the whole reply, then chat.done.
+// History keeps only final replies, never streamed pieces.
 import { sessionKeyFor } from "../agents/sessions.ts";
 import { runHubTurn } from "../agents/hub.ts";
 import { parseAutonomyCommand } from "../autonomy/commands.ts";
 import { parseConvertCommand } from "../convert/commands.ts";
 import { parseExperimentCommand } from "../experiments/commands.ts";
+import { parseLearningCommand } from "../learning/commands.ts";
+import { parseFollowupCommand } from "../lifecycle/followup-commands.ts";
 import { AGENT_DISABLED_TEXT, isAgentEnabled } from "../operator/access.ts";
 import { parseCommand, parseReleaseCommand, runCommand } from "../operator/commands.ts";
+import { matchModuleCommand, moduleHelpLines } from "../operator/module-commands.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { parseSequenceCommand } from "../sequences/commands.ts";
+import { ChatStream } from "./chat-stream.ts";
 import { RpcError, type GatewayContext, type Handler } from "./context.ts";
 import { tryBuild } from "./wiring.ts";
 
@@ -36,9 +50,20 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
   const turnId = crypto.randomUUID();
   const text = p.text;
 
-  if (parseReleaseCommand(text) || parseSequenceCommand(text) || parseConvertCommand(text) || parseAutonomyCommand(text) || parseExperimentCommand(text)) {
+  const autonomy = parseAutonomyCommand(text);
+  const learning = parseLearningCommand(text);
+  // A command is never a task for the model: one that does not run here is refused, not passed on.
+  const elsewhere =
+    parseReleaseCommand(text) || parseSequenceCommand(text) || parseConvertCommand(text) || autonomy || parseExperimentCommand(text) || parseFollowupCommand(text) || learning || matchModuleCommand(ctx.wiring.commands, text);
+  if (elsewhere) {
     ctx.audit.kind = "command_refused";
-    ctx.defer(Promise.resolve().then(() => finish(ctx, turnId, "That command runs from the operator chat, where its code is shown. Nothing was run.", "completed")));
+    const refusal =
+      autonomy?.kind === "dismiss"
+        ? "Dismiss an autonomy proposal with Reject in the Proposals view, or send this command in the operator chat. Nothing was run."
+        : learning
+          ? "Learning proposals are listed, approved and rejected in the Proposals view, or with this command in the operator chat. Nothing was run."
+          : "That command runs from the operator chat, where its code is shown. Nothing was run.";
+    ctx.defer(Promise.resolve().then(() => finish(ctx, turnId, refusal, "completed")));
     return { turnId };
   }
   const command = parseCommand(text);
@@ -48,7 +73,11 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
       (async () => {
         if (!BASIC_COMMANDS.has(command.name)) return finish(ctx, turnId, `/${command.name} runs from the operator chat or its own view here. Nothing was run.`, "completed");
         try {
-          const reply = await runCommand({ db: ctx.env.DB, agentName: ctx.wiring.config.agent.name, strategistModel: ctx.wiring.config.models.roles.strategist, now: ctx.now }, command, session);
+          const reply = await runCommand(
+            { db: ctx.env.DB, agentName: ctx.wiring.config.agent.name, strategistModel: ctx.wiring.config.models.roles.strategist, moduleHelpLines: moduleHelpLines(ctx.wiring.commands), now: ctx.now },
+            command,
+            session,
+          );
           finish(ctx, turnId, reply, "completed");
         } catch (error) {
           finish(ctx, turnId, "", "failed", sanitizeErrorMessage(error));
@@ -64,6 +93,7 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
   const controller = new AbortController();
   ctx.turns.set(turnId, { controller, email: ctx.state.email });
   ctx.audit.kind = "turn";
+  const live = model.stream ? new ChatStream({ turnId, push: ctx.push, signal: controller.signal }) : null;
   ctx.defer(
     (async () => {
       try {
@@ -79,11 +109,14 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
             ...(ctx.wiring.agent.maxTokens !== undefined ? { maxTokens: ctx.wiring.agent.maxTokens } : {}),
             now: ctx.now,
           },
-          { ...session, text, signal: controller.signal },
+          { ...session, text, signal: controller.signal, ...(live ? { onText: (piece: string, round: number) => live.text(piece, round) } : {}) },
         );
         const drafts = result.drafts.length > 0 ? `\n\nDrafts saved for approval: ${result.drafts.map((d) => d.id).join(", ")}. Review them in the drafts view; nothing was sent.` : "";
-        finish(ctx, turnId, `${result.reply}${drafts}`, controller.signal.aborted ? "aborted" : "completed");
+        const reply = `${result.reply}${drafts}`;
+        live?.finish(reply);
+        finish(ctx, turnId, live ? "" : reply, controller.signal.aborted ? "aborted" : "completed");
       } catch (error) {
+        live?.finish("");
         finish(ctx, turnId, "", controller.signal.aborted ? "aborted" : "failed", sanitizeErrorMessage(error));
       } finally {
         ctx.turns.delete(turnId);

@@ -201,11 +201,14 @@ export const draftsList: Handler<"drafts.list"> = async (p, ctx) => {
 
 /**
  * Draft kinds whose approval belongs to the module that drafted them, because approving there also
- * re-checks the contact and sends (lifecycle follow-ups: fu-approve-<id> and fu-reject-<id>). The
- * dashboard lists them but never approves or rejects them through the generic path, which would leave
- * the module's own record open.
+ * re-checks the contact and sends, and rejecting there closes the module's own record. Kind
+ * `lifecycle` covers lifecycle follow-ups (fu-approve-<id>, fu-reject-<id>) and the mail optional
+ * modules send to product users (for example the ship module's "it is live" notes). The dashboard
+ * lists these drafts but never approves or rejects them through the generic path.
  */
-export const OWN_APPROVAL_KINDS: ReadonlyMap<string, string> = new Map([["lifecycle", "a lifecycle follow-up is approved with fu-approve-<id> in the operator chat, which checks the contact again and sends it"]]);
+export const OWN_APPROVAL_KINDS: ReadonlyMap<string, string> = new Map([
+  ["lifecycle", "this draft is approved or dropped in the operator chat, with the command shown when it was drafted (fu-approve-<id> or fu-reject-<id> for a lifecycle follow-up), which checks the contact again before anything is sent"],
+]);
 
 /** Approve a draft. Approving marks it approved; nothing is sent. */
 export const draftsApprove: Handler<"drafts.approve"> = async (p, ctx) => {
@@ -223,9 +226,9 @@ export const draftsReject: Handler<"drafts.reject"> = async (p, ctx) => {
   ctx.audit.draftId = p.draftId;
   const row = await ctx.env.DB.prepare("SELECT kind FROM drafts WHERE id = ?1").bind(p.draftId).first<{ kind: string }>();
   if (!row) throw new RpcError("not_found", "no such draft");
-  // Rejecting one of these also closes the owning module's record (fu-reject-<id>), so it is done there.
+  // Rejecting one of these also closes the owning module's record, so it is done there.
   const owner = OWN_APPROVAL_KINDS.get(row.kind);
-  if (owner) throw new RpcError("invalid", owner.replace("is approved with fu-approve-<id>", "is approved with fu-approve-<id> or dropped with fu-reject-<id>"));
+  if (owner) throw new RpcError("invalid", owner);
   const rejected = await rejectDraftById({ db: ctx.env.DB, now: ctx.now }, p.draftId);
   if (!rejected.ok) throw new RpcError(rejected.code === "not_found" ? "not_found" : "conflict", rejected.reason);
   return { ok: true };

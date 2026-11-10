@@ -34,17 +34,32 @@ export interface Cost {
 
 export type AdapterErrorCode = "auth" | "rate_limited" | "quota" | "not_found" | "invalid" | "unavailable" | "timeout" | "unknown";
 
+/** Tokens a vendor billed for a call that then failed. */
+export interface BilledUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export class AdapterError extends Error {
   readonly code: AdapterErrorCode;
   readonly retryable: boolean;
   readonly retryAfterMs: number | undefined;
+  /**
+   * What the vendor billed before the call failed, when the adapter knows it: a model stream cut
+   * off, aborted or ended by an error after it started. Core records its cost, so a failed call is
+   * still counted against the budget. Undefined when nothing was billed or it cannot be known.
+   */
+  readonly usage: BilledUsage | undefined;
 
-  constructor(message: string, code: AdapterErrorCode, retryable: boolean, options: { retryAfterMs?: number; cause?: unknown } = {}) {
+  constructor(message: string, code: AdapterErrorCode, retryable: boolean, options: { retryAfterMs?: number; cause?: unknown; usage?: BilledUsage } = {}) {
     super(message, { cause: options.cause });
     this.name = "AdapterError";
     this.code = code;
     this.retryable = retryable;
     this.retryAfterMs = options.retryAfterMs;
+    this.usage = options.usage;
   }
 }
 

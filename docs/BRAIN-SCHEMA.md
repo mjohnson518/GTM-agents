@@ -286,6 +286,8 @@ Is that something your team tracks today, or does it mostly show up as frustrati
 
 **Skip rather than guess.** If any variable a template uses has no value for a contact, the draft is held for that contact. Nothing ever falls back to "Hi there" or "your company".
 
+**Lifecycle templates** are filled by the lifecycle follow-up writer, which supplies only `{{first_name}}`, `{{last_name}}`, `{{sender_name}}` and `{{booking_url}}`; any other variable skips every follow-up of that kind. Each follow-up reads the template with its own id, such as `lifecycle-first-use` ([LIFECYCLE.md](LIFECYCLE.md#lifecycle-follow-ups) lists them).
+
 ### Template rules
 
 - The body is plain text. It has no footer, unsubscribe line or tracking: the send path appends the postal footer and the unsubscribe line to every email.

@@ -17,6 +17,8 @@ export const PORT_NAMES = [
   "BillingProvider",
   "ModelGateway",
   "CrmSink",
+  "CodeHost",
+  "CodingSandbox",
 ] as const;
 
 /** The lowest session taint at which a tool is refused. `never` is for read-only tools. */

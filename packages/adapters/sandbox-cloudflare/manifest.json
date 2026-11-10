@@ -1,0 +1,19 @@
+{
+  "name": "sandbox-cloudflare",
+  "version": "0.1.0",
+  "ports": ["CodingSandbox"],
+  "capabilities": ["containers", "egress_allowlist", "profiles:claude-code", "profiles:opencode"],
+  "requiredSecrets": ["GITHUB_TOKEN"],
+  "optionalSecrets": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AI_GATEWAY_TOKEN"],
+  "flags": ["ship:enabled", "ship:builds_enabled"],
+  "tools": {
+    "coding_sandbox_run": { "taint": "full", "gate": "metadata", "rateCategory": "sandbox" },
+    "coding_sandbox_collect": { "taint": "full", "gate": "never" }
+  },
+  "costs": {
+    "model_tokens": { "per": "model call, priced from models.pricing for the coder model in gtm.config.ts and recorded under job ship_build" },
+    "container_time": { "per": "container instance time, billed by Cloudflare Containers and not recorded in the cost ledger" }
+  },
+  "limits": {},
+  "contract": "./contract.test.ts"
+}

@@ -11,8 +11,9 @@
 //   L2 to L3  at least MIN_AUTO_SENDS automatic sends in 60 days, with no incident and no rejection
 //             in 60 days.
 // Every proposal also needs:
-//   - a class with an automatic path (AUTOMATIC_PATHS): raising a class nothing acts on would mean
-//     nothing until a later version reads it, which is a surprise, not a decision;
+//   - a class the review may propose (AUTOMATIC_PATHS). Other classes act on their level too
+//     (OPERATOR_RAISED_PATHS), but only a person raises those; raising a class nothing acts on
+//     would mean nothing until a later version reads it, which is a surprise, not a decision;
 //   - an eval for every writer of the class (writers.ts, evalGap);
 //   - for the cold batch, the outcome gate (outcomeBlock): first touches sent 10 to 40 days ago
 //     (matured) against a baseline sent 40 to 130 days ago, at least OUTCOME_MIN_SENDS each, a hard
@@ -30,7 +31,7 @@ import type { OperatorChannel } from "../ports/operator.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { decisionsOf, evidenceLine, loadEvidence, type ClassEvidence } from "./evidence.ts";
 import { EARNABLE_ACTION_CLASSES, isPermanentHuman, type ActionClass, type AutonomyLevel } from "./levels.ts";
-import { confirmCommand, createProposal, REVIEW_PROPOSAL_TTL_MS, type Proposal } from "./proposals.ts";
+import { confirmCommand, createProposal, dismissCommand, REVIEW_PROPOSAL_TTL_MS, type Proposal } from "./proposals.ts";
 import { readAutonomyLevel } from "./store.ts";
 import { evalGap } from "./writers.ts";
 
@@ -46,14 +47,35 @@ export const PROPOSAL_REPEAT_DAYS = 14;
 export const OUTCOME_GATE = Object.freeze({ recentFromDays: 40, recentToDays: MATURITY_DAYS, baselineFromDays: 130, baselineToDays: 40, minSends: 200, maxHardBounceRate: 0.02 });
 
 /**
- * The classes something acts on at level 2 or above, and what it does. A class not listed here is
- * never proposed: nothing would act on the level yet.
+ * The classes the weekly review may propose, and what acts on each at level 2 or above. Each has an
+ * outcome gate or an auto-send rule set to judge it by. A class not listed here is never proposed.
  */
 export const AUTOMATIC_PATHS: Readonly<Partial<Record<ActionClass, string>>> = Object.freeze({
   cold_batch: "the cold batch and its follow-up steps send drafts that pass the quality gate and the model reviewer without a release code",
   reply_send: "a reply that passes every auto-send rule goes out at once, and you are told after",
   reply_demo_link: "a reply carrying one approved asset to someone who asked to see the product goes out at once, and you are told after",
 });
+
+/**
+ * Classes whose level something acts on, but which the review never proposes: only a person raises
+ * them, with autonomy-set. They are listed so the commands tell the operator what a level will do
+ * before it is set. The module that owns each action reads the level itself.
+ */
+export const OPERATOR_RAISED_PATHS: Readonly<Partial<Record<ActionClass, string>>> = Object.freeze({
+  lifecycle_activation: "the lifecycle sweep sends first-use nudges from their approved templates, and you are told after",
+  feedback: "the lifecycle sweep sends the usefulness check from its approved template, and you are told after",
+  reengage: "the lifecycle sweep sends the re-engage note from its approved template, and you are told after",
+  at_risk: "the lifecycle sweep sends the at-risk check-in from its approved template, and you are told after",
+  brain_edit: "a learning loop's own edit to a self-editable brain component applies without you",
+  retrospective_actuation: "a retrospective's own change that never reaches a prospect on its own applies without you",
+  ship_spec: "with the ship module installed, a low-risk spec is approved without you (at most 2 a run); merging stays with a person",
+  ship_notification: "with the ship module installed, an \"it is live\" note that passes the quality gate goes out, and you are told after",
+});
+
+/** What acts on a class at level 2 or above, or undefined when nothing does. */
+export function levelPath(actionClass: string): string | undefined {
+  return AUTOMATIC_PATHS[actionClass as ActionClass] ?? OPERATOR_RAISED_PATHS[actionClass as ActionClass];
+}
 
 export function minDecisionsFor(actionClass: string): number {
   return MIN_DECISIONS_BY_CLASS[actionClass as ActionClass] ?? MIN_DECISIONS;
@@ -107,7 +129,7 @@ export function decidePromotion(input: PromotionInput): PromotionDecision {
   const no = (reason: string): PromotionDecision => ({ propose: false, reason });
   if (isPermanentHuman(actionClass)) return no("permanently human-only");
   if (!(EARNABLE_ACTION_CLASSES as readonly string[]).includes(actionClass)) return no("not an action class whose level can be earned");
-  if (!AUTOMATIC_PATHS[actionClass as ActionClass]) return no("nothing acts on this class's level yet");
+  if (!AUTOMATIC_PATHS[actionClass as ActionClass]) return no(OPERATOR_RAISED_PATHS[actionClass as ActionClass] ? "the review does not propose this class; a person raises it with autonomy-set" : "nothing acts on this class's level yet");
   if (level === 0) return no("observe only, a person's choice");
   if (level >= 3) return no("already at the highest level");
   const gap = evalGap(actionClass);
@@ -212,7 +234,7 @@ export async function runAutonomyReview(deps: ReviewDeps): Promise<ReviewResult>
           `Propose ${actionClass} level ${decision.from} to level ${decision.to}: ${decision.reason}.`,
           `Evidence: ${evidenceLine(e)}.`,
           `At level ${decision.to}, ${AUTOMATIC_PATHS[actionClass] ?? "it acts on its own"}.`,
-          `To apply it, send: ${confirmCommand(proposal)} (valid ${PROPOSAL_REPEAT_DAYS} days, and only while ${actionClass} is still at level ${decision.from}).`,
+          `To apply it, send: ${confirmCommand(proposal)} (valid ${PROPOSAL_REPEAT_DAYS} days, and only while ${actionClass} is still at level ${decision.from}). To drop it, send: ${dismissCommand(proposal)}.`,
         ].join("\n"),
       );
     } catch (error) {

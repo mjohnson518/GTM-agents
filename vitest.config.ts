@@ -65,6 +65,15 @@ export default defineConfig(async () => {
           },
         },
         {
+          // Optional modules (packages/modules): Workers runtime with the same bindings and schema.
+          plugins: [workers()],
+          test: {
+            name: "modules",
+            include: ["packages/modules/**/test/**/*.test.ts"],
+            setupFiles: ["packages/core/test/setup.ts"],
+          },
+        },
+        {
           // The security contract: properties every tool and every send path must keep.
           plugins: [workers()],
           test: {

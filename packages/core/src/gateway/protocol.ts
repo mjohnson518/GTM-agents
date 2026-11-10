@@ -34,8 +34,17 @@ export interface RpcRequest<M extends MethodName = MethodName> {
 
 export type RpcResponse<M extends MethodName = MethodName> = { id: string; result: MethodResult<M> } | { id: string; error: { code: RpcErrorCode; message: string } };
 
+/**
+ * Chat events. A turn's reply arrives as chat.delta events, each appended to what the turn shows,
+ * then one chat.done. When the model streams, deltas carry its text as it is written (batched, at
+ * most a few thousand characters each); otherwise one delta carries the whole reply. `reset` (absent
+ * means false) says: discard what this turn shows so far, then show `text`. It comes when a later
+ * model call's answer replaces an earlier one, and when the final reply is not a continuation of
+ * what was streamed. By chat.done a turn shows exactly its final reply, never a streamed piece the
+ * reply left out; chat.history keeps only final replies.
+ */
 export type ServerEvent =
-  | { event: "chat.delta"; data: { turnId: string; text: string } }
+  | { event: "chat.delta"; data: { turnId: string; text: string; reset?: boolean } }
   | { event: "chat.done"; data: { turnId: string; status: "completed" | "aborted" | "failed"; message?: string } }
   | { event: "activity"; data: ActivityItem }
   | { event: "status"; data: SystemStatus };

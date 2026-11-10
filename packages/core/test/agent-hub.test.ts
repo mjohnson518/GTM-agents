@@ -214,6 +214,64 @@ describe("the hub agent's turn", () => {
   });
 });
 
+describe("the hub agent's turn, streamed", () => {
+  function streamingSetup(steps: ScriptStep[], flags: Record<string, string> = {}) {
+    const s = setup(steps, {}, flags);
+    const model = scriptedModel(steps, { stream: { chunkChars: 5 } });
+    return { ...s, model, deps: { ...s.deps, model } };
+  }
+
+  it("streams each model call's text with its round while tools run as before, and decides the reply as without streaming", async () => {
+    const steps: ScriptStep[] = [{ ...toolStep({ name: "web_fetch", input: { url: "https://acme.example/pricing" } }), text: "Reading the page." }, { text: "Acme has three plans." }];
+    const s = streamingSetup(steps);
+    const seen: Array<[string, number]> = [];
+    const turn = await runHubTurn(s.deps, { sessionKey: s.sessionKey, chatId: s.chatId, text: "Look at https://acme.example/pricing", onText: (text, round) => seen.push([text, round]) });
+    expect(s.model.modes).toEqual(["stream", "stream"]);
+    expect(seen.filter(([, r]) => r === 1).map(([t]) => t).join("")).toBe("Reading the page.");
+    expect(seen.filter(([, r]) => r === 2).map(([t]) => t).join("")).toBe("Acme has three plans.");
+    const results = s.model.requests[1]?.messages.at(-1)?.content as Array<Record<string, unknown>>;
+    expect(String(results[0]?.content)).toContain('<tool_output source="web_fetch" trust="untrusted"');
+
+    const plain = setup(steps);
+    const unstreamed = await runHubTurn(plain.deps, { sessionKey: plain.sessionKey, chatId: plain.chatId, text: "Look at https://acme.example/pricing" });
+    expect(turn.reply).toBe(unstreamed.reply);
+    const history = await loadSession(db, s.sessionKey, s.chatId, new Date());
+    expect(history.history.map((m) => m.text)).toEqual(["Look at https://acme.example/pricing", turn.reply]);
+  });
+
+  it("records the cost of every streamed call with the turn, run and job", async () => {
+    const s = streamingSetup([toolStep({ name: "contacts_search", input: { query: "okafor" } }), { text: "No contacts yet." }]);
+    const turn = await runHubTurn(s.deps, { sessionKey: s.sessionKey, chatId: s.chatId, text: "Who do we know at Acme?", onText: () => undefined });
+    expect(s.model.modes).toEqual(["stream", "stream"]);
+    const { results } = await db.prepare("SELECT run_id, job, cost_micro_cents FROM cost_events WHERE turn_id = ?1").bind(turn.turnId).all();
+    const each = tokenCostMicroCents({ inputTokens: 1000, outputTokens: 200 }, PRICE);
+    expect(results).toEqual([
+      { run_id: turn.runId, job: CHAT_JOB, cost_micro_cents: each },
+      { run_id: turn.runId, job: CHAT_JOB, cost_micro_cents: each },
+    ]);
+  });
+
+  it("calls complete, not stream, when nobody watches the answer arrive", async () => {
+    const s = streamingSetup([{ text: "Three plans." }]);
+    await runHubTurn(s.deps, { sessionKey: s.sessionKey, chatId: s.chatId, text: "Plans?" });
+    expect(s.model.modes).toEqual(["complete"]);
+  });
+
+  it("never lets a failing viewer fail the turn", async () => {
+    const s = streamingSetup([{ text: "Three plans." }]);
+    const turn = await runHubTurn(s.deps, {
+      sessionKey: s.sessionKey,
+      chatId: s.chatId,
+      text: "Plans?",
+      onText: () => {
+        throw new Error("viewer gone");
+      },
+    });
+    expect(turn.stop).toBe("end");
+    expect(turn.reply).toBe("Three plans.");
+  });
+});
+
 describe("shapeHistory", () => {
   it("starts with the operator, alternates roles and drops a trailing unanswered message", () => {
     expect(
