@@ -1,4 +1,4 @@
-# The operator channel
+# The operator chat
 
 This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
 
@@ -10,7 +10,8 @@ Telegram -> POST /api/webhooks/operator
               2. core checks the allowlist; a stranger gets 200 and no reply
               3. the update id is claimed in the effects ledger; a redelivery is a no-op
               4. operator:agent_enabled off: "the agent is turned off"
-              5. a message goes to CHAT_QUEUE; a button tap is handled at once
+              5. a message is rate limited per chat and goes to CHAT_QUEUE;
+                 a button tap is handled at once
 CHAT_QUEUE -> the chat consumer
               a command (/clean, /status, /help) runs without the model
               anything else runs one hub agent turn, replies, and sends an
@@ -27,7 +28,7 @@ Nothing touches the database before the update is verified. The agent never send
 
 ## 2. Set the secrets
 
-Secrets never go in `gtm.config.ts`, `wrangler.jsonc` or the repository. Set each with Wrangler, from `apps/worker` (or your copy of it):
+Secrets never go in `gtm.config.ts`, `wrangler.jsonc` or the repository. Set each with Wrangler, from your deployment directory:
 
 ```bash
 npx wrangler secret put TELEGRAM_BOT_TOKEN        # the token from BotFather
@@ -96,8 +97,9 @@ models: {
 | `anthropicVersion` | The `anthropic-version` header. Defaults to `2026-10-21` |
 | `promptCache` | Mark the system prompt for prompt caching. Defaults to `true` |
 | `fallbacks` | `"default"` turns on the provider's server-side fallback for refused requests |
+| `roles` | A model id per role, used only when core sends no model id |
 
-`operator-telegram` options: `chatId`, the default chat for messages core sends without one, and `apiBaseUrl` for a self-hosted Bot API server. Set `chatId` in practice: without it, job failure pages, cron health pages, batch and sequence release messages and delivery alerts have no chat to go to and are dropped.
+`operator-telegram` options: `chatId`, the default chat for messages core sends without one, and `apiBaseUrl` for a self-hosted Bot API server. Set `chatId` in practice: without it, job failure pages, cron health pages, batch and sequence release messages and delivery alerts have no chat to go to and fail ("no chat to deliver to").
 
 ## 4. Register the webhook
 
@@ -130,7 +132,7 @@ The agent runs only while the `operator:agent_enabled` flag is on. It defaults t
 npx gtm flags set operator:agent_enabled true
 ```
 
-Delete the key to turn it off again. `gtm doctor` lists the flag with every other flag.
+`npx gtm flags unset operator:agent_enabled` turns it off again. `gtm doctor` lists the flag with every other flag.
 
 ## Commands
 
@@ -140,13 +142,15 @@ Delete the key to turn it off again. `gtm doctor` lists the flag with every othe
 | `/status` | The session's taint, how many messages it holds, drafts waiting for approval, today's chat spend, the strategist model |
 | `/help` (or `/start`) | What the agent can do and how sessions, taint and approvals work |
 
-Replies and follow-ups add their own commands, documented with them:
+The other capabilities add their own commands, documented with them. `/help` lists every one:
 
 | Command | What it does |
 |---|---|
 | `/replies` | Replies waiting on you, oldest first ([REPLIES.md](REPLIES.md)) |
 | `/reply_done <id>`, `/reply_ignore <id>` | Mark a reply answered by hand, or as needing no answer |
 | `/reply_send <draft id>`, `/reply_draft <id>` | Send an approved reply now, or show its draft again for approval |
+| `/scorecard` | The daily scorecard, as of now ([MEASUREMENT.md](MEASUREMENT.md)) |
+| `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
 | `batch-release-<id>-<code>` | Release the day's cold batch ([OUTREACH.md](OUTREACH.md)) |
 | `sequence-release-<id>-<code>` | Release the follow-ups a sweep put up ([SEQUENCES.md](SEQUENCES.md)) |
 | `sequence-resume-<contact id>` | Resume a contact's paused sequence |
@@ -157,20 +161,20 @@ Replies and follow-ups add their own commands, documented with them:
 | `autonomy-status` | Every action class with its level and evidence ([AUTONOMY.md](AUTONOMY.md)) |
 | `autonomy-set <class> <0-3>`, then `autonomy-confirm-<id>-<code>` | Propose a level change, then confirm it within 30 minutes; permanently human-only classes stay at 1 or below |
 | `autonomy-dismiss-<id> [reason]` | Drop an open autonomy proposal (yours or the weekly review's) so it can never be confirmed; no level changes |
-| `experiment-create`, `experiment-show`, `experiment-list`, `experiment-stop`, then `experiment-start <id>` and `experiment-start-<id>-<code>` | Pre-register, start (two-step) and stop experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) |
-| `exp-list`, `exp-approve-<id>`, `exp-reject-<id>`, `ab-dashboard`, `sample-size` | Copy-change and self-review proposals, the A/B report, and the sample-size helper |
-| `learning-list`, `learning-show <id>`, `learning-approve-<id>-<code>`, `learning-reject-<id>`, `objection-answer <id> <text>`, `voice-build`, `fitness` | Learning proposals, objection answers, the voice profile and the fitness trend ([LEARNING.md](LEARNING.md)) |
+| `experiment-create`, `experiment-update <id>`, `experiment-show <id>`, `experiment-list`, `experiment-stop <id>`, then `experiment-start <id>` and `experiment-start-<id>-<code>` | Pre-register, amend, start (two-step) and stop experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) |
+| `subject-test-create`, `subject-test-stop <id>` | A subject-line test on one template |
+| `exp-list`, `exp-approve-<id>`, `exp-reject-<id>`, `ab-dashboard`, `sample-size <baseline> <mde>` | Copy-change and self-review proposals, the A/B report, and the sample-size helper |
+| `learning-list [kind]`, `learning-show <id>`, `learning-approve-<id>-<code>`, `learning-reject-<id>`, `learnings` | Proposals from the self-improvement loops, and the learnings document ([LEARNING.md](LEARNING.md)) |
+| `objection-list`, `objection-answer <id> <answer>`, `voice-build <thread id> ...`, `voice-status`, `fitness [days]` | Objection answers, the voice profile and the fitness trend |
 | `fu-approve-<id>`, `fu-reject-<id>` | Lifecycle follow-ups waiting for a person ([LIFECYCLE.md](LIFECYCLE.md)) |
 
-Everything here can also be done from the dashboard ([DASHBOARD.md](DASHBOARD.md)), with the same checks.
-| `/scorecard` | Send today's scorecard now ([MEASUREMENT.md](MEASUREMENT.md)) |
-| `/report conversion [template\|subject\|cohort\|segment\|persona]`, `/report funnel`, `/report cost`, `/report holdout` | Read-only reports, from the same metric definitions as the scorecard |
+The optional ship module adds `ship-themes`, `ship-spec-<id>`, `ship-approve-<id> <code>`, `ship-decline-<id>`, `ship-note-approve-<id> <code>` and `ship-note-decline-<id>` when it is wired ([SHIP.md](SHIP.md)). Most of these actions can also be taken from the dashboard ([DASHBOARD.md](DASHBOARD.md)), with the same checks.
 
 Commands never reach the model, and each runs once per message even if the channel redelivers it. `/clean@YourBot` forms work in groups. Anything that is not a command is a task for the hub agent.
 
 ## What the agent can do
 
-The hub agent has three tools in this version:
+The hub agent has three tools:
 
 | Tool | What it does | Class |
 |---|---|---|
@@ -210,8 +214,8 @@ Every draft a turn creates comes back as an approval request showing the whole d
 | Spend per day for all chat turns | none | `budget:job:operator_chat:daily_cents` |
 | Global daily and monthly limits (in `hard` mode) | $20, $500 | `budget:*` flags |
 | Model rounds per turn | 8 | `agent.maxRounds` in `createWorker` |
-| Messages per chat | 30 a minute | the `chat` rate limit |
-| Page fetches | 40 an hour | the `web` rate limit |
+| Messages per chat | 30 a minute | Fixed: the `chat` category in `RATE_LIMITS` (`packages/core/src/security/rate-limiter.ts`) |
+| Page fetches | 40 an hour | Fixed: the `web` category in `RATE_LIMITS` |
 
 Every model call writes a row to the cost ledger with the turn, its run and the job `operator_chat`, priced from `models.pricing`. Each turn writes one row to `execution_runs` with trigger `chat`. A turn is never retried automatically: ask again instead.
 

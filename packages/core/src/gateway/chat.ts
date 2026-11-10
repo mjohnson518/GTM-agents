@@ -7,7 +7,7 @@
 // any command an optional module contributed) does not run here and never reaches the model: it
 // stays in the operator chat, where it is shown with its code. An autonomy proposal is dismissed
 // here with Reject in the proposals view, and learnings are decided there too. Drafts a turn
-// creates wait for approval in the drafts view.
+// creates go to the operator chat for approval, the same request a turn there makes.
 //
 // When the model gateway streams (ModelGateway.stream), the answer arrives as it is written: the hub
 // loop hands its text to a ChatStream (chat-stream.ts), which pushes batched chat.delta events and,
@@ -24,6 +24,7 @@ import { parseExperimentCommand } from "../experiments/commands.ts";
 import { parseLearningCommand } from "../learning/commands.ts";
 import { parseFollowupCommand } from "../lifecycle/followup-commands.ts";
 import { AGENT_DISABLED_TEXT, isAgentEnabled } from "../operator/access.ts";
+import { requestDraftApproval } from "../operator/approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand } from "../operator/commands.ts";
 import { matchModuleCommand, moduleHelpLines } from "../operator/module-commands.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
@@ -41,6 +42,29 @@ export function dashboardChatId(email: string): string {
 function finish(ctx: GatewayContext, turnId: string, text: string, status: "completed" | "aborted" | "failed", message?: string): void {
   if (text) ctx.push({ event: "chat.delta", data: { turnId, text } });
   ctx.push({ event: "chat.done", data: { turnId, status, ...(message ? { message } : {}) } });
+}
+
+/**
+ * Drafts a dashboard turn saved go to the operator chat for approval, exactly as a turn there does:
+ * the same approval request, bound to each draft's digest, in the first allowlisted chat. Returns
+ * what the dashboard says about them. Nothing is ever sent from here.
+ */
+async function requestApprovals(ctx: GatewayContext, draftIds: readonly string[]): Promise<string> {
+  const ids = draftIds.join(", ");
+  const channel = tryBuild(ctx.wiring.operator, ctx.env);
+  const chatId = ctx.wiring.config.operator.allowedChatIds[0];
+  if (!channel || !chatId) return `Drafts saved: ${ids}. No operator chat is configured to approve them in, so they stay pending; nothing was sent.`;
+  const failed: string[] = [];
+  for (const id of draftIds) {
+    try {
+      const result = await requestDraftApproval({ db: ctx.env.DB, shown: ctx.env.KV, operator: channel, now: ctx.now }, id, chatId);
+      if (!result.ok) failed.push(id);
+    } catch {
+      failed.push(id);
+    }
+  }
+  if (failed.length === 0) return `Drafts saved: ${ids}. Each is waiting for your approval in the operator chat; nothing was sent.`;
+  return `Drafts saved: ${ids}. The approval request for ${failed.join(", ")} could not be shown in the operator chat, so ${failed.length === 1 ? "it stays" : "they stay"} pending; nothing was sent.`;
 }
 
 export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
@@ -111,7 +135,7 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
           },
           { ...session, text, signal: controller.signal, ...(live ? { onText: (piece: string, round: number) => live.text(piece, round) } : {}) },
         );
-        const drafts = result.drafts.length > 0 ? `\n\nDrafts saved for approval: ${result.drafts.map((d) => d.id).join(", ")}. Review them in the drafts view; nothing was sent.` : "";
+        const drafts = result.drafts.length > 0 ? `\n\n${await requestApprovals(ctx, result.drafts.map((d) => d.id))}` : "";
         const reply = `${result.reply}${drafts}`;
         live?.finish(reply);
         finish(ctx, turnId, live ? "" : reply, controller.signal.aborted ? "aborted" : "completed");

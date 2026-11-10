@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "What a host application installs to talk to a GTM-agents deployment: event emitter, signatures and typed events. No Cloudflare dependency.",
   "license": "Apache-2.0",

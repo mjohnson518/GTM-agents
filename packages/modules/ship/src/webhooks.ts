@@ -9,23 +9,31 @@
 //     payload sent again under a new delivery id, does nothing; a delivery whose handling fails is
 //     released, so a redelivery can try again;
 //   - the task is always re-resolved from what the code host says, never from an id in the body: by
-//     repository and pull request number, by repository and head commit for checks, and by
-//     repository and merge commit for deploys.
+//     repository and pull request number (the target repository, also for a pull request from a
+//     fork), by repository and head commit for checks, and by repository and merge commit for
+//     deploys.
 // Then:
 //   - a merged pull request marks the task and its theme merged, with the merge commit;
 //   - a pull request closed without merging closes the task and declines the theme (reopening it
 //     brings both back to pr_open); new commits on it reset the checks to pending;
 //   - a failed check marks the task's checks failed and tells the operator, once per commit;
-//   - a successful deploy to a production environment whose commit is the merge commit marks the
-//     task deployed and calls AnnounceShipped, whose failure is logged and never fails the webhook.
+//   - a successful deploy of commit X to a production environment marks deployed every merged task
+//     of that repository whose merge commit X contains (X itself, or X has it in its history), and
+//     calls AnnounceShipped once for each, whose failure is logged and never fails the webhook. At
+//     most MAX_DEPLOY_CANDIDATES merged tasks are checked per delivery, the newest first (an exact
+//     match before the rest). A comparison the code host fails leaves its task merged and releases
+//     the delivery, so a redelivery, or the next production deploy, checks it again; a task is
+//     never marked deployed on a guess.
 import type { AppType, Env } from "@gtm-agents/core";
 import { claimEffect, releaseEffect, writeAudit } from "@gtm-agents/core/events";
-import { AdapterError, type CodeHostEvent } from "@gtm-agents/core/ports";
+import { AdapterError, type CodeHost, type CodeHostEvent } from "@gtm-agents/core/ports";
 import { isFlagOn } from "@gtm-agents/core/jobs";
 import { SHIP_ENABLED_FLAG, line, moveTask, moveTheme, noticeOnce, resolveOptions, tryFactory, type ShipBuildDeps } from "./workflow.ts";
 
 export const SHIP_WEBHOOK_PATH = "/api/webhooks/code";
 export const DELIVERY_EFFECT = "ship_webhook";
+/** The most merged tasks one deployment delivery checks, and so the most comparisons it asks the code host for. */
+export const MAX_DEPLOY_CANDIDATES = 20;
 
 interface TaskRef {
   id: string;
@@ -33,9 +41,10 @@ interface TaskRef {
   status: string;
   theme_title: string;
   pr_url: string | null;
+  merge_commit_sha: string | null;
 }
 
-const SELECT_TASK = "SELECT t.id, t.theme_id, t.status, t.pr_url, th.title AS theme_title FROM ship_tasks t JOIN themes th ON th.id = t.theme_id";
+const SELECT_TASK = "SELECT t.id, t.theme_id, t.status, t.pr_url, t.merge_commit_sha, th.title AS theme_title FROM ship_tasks t JOIN themes th ON th.id = t.theme_id";
 
 /** What one verified event did, for the response and the audit row. */
 export interface WebhookResult {
@@ -81,23 +90,48 @@ async function onCheck<E extends Env>(deps: ShipBuildDeps<E>, env: E, event: Ext
   return { matched: results.length, changed };
 }
 
-async function onDeployment<E extends Env>(deps: ShipBuildDeps<E>, env: E, event: Extract<CodeHostEvent, { type: "deployment" }>, now: Date): Promise<WebhookResult> {
+async function onDeployment<E extends Env>(deps: ShipBuildDeps<E>, env: E, host: CodeHost, event: Extract<CodeHostEvent, { type: "deployment" }>, now: Date): Promise<WebhookResult> {
   if (event.state !== "success") return { matched: 0, changed: 0 };
   const production = resolveOptions(deps.options).productionEnvironments.some((name) => name.toLowerCase() === event.environment.toLowerCase()) || event.productionEnvironment === true;
   if (!production) return { matched: 0, changed: 0 };
-  const { results } = await env.DB.prepare(`${SELECT_TASK} WHERE lower(t.repo) = ?1 AND t.merge_commit_sha = ?2 AND t.status = 'merged'`).bind(event.repo, event.sha).all<TaskRef>();
-  let changed = 0;
+  // The newest merged tasks of the repository, a task merged as exactly this commit first.
+  const { results } = await env.DB.prepare(
+    `${SELECT_TASK} WHERE lower(t.repo) = ?1 AND t.status = 'merged' AND t.merge_commit_sha IS NOT NULL
+      ORDER BY CASE WHEN t.merge_commit_sha = ?2 THEN 0 ELSE 1 END, t.merged_at DESC, t.id DESC LIMIT ?3`,
+  )
+    .bind(event.repo, event.sha, MAX_DEPLOY_CANDIDATES)
+    .all<TaskRef>();
+  const deployed: TaskRef[] = [];
+  let failure: unknown = null;
   for (const task of results) {
+    if (task.merge_commit_sha === event.sha) {
+      deployed.push(task);
+      continue;
+    }
+    try {
+      if (task.merge_commit_sha && (await host.contains(event.repo, task.merge_commit_sha, event.sha))) deployed.push(task);
+    } catch (error) {
+      // No answer is not an answer: this task and the ones after it wait for a redelivery.
+      failure = error;
+      console.error(JSON.stringify({ level: "error", msg: "ship: comparing a deploy with a merge commit failed", taskId: task.id, error: error instanceof AdapterError ? error.code : error instanceof Error ? error.name : "unknown" }));
+      break;
+    }
+  }
+  let changed = 0;
+  for (const task of deployed) {
     if (!(await moveTask(env.DB, task.id, ["merged"], "deployed", now, { deployed_at: now.toISOString() }))) continue;
     changed++;
-    await writeAudit(env.DB, { agentId: "ship", action: "ship_deployed", details: { taskId: task.id, environment: line(event.environment, 60) }, now });
+    await writeAudit(env.DB, { agentId: "ship", action: "ship_deployed", details: { taskId: task.id, environment: line(event.environment, 60), deployedSha: event.sha }, now });
     try {
       await deps.announceShipped(env, task.id, now);
     } catch (error) {
       console.error(JSON.stringify({ level: "error", msg: "ship: AnnounceShipped failed", taskId: task.id, error: error instanceof Error ? error.name : "unknown" }));
     }
   }
-  return { matched: results.length, changed };
+  // Throwing releases the delivery. The tasks marked above stay deployed, so a redelivery checks
+  // only the ones still merged.
+  if (failure !== null) throw new Error("comparing the deploy with a merge commit failed", { cause: failure });
+  return { matched: deployed.length, changed };
 }
 
 async function shipOn<E extends Env>(deps: ShipBuildDeps<E>, env: E): Promise<boolean> {
@@ -131,7 +165,7 @@ export async function handleCodeWebhook<E extends Env>(deps: ShipBuildDeps<E>, e
   if (!(await claimEffect(env.DB, delivery, DELIVERY_EFFECT))) return json({ ok: true, duplicate: true });
   try {
     const result =
-      event.type === "pull_request" ? await onPullRequest(deps, env, event, now) : event.type === "check" ? await onCheck(deps, env, event, now) : await onDeployment(deps, env, event, now);
+      event.type === "pull_request" ? await onPullRequest(deps, env, event, now) : event.type === "check" ? await onCheck(deps, env, event, now) : await onDeployment(deps, env, host, event, now);
     return json({ ok: true, ...result });
   } catch {
     await releaseEffect(env.DB, delivery, DELIVERY_EFFECT);

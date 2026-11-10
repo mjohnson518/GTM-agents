@@ -11,11 +11,11 @@ The dashboard holds no credentials of its own. Cloudflare Access sits in front o
 | View | What it shows | What it does |
 |---|---|---|
 | Overview | System status, active agents, contact base, pipeline value, cost today, security posture, infrastructure checks, the fitness trend | |
-| GTM cockpit | Cold outreach state and every cockpit panel (send caps, deferred queue, monitor hits, outreach and discovery counts, recommendations, today's moves) | Pause with a reason, resume, drain monitor hits, replay deferred |
+| GTM cockpit | Cold outreach state and every cockpit panel (the cold batch and delivery switches, send caps, the deferred queue by status, sends and replies over 7 days, discovery over 14 days) | Pause with a reason, resume, drain (cancel queued deferred sends, with a reason), replay deferred |
 | Pipeline | A kanban across deal stages, total, weighted forecast, win rate | Create, update, move between stages |
 | Inbound | Totals, the email list, reply drafts | Archive, ignore, mark done, send or approve a draft, reject a draft |
 | Proposals | Pending proposals from every source | Approve or reject; two-step proposals need their confirm code |
-| Learning | The learning summary, pending learning proposals, session search | Approve or reject, search |
+| Learning | The learnings document, pending learning proposals, a search of operator chat history | Approve or reject, search |
 | Contacts | The contact base, who to contact next, search by text and warmth; a contact's record, activity and summary | Edit first name, last name, job title and notes |
 | Agents | Agents grouped by role with model and tool count; every job with its schedule, flag and last run | |
 | Chat | A streaming conversation with the hub agent | Send, abort |
@@ -26,7 +26,7 @@ The dashboard holds no credentials of its own. Cloudflare Access sits in front o
 
 ### How actions are kept safe
 
-- **Every action asks first.** Each change opens a confirmation dialog that says what will happen. Pausing outreach and draining monitor hits require a reason.
+- **Every action asks first.** Each change opens a confirmation dialog that says what will happen. Pausing outreach and draining the deferred queue require a reason.
 - **Approvals bind to what was shown.** Sending or approving a draft, and approving a proposal, echoes the `digest` that came with the exact text on screen as `shownDigest`. If the stored text changed in between, the Worker refuses and the dashboard asks you to reload and review it again.
 - **Two-step changes stay two steps.** An autonomy change or an experiment start shows its full record first, then asks for the record's confirm code before anything is sent.
 - **Autonomy is not a flag toggle.** Autonomy keys are read only in the flags list; change a level with `autonomy-set` in the operator chat.
@@ -37,8 +37,8 @@ The dashboard holds no credentials of its own. Cloudflare Access sits in front o
 | State | What you see | What to do |
 |---|---|---|
 | Connecting, reconnecting | A banner; reconnects back off exponentially up to 30 seconds | Wait, or press Retry now |
-| Not configured | The Worker answered 503 for `/ws` | Put the deployment behind Cloudflare Access, give the gateway its Access settings and operator allowlist, redeploy |
-| Not allowed | The Worker answered 401 or 403, or refused `connect` | Sign in with an allowed account; press Sign in again |
+| Not configured | The Worker answered 503 for `/ws` | Put the deployment behind Cloudflare Access, add the `admin` section (Access settings and operator allowlist) to `gtm.config.ts`, redeploy, and turn on `admin:enabled` ([docs/DASHBOARD.md](../../docs/DASHBOARD.md)) |
+| Not allowed | The Worker answered 401 or 403, closed the socket with 4403, or refused `connect` | Sign in with an allowed account; press Sign in again |
 | Version mismatch | `connect` was refused as invalid | Rebuild and deploy the dashboard and the Worker from the same release |
 
 A browser does not expose the HTTP status of a refused WebSocket upgrade, so after an upgrade fails the dashboard sends one plain same-origin `GET /ws` to read it. The Access cookie rides along as it does for any same-origin request; the dashboard adds nothing.
@@ -49,7 +49,7 @@ A browser does not expose the HTTP status of a refused WebSocket upgrade, so aft
 npm run build --workspace @gtm-agents/admin
 ```
 
-The build lands in `apps/worker/public/admin` (gitignored), which the Worker serves through its `ASSETS` binding. Wrangler runs this build before every deploy, so `npx wrangler deploy` from `apps/worker` always ships a current dashboard.
+The build lands in `apps/worker/public/admin` (gitignored), which the Worker serves through its `ASSETS` binding. Wrangler runs this build before every deploy, so `npx wrangler deploy` from `apps/worker` always ships a current dashboard. A deployment created with `gtm init` gets the built dashboard copied into its own `public/admin` (a placeholder page when the checkout it came from has not built the dashboard).
 
 ## Local development against a deployment
 
@@ -60,7 +60,7 @@ cd apps/worker && npx wrangler dev        # the Worker on http://localhost:8787
 npm run dev --workspace @gtm-agents/admin # the dashboard on http://localhost:5173/admin/
 ```
 
-Vite proxies `/ws` and `/health` to the local Worker (see `vite.config.ts`). The local Worker still decides who is allowed: configure its Access settings and allowlist in `.dev.vars` (gitignored), never in code. To point the dev server at a deployed Worker instead, change the proxy target in `vite.config.ts` on your machine; the deployment's Access policy still applies, so sign in to it in the same browser first.
+Vite proxies `/ws` and `/health` to the local Worker (see `vite.config.ts`). The local Worker still decides who is allowed, from the `admin` section of `gtm.config.ts`: list `http://localhost:5173` in `admin.allowedOrigins` for the dev server, and expect the socket to be refused without a valid Cloudflare Access token, exactly as a deployed Worker refuses it. To point the dev server at a deployed Worker instead, change the proxy target in `vite.config.ts` on your machine; the deployment's Access policy still applies, so sign in to it in the same browser first.
 
 ## Content security policy
 
@@ -71,7 +71,7 @@ default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; font-sr
 connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'
 ```
 
-`connect-src 'self'` covers the same-origin `wss:` socket, so the page cannot open a socket to any other host. There are no inline scripts, no inline style attributes, no external fonts and no CDNs. Component styles are Lit constructed stylesheets and the page theme is adopted the same way, so no `unsafe-inline` is needed. A test scans the source for raw HTML sinks (`unsafeHTML`, `innerHTML` and the like) and inline styles, and checks the policy in `index.html`. A meta policy cannot set `frame-ancestors`, so serve `/admin` with a `Content-Security-Policy` header carrying `frame-ancestors 'none'` (or `X-Frame-Options: DENY`) to stop other sites framing the dashboard; keep that header at least this strict.
+`connect-src 'self'` covers the same-origin `wss:` socket, so the page cannot open a socket to any other host. There are no inline scripts, no inline style attributes, no external fonts and no CDNs. Component styles are Lit constructed stylesheets and the page theme is adopted the same way, so no `unsafe-inline` is needed. A test scans the source for raw HTML sinks (`unsafeHTML`, `innerHTML` and the like) and inline styles, and checks the policy in `index.html`. A meta policy cannot set `frame-ancestors`, so the Worker serves `/admin` with the headers `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, which stop other sites framing the dashboard; keep them at least this strict.
 
 ## Themes and accessibility
 

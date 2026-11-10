@@ -604,9 +604,34 @@ export function publishProblems({ version, tag, dryRun, env, manifests }) {
   }
   if (!dryRun) {
     if (env.GITHUB_ACTIONS !== "true") problems.push("a real publish runs only in GitHub Actions, where npm can attach provenance; use the release workflow");
-    if (!env.NODE_AUTH_TOKEN) problems.push("NODE_AUTH_TOKEN is empty: set the NPM_TOKEN secret (docs/RELEASING.md)");
+    const auth = publishAuth(env);
+    if (auth.mode === "none") problems.push(auth.problem);
   }
   return problems;
+}
+
+/** The oldest npm CLI that can publish through npm's trusted publishing (an OIDC exchange). */
+export const TRUSTED_PUBLISHING_MIN_NPM = "11.5.1";
+
+/**
+ * How a real publish signs in to npm. A non-empty NODE_AUTH_TOKEN (the NPM_TOKEN secret) is used
+ * first: that is how the first release publishes, since npm can only attach a trusted publisher to a
+ * package that exists. Without one, trusted publishing: GitHub Actions must offer an OIDC token
+ * (the job's `id-token: write` permission) and the npm CLI must be new enough to exchange it.
+ * @param {Record<string, string | undefined>} env
+ * @returns {{ mode: "token" | "oidc" } | { mode: "none", problem: string }}
+ */
+export function publishAuth(env) {
+  if (env.NODE_AUTH_TOKEN) return { mode: "token" };
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    return { mode: "none", problem: "no way to sign in to npm: NODE_AUTH_TOKEN is empty and GitHub Actions offers no OIDC token (the publish job needs id-token: write); set the NPM_TOKEN secret for a first release, or configure trusted publishing (docs/RELEASING.md)" };
+  }
+  const npm = /^(\d+)\.(\d+)\.(\d+)/.exec(env.NPM_CLI_VERSION ?? "");
+  const [minMajor, minMinor, minPatch] = TRUSTED_PUBLISHING_MIN_NPM.split(".").map(Number);
+  const [major, minor, patch] = npm ? [Number(npm[1]), Number(npm[2]), Number(npm[3])] : [-1, -1, -1];
+  const older = major !== minMajor ? major < Number(minMajor) : minor !== minMinor ? minor < Number(minMinor) : patch < Number(minPatch);
+  if (older) return { mode: "none", problem: `trusted publishing needs npm ${TRUSTED_PUBLISHING_MIN_NPM} or later, and this runner has ${env.NPM_CLI_VERSION || "an unknown version"}` };
+  return { mode: "oidc" };
 }
 
 /**

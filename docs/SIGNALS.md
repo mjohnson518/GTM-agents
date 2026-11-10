@@ -18,14 +18,14 @@ Every source is its own job behind its own flag, and every flag is off until you
 
 ## Turning it on
 
-1. Wire the adapters and the jobs in `apps/worker/src/index.ts` (see [Wiring](#wiring)).
-2. Apply the migrations (`0025_signals.sql` adds two columns to `monitor_items` and one to `discovery_queries`, plus indexes).
+1. Check that `src/index.ts` wires the adapters and the jobs. The worker template does; a deployment created from an older template adds them (see [Wiring](#wiring)).
+2. Apply the migrations with `gtm migrate` (`0025_signals.sql` adds two columns to `monitor_items` and one to `discovery_queries`, plus indexes).
 3. Turn on the sources you want, one at a time, and watch their run rows:
 
 ```bash
-npx wrangler kv key put --binding=KV "signals:news_enabled" "true"
-npx wrangler kv key put --binding=KV "signals:hiring_boards_enabled" "true"
-npx wrangler kv key put --binding=KV "scoring:intent_enabled" "true"
+npx gtm flags set signals:news_enabled true --env staging
+npx gtm flags set signals:hiring_boards_enabled true --env staging
+npx gtm flags set scoring:intent_enabled true --env staging
 ```
 
 4. Approve a template that uses `{{angle_opener}}` and `{{angle_age}}` (see [Angles](#angles-and-the-template-variables)).
@@ -50,7 +50,7 @@ You list webset specs in the job options: a natural-language description of the 
 
 ### Search monitors
 
-You create a monitor at the provider (for Exa, a search that runs on a schedule and posts its results to a webhook), point it at `https://<your worker>/api/webhooks/search/<key>`, and list it in the job options with that key and the name of the Worker secret it signs with:
+You create a monitor at the provider (for Exa, a search that runs on a schedule and posts its results to a webhook), point it at `https://<your worker>/api/webhooks/search/<key>`, and list it in the job options with that key and the name of the Worker secret it signs with. The key is a lowercase slug, and the secret's name must start with `MONITOR_`, so no other setting or credential can sign deliveries:
 
 ```ts
 monitors: [{ key: "ci-pain", provider: "data-exa", secretName: "MONITOR_CI_PAIN", description: "companies writing about flaky CI", results: "company_sites" }]
@@ -112,7 +112,7 @@ A signal is a dated, sourced reason to write to an account. Every row in `signal
 The rules (`recordSignal`):
 
 - No date or no URL means no signal. A date that does not parse or is in the future, a URL that is not http(s), an expiry that is not after now, or an account the deployment does not know: no signal.
-- Most sourced signals sit at 0.60 to 0.65, below the 0.70 auto-draft line, so they move scores and pick an opener but never draft on their own.
+- Sourced signals sit at 0.60 to 0.64, below the 0.70 auto-draft line, so they move scores and pick an opener but never draft on their own.
 - A signal goes to at most 2 never-contacted, keep-listed contacts at the account (one row each); otherwise to the account (no contact); otherwise nowhere.
 - One event is recorded once per account (same source and event key), so a source that re-reads its window every day never routes one event to more contacts over time.
 - The headline and the evidence are third-party text: cleaned (one line, capped, injection patterns redacted) before storage and still untrusted after. Nothing builds a prompt from them.
@@ -131,7 +131,7 @@ A nightly score out of 100 for each cold, never-contacted contact (the never-sco
 | Account fit | up to 30: the model fit score times 3, or, unscored, `min(18, prescore * 0.18)` |
 | Title | up to 20, by seniority rank |
 | Signal | `35 * severity * freshness`, freshness 1 within 14 days of the event, 0.6 within 45, 0.3 within 90 |
-| Angle | 15 for a high-confidence angle, 10 for medium, 3 otherwise |
+| Angle | 15 when the best signal gives a high-confidence angle (within 14 days), 10 for medium (within 45), 3 otherwise |
 
 Bands: 80 and up `first_touch`; 65 to 79 `soft_touch`; 45 to 64 `nurture`; below 45 `none`. The score is shadow: it filters nothing until `intent_score:enforce` is on. `intentAllowsFirstTouch` is the check cold selection applies when it is: only `first_touch` passes, and a missing or unreadable score does not.
 
@@ -161,11 +161,12 @@ A template that uses the angle variables is composed for a contact with an angle
 import { createSignalJobs, handleMonitorWebhook } from "@gtm-agents/core/signals";
 import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
+import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
 
 const signals = createSignalJobs<Env>({
   adapters(env) {
     const exa = createExa(context(env, "data-exa"));
-    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: hunter(env) };
+    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")) };
   },
   options: {
     websets: [{ query: "engineering leaders at software companies with 30 to 300 engineers", count: 25 }],

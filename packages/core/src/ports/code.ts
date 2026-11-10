@@ -50,17 +50,27 @@ export interface RepoFile {
 }
 
 export interface CommitRequest {
-  /** owner/name. */
+  /** owner/name: the repository the pull request will target. */
   repo: string;
   /** The branch is shipBranch(taskId); it is never the base branch. */
   taskId: string;
   /** The commit the change was made against: the new commit's only parent. */
   baseSha: string;
+  /**
+   * The branch baseSha was read from. It is never written in `repo`. A host that commits through
+   * a fork uses it to bring the fork's copy of that branch up to baseSha first.
+   */
+  baseBranch: string;
   message: string;
   files: readonly ChangedFile[];
 }
 
 export interface CommitResult {
+  /**
+   * The repository the branch is in, lowercase owner/name: the target itself, or the fork a host
+   * commits through. The pull request is always opened in the target.
+   */
+  repo: string;
   branch: string;
   commitSha: string;
   treeSha: string;
@@ -159,8 +169,9 @@ export interface CodeHost {
   /**
    * Why this host will not push a ship branch with its current configuration, or null when it
    * will. Checked before a build starts, so a build that could never be committed spends nothing.
-   * For example, a host whose CI would run the pushed code with secrets until the deployer says it
-   * does not.
+   * It makes no request. For example, a host whose CI would run the pushed code with secrets until
+   * the deployer says it does not, or one configured to commit through a fork without the
+   * credential that fork needs. The reason names what the deployer has to do or confirm.
    */
   pushRefusal(): string | null;
   /** The commit a branch points at, or null when there is no such branch. */
@@ -181,14 +192,29 @@ export interface CodeHost {
    * parent. Idempotent: when the branch already points at a commit with the same tree and parent,
    * that commit is returned with created false. Never touches the base branch and never forces: a
    * branch that holds anything else is refused with a non-retryable "invalid" AdapterError.
+   *
+   * A host may commit to the same branch name in a fork of `repo` instead (CommitResult.repo says
+   * where). It then writes nothing in `repo`, and in the fork it only fast-forwards the copy of
+   * baseBranch until baseSha is reachable, refusing when it cannot.
    */
   commit(req: CommitRequest): Promise<CommitResult>;
-  /** Opens a pull request from shipBranch(taskId), or returns the one that already exists from it. */
+  /**
+   * Opens a pull request in `repo` from shipBranch(taskId), wherever commit put that branch, or
+   * returns the one that already exists from it.
+   */
   openPullRequest(req: PullRequestRequest): Promise<PullRequestRef>;
   /** A pull request's state, or null when it does not exist. */
   pullRequest(repo: string, number: number): Promise<PullRequestState | null>;
   /** The combined state of the checks on a commit. */
   checks(repo: string, sha: string): Promise<ChecksState>;
+  /**
+   * True when descendantSha is ancestorSha or has it in its history, so a deploy of descendantSha
+   * carries the change ancestorSha made. False when it does not, including when the two commits
+   * share no history or one of them is not in the repository. Throws an AdapterError when the
+   * answer cannot be had (the host failed, refused or timed out): a caller never takes a failure
+   * for an answer either way.
+   */
+  contains(repo: string, ancestorSha: string, descendantSha: string): Promise<boolean>;
   /**
    * Verifies the webhook signature in constant time before reading anything else, then maps the
    * payload. Throws an AdapterError: "auth" for a missing or bad signature, "invalid" for a payload

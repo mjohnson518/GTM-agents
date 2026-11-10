@@ -2,7 +2,7 @@
 
 This page is for deployers turning on reply handling, and for contributors changing how replies are triaged, drafted or sent. It covers what happens to a reply from the moment it is recorded until it is answered: semantic triage and each intent's side effects, the meeting qualifier, what drafts are written from, approving and sending from the mailbox, the reply-owed reminders, mailbox draft mirroring, the operator commands, and the flags and jobs involved. Connecting a mailbox and the deterministic classification that runs first are in [INBOX.md](INBOX.md). The code lives in `packages/core/src/replies/` (`@gtm-agents/core/replies`), and the one definition of a positive reply in `packages/core/src/metrics/` (`@gtm-agents/core/metrics`).
 
-In this version no reply is ever sent without a person's approval.
+By default no reply is ever sent without a person's approval. Automatic replies are narrow and opt-in: they need `inbound:auto_send_tier`, a reply class you raised to level 2 and every auto-send rule passing ([limits](#limits), [AUTONOMY.md](AUTONOMY.md)).
 
 ## What happens to a reply
 
@@ -57,7 +57,7 @@ For every human reply from a known contact (not opt-outs, automatic replies, spa
 
 **A positive reply** has one definition, in `metrics/positive-reply.ts`, used by every report and experiment: a triage intent of interested, question or referral, or a non-cancelled, attributed meeting first seen after the send. Opt-outs, unsubscribes, automatic replies, spam and noise never count as replies; "not a fit" is a reply but never positive. The meeting half applies while calendar sync is on ([CONVERT.md](CONVERT.md)).
 
-**Failures.** Every side effect is claimed in the effects ledger under the message, so a re-run never repeats one. Each is bookkeeping, logged and dropped on failure, except the opt-out: it is a compliance control, so when it fails routing is marked unfinished and the next run retries it (for 3 days) without repeating the effects that held.
+**Failures.** Every side effect is claimed in the effects ledger under the message, so a re-run never repeats one. Each is bookkeeping, logged and dropped on failure, except the opt-out: it is a compliance control, so when it fails routing is marked unfinished, you are told once, and every run retries it, however old the message, until it lands, without repeating the effects that held.
 
 ## The meeting qualifier
 
@@ -70,14 +70,14 @@ For an interested reply or a question from a known contact, four checks, each a 
 | Timing | A verbatim reason or timeline, a meeting request, or a proposed time |
 | Fit | The account's fit score is at least 5, or the account is unscored |
 
-No gaps books. A proposed time always books, and forces the draft to confirm that time, say a calendar invite will follow and include no link. A meeting request with at most one gap books. Three or more gaps pass (no booking language). Anything else asks one question about the first gap. The decision is saved in `reply_qualifications`. Booking itself (calendars, invites) is a later milestone; a booked draft offers `sending.bookingUrl` when you set one.
+No gaps books. A proposed time always books, and forces the draft to confirm that time, say a calendar invite will follow and include no link. A meeting request with at most one gap books. Three or more gaps pass (no booking language). Anything else asks one question about the first gap. The decision is saved in `reply_qualifications`. The system never books a meeting itself (it creates no calendar invites); a booked draft offers `sending.bookingUrl` when you set one, and calendar sync detects the booking afterwards ([CONVERT.md](CONVERT.md)).
 
 ## What drafts are written from
 
 The writer (model role `writer`) sees, in the system prompt, only what you approved:
 
 - the brain's `replies` slice: `facts`, `objections`, `competitors`, `voice` and `stack` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)). The `commercial` component is never served to reply drafting, so no price reaches it;
-- active reply assets (`reply_assets`: a demo, a sample, a walkthrough, each with an https URL) and `sending.bookingUrl`, as the only links it may use;
+- active reply assets (`reply_assets`: a demo, a sample, a workflow or another asset, each with an https URL) and `sending.bookingUrl`, as the only links it may use;
 - fixed rules: plain text, no em or en dashes, 20 to 120 words, sign off with `agent.name`, never state a price, discount, offer, customer name or figure the approved material does not contain.
 
 In the user turn it gets this message's instructions (the qualifier's rule, the asset rule, and up to two approved objection answers that fit), the contact's first name from your CRM, and the message itself, fenced as untrusted data. Approved objection answers come from the brain's `objections` component and from rows in the `objections` table whose `approved_digest` matches `objectionAnswerDigest` of their current pattern and response. Someone asking to see the product gets your demo asset instead of a call offer.
@@ -104,18 +104,18 @@ Approving marks the draft approved and sends nothing. With `replies:send_enabled
 2. a send lock claimed in the effects ledger, so two runs or commands never send it twice;
 3. freshness: the text is what you were shown; no mailbox draft exists for it (mirrored, or one you started on the thread); no newer human message arrived on the thread or from the sender; nothing was sent on the thread after theirs; and the mailbox thread could be read. Any read error holds it for the next run.
 
-Then it goes through the send function, path `reply`, which runs the halt, suppression, the content lint, verification and the approved-digest check itself ([SENDING.md](SENDING.md)):
+Then it goes through the send function, path `reply`, which runs the halt flag, suppression, the content lint, verification, the approved-digest check and the exactly-once claim itself (replies have no send window) ([SENDING.md](SENDING.md)):
 
 - **Through the warm mailbox, on the thread.** With a mailbox connected, a reply goes out only through it, from your real mailbox, threaded on the conversation, and never through the cold email provider. Cold and sequence mail never goes through the mailbox. A reply needs an inbound message from that contact on that thread and its approved draft, or it is refused; it is never downgraded to cold mail.
 - **No visible footer.** A reply to someone who wrote in reads like a normal reply: it carries the `List-Unsubscribe` and threading headers but no postal footer. Cold, sequence and lifecycle mail keep the full footer.
 - **Not counted against the sending domain.** Mailbox replies are outside the provider's daily cap, the per-account cap and its circuit breaker. They are never written to the deferred queue: a reply held by the halt waits for its next send attempt.
 - **Never twice.** An answer from the mailbox that leaves it unclear whether the reply went out keeps the lock, and the reply is not retried; check the mailbox's sent folder.
 
-After a send the message is marked responded and the decision recorded in `autonomy_events`: `approved_unchanged` when the approved text is what the writer produced, `approved_edited` otherwise. A draft rejected in chat records `rejected`. A refusal is reported once per approval with what to do; a reply that is merely held is reported at most once a day.
+After a send the message is marked responded and the decision recorded in `autonomy_events`: `approved_unchanged` when the approved text is what the writer produced, `approved_edited` otherwise, and `auto_sent` for an automatic reply. A draft rejected in chat records `rejected`. A refusal is reported once per approval with what to do; a reply that is merely held is reported at most once a day.
 
 ## Reminders
 
-With `replies:reminders_enabled` on, the `replies_reminders` job (every 5 minutes, no model calls) reminds you about every reply that is owed: still new, notified or with a draft waiting, received in the last 14 days, and either triaged as interested, question, referral, warm, objection or unclear, or from a known contact and not triaged yet (so a failed triage never hides one).
+With `replies:reminders_enabled` on, the `replies_reminders` job (every 5 minutes, no model calls) reminds you about every reply that is owed: still new, notified or with a draft waiting, received in the last 14 days, and either triaged as interested, question, referral, warm, objection or unclear (or as an opt-out too uncertain to act on), or from a known contact and not triaged yet (so a failed triage never hides one).
 
 - Reminders escalate at 15 minutes, 2 hours and 4 hours. Each fires once per message, and a message first seen late gets only its highest due tier.
 - From 12 hours old, one reminder each morning instead, from the UTC hour in `options.morningHourUtc` (default 13).
@@ -197,8 +197,8 @@ export default createWorker(config, {
 ## Limits
 
 - **Erasure stops at the mailbox.** Erasing a person removes their rows and stored bodies here, but a reply draft already mirrored into your mailbox, and the mail itself, live in that mailbox: delete them there as well.
-- **Automatic replies are narrow.** By default every reply waits for a person. A reply goes out on its own only when `inbound:auto_send_tier` is on, its class (`reply_send` or `reply_demo_link`) has been raised to level 2 by you, and it passes every auto-send rule and the quality gate ([AUTONOMY.md](AUTONOMY.md)). Questions are never sent automatically in this version.
-- **No booking.** The qualifier decides book, ask or pass; drafts offer your booking URL, but calendars and invites are a later milestone, so a proposed time is confirmed in words and the invite is yours to send.
+- **Automatic replies are narrow.** By default every reply waits for a person. A reply goes out on its own only when `inbound:auto_send_tier` is on, its class (`reply_send` or `reply_demo_link`) has been raised to level 2 by you, and it passes every auto-send rule and the quality gate ([AUTONOMY.md](AUTONOMY.md)). Questions (`reply_question`) are never sent automatically.
+- **No booking.** The qualifier decides book, ask or pass; drafts offer your booking URL, but the system creates no calendar invites (calendar sync only reads the calendar), so a proposed time is confirmed in words and the invite is yours to send.
 - **No curation screen for objections.** Filed objections wait in the `objections` table with an empty response; approving an answer means writing its response and setting `approved_digest` to `objectionAnswerDigest` of its pattern and response.
 - **Referrals need a mailbox that can read threads**, because colleagues come only from the message's headers. With Email Routing alone, referrals add nobody.
 - **Telling drafts from sends** needs an adapter that marks them (above). Without that, mirroring cannot record evidence for replies sent from the mailbox.

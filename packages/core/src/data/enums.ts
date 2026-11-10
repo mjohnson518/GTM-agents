@@ -25,7 +25,11 @@ export type CandidateStatus = (typeof CANDIDATE_STATUSES)[number];
 export const DRAFT_KINDS = ["cold_intro", "follow_up", "breakup", "check_in", "proposal", "lifecycle", "reply", "warm_intro", "recap", "referral_ask", "proof_of_value"] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
-/** The metrics an experiment may be pre-registered on. Each has one definition in the metrics module. */
+/**
+ * The values the experiments.primary_metric column's CHECK allows. Which of them an experiment may
+ * be pre-registered on is EXPERIMENT_METRICS in packages/core/src/metrics/experiments.ts, the one
+ * list the experiments module reads; the column also allows meeting_booked for a later version.
+ */
 export const EXPERIMENT_METRICS = ["positive_reply", "meeting_booked", "conversation_started", "signed_up", "activated", "paid"] as const;
 export type ExperimentMetric = (typeof EXPERIMENT_METRICS)[number];
 

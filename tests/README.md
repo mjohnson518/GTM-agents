@@ -1,12 +1,12 @@
 # Cross-package tests
 
-Tests that cover more than one package live here. Tests for a single package live next to its code.
+This page is for contributors adding or running tests. Tests that cover more than one package live here. Tests for a single package live next to its code.
 
 | Folder | What it covers |
 |---|---|
 | `tests/security/` | The security contract: every tool is classified, gates never loosen as taint rises, untrusted text is fenced, gates fail closed, effects happen exactly once, budgets stop spend. Adapters and modules run the same contract in CI. |
-| `tests/evals/` | Deterministic behavior evals for outbound writers and decisions. Run with `npm run eval`. No network. |
-| `tests/contract/` | Published test vectors, such as the host event contract's signatures, checked against the code. |
+| `tests/evals/` | Deterministic behavior evals for the outbound writers, templates, automatic replies and the learning loops. Run with `npm run eval`. No network. |
+| `tests/contract/` | Published test vectors for the host event contract (its signatures and the SDK's), checked against the code. Run with `npx vitest run --project contract`. |
 
 ## Fixtures are synthetic
 

@@ -1,17 +1,17 @@
 # Ports and adapters
 
-This document is the contract between `packages/core` and everything that talks to a third party. Core depends only on the interfaces below, which `packages/core/src/ports/` publishes. Each vendor integration is an adapter in `packages/adapters/<name>/`. An adapter implements one or more ports, ships a `manifest.json`, and passes the shared contract test for each port it claims.
+This page is for contributors writing an adapter, and for the coding agents they use: it is the contract between `packages/core` and everything that talks to a third party. Core depends only on the interfaces below, which `packages/core/src/ports/` publishes (`@gtm-agents/core/ports`). Each vendor integration is an adapter in `packages/adapters/<name>/`. An adapter implements one or more ports, ships a `manifest.json`, and passes the shared contract test for each port it claims.
 
-[ARCHITECTURE.md](ARCHITECTURE.md) describes the behavior these interfaces carry: the send path, webhook handling, the enrichment waterfall, operator approvals and the safety controls.
+[ARCHITECTURE.md](ARCHITECTURE.md) describes the behavior these interfaces carry: the send function, webhook handling, the email waterfall, operator approvals and the safety controls.
 
 ## Rules
 
 1. **Core never imports a vendor SDK.** Not an email provider's, not a payment provider's, not an AI SDK. `packages/core/package.json` has no vendor dependency, and a lint rule (`no-restricted-imports`) enforces it.
 2. **Adapters never make decisions.** An adapter translates a port call into a vendor request, and a vendor response or webhook into typed records. Every policy lives in core: suppression, send windows, caps, the kill switch, verification policy, budgets, circuit breakers and retries. An adapter that checks suppression itself is a bug, because then two places can disagree.
-3. **Every call is accounted for.** A port method that can cost money or credits returns `cost` in its result, and the adapter's manifest declares the price table. Core's budget layer checks the budget before the call and records the spend after it.
+3. **Every call is accounted for.** A port method that can cost money or credits returns `cost` in its result, and the adapter's manifest declares the price table it estimates from. Core's budget gate checks the job's budget before the call and records the reported cost in the cost ledger after it.
 4. **Every tool is classified.** An adapter that contributes agent tools declares, for each tool, the taint its output carries and the taint level at which the tool is refused. An unclassified tool is treated as fully tainted and refused once anything untrusted has been read. Raw web content, inbound email bodies and product feedback are always `full`.
 5. **Idempotency comes from core.** Side-effecting calls receive an `effectKey` that core has already claimed in the effects ledger. The adapter passes it to the vendor as the idempotency key when the vendor supports one, and otherwise ignores it.
-6. **Fetch is injected.** Adapters use `ctx.fetch`, never the global `fetch`. That keeps contract tests hermetic, and lets core wrap every outbound call with timeouts, SSRF checks on operator-supplied URLs, and logging.
+6. **Fetch is injected.** Adapters use `ctx.fetch`, never the global `fetch`. That keeps contract tests hermetic, and lets core wrap every outbound call with a timeout (20 seconds by default, plus the caller's abort signal) and logging of the method, host and status, never headers or bodies. A URL an agent tool is given is checked by the action gate before the call ([SECURITY-MODEL.md](SECURITY-MODEL.md)).
 7. **Interfaces change additively.** New optional fields and new optional methods are fine. Renaming or removing anything is a major version of `@gtm-agents/core`, recorded in [DECISIONS.md](DECISIONS.md).
 
 ## Shared types
@@ -20,7 +20,7 @@ This document is the contract between `packages/core` and everything that talks 
 export type TaintLevel = "none" | "metadata" | "structured" | "full";
 
 export interface AdapterContext {
-  /** Named secret from the Worker environment; throws if it is missing and the manifest requires it. */
+  /** Named secret from the Worker environment; throws when it is missing, so a call never goes out half-authenticated. */
   secret(name: string): string;
   /** Optional secret; undefined when unset. */
   optionalSecret(name: string): string | undefined;
@@ -49,22 +49,32 @@ export type AdapterErrorCode =
   | "auth" | "rate_limited" | "quota" | "not_found" | "invalid"
   | "unavailable" | "timeout" | "unknown";
 
+/** Tokens a vendor billed for a call that then failed. */
+export interface BilledUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
 export class AdapterError extends Error {
   readonly code: AdapterErrorCode;
   readonly retryable: boolean;
   readonly retryAfterMs: number | undefined;
+  readonly usage: BilledUsage | undefined;  // what the vendor billed before the call failed, so core still records its cost
 
   constructor(
     message: string,
     code: AdapterErrorCode,
     retryable: boolean,
-    options: { retryAfterMs?: number; cause?: unknown } = {},
+    options: { retryAfterMs?: number; cause?: unknown; usage?: BilledUsage } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = "AdapterError";
     this.code = code;
     this.retryable = retryable;
     this.retryAfterMs = options.retryAfterMs;
+    this.usage = options.usage;
   }
 }
 
@@ -86,41 +96,50 @@ Every record an adapter returns is raw data to core. Core sanitizes strings, ass
 
 ## Adapter manifest
 
-`packages/adapters/<name>/manifest.json` is validated by the manifest schema in core and checked by `gtm doctor`.
+`packages/adapters/<name>/manifest.json` is validated by the manifest schema in core (`manifestSchema` in `packages/core/src/ports/manifest-schema.ts`) and checked by `gtm doctor`. The `inbox-gmail` manifest, as it ships:
 
 ```json
 {
-  "name": "email-resend",
-  "version": "1.0.0",
-  "ports": ["EmailProvider"],
-  "requiredSecrets": ["RESEND_API_KEY", "RESEND_WEBHOOK_SECRET"],
-  "optionalSecrets": [],
-  "flags": ["sending:enabled"],
+  "name": "inbox-gmail",
+  "version": "0.1.0",
+  "ports": ["InboxProvider"],
+  "capabilities": ["list", "threads", "drafts", "send", "watch"],
+  "requiredSecrets": ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
+  "optionalSecrets": ["GMAIL_PUBSUB_TOPIC", "MAIL_PUSH_SECRET"],
+  "flags": ["inbox:enabled"],
   "tools": {
-    "email_send_batch": { "taint": "none", "gate": "structured", "humanOnly": false, "rateCategory": "esp" },
-    "email_lookup_delivery": { "taint": "metadata", "gate": "never" }
+    "gmail_thread_read": { "taint": "full", "gate": "never", "rateCategory": "mail" },
+    "gmail_draft_write": { "taint": "none", "gate": "full", "rateCategory": "mail" },
+    "gmail_reply_send": { "taint": "none", "gate": "metadata", "rateCategory": "mail" }
   },
   "costs": {
-    "send": { "usd": 0.0004, "per": "email" }
+    "read": { "usd": 0, "per": "API request (Gmail API quota units, no per-call price)" },
+    "send": { "usd": 0, "per": "email sent from the mailbox" }
   },
-  "limits": { "batchSize": 100, "perSecond": 10 },
-  "webhook": { "path": "/api/webhooks/email", "signature": "svix" },
+  "limits": { "perSecond": 5 },
+  "webhook": { "path": "/api/webhooks/mail", "signature": "shared-secret" },
   "contract": "./contract.test.ts"
 }
 ```
 
 | Field | Meaning |
 |---|---|
+| `name`, `version` | The adapter's kebab-case name, as in `gtm.config.ts` (`adapters.<name>`), and a semantic version. Required |
+| `ports` | The ports it implements, at least one. Required |
+| `capabilities` | The optional methods and features it supports. A contract runner checks them against what the adapter actually implements |
+| `requiredSecrets`, `optionalSecrets` | Worker secret names. `gtm setup` and `gtm doctor` ask for the required ones while the adapter is enabled in `gtm.config.ts` |
+| `flags` | The flags that gate the jobs using the adapter. `gtm doctor` lists them |
 | `tools.<name>.taint` | The taint the tool's output gives the session: `none`, `metadata`, `structured` or `full`. Required |
 | `tools.<name>.gate` | The lowest session taint at which the tool is refused: `never` for read-only tools, then `metadata`, `structured` or `full`. Omitted means `metadata`, so the tool is refused as soon as anything untrusted has been read. A threshold can only block more as taint rises, so gates never loosen |
 | `tools.<name>.egress` | `url` if the tool fetches a URL it is given, `query` if it sends free text to a search service. Every URL is checked against internal and reserved addresses. Once the session has read anything from outside (metadata taint and up), core refuses URLs that carry data out (an email address, an encoded blob, a long query string, an oversized hostname) and any input that carries an email address or an encoded blob. An egress tool must declare a `rateCategory` |
 | `tools.<name>.humanOnly` | The action gate refuses the call unless it carries an approval whose digest matches the exact input |
 | `tools.<name>.rateCategory` | The rate-limit bucket the call counts against. It also marks the tool as a paid third-party call, which the budget gate checks before it runs |
-| `costs` | The price table the budget layer reads |
-| `limits` | What the send path chunks and throttles to |
-| `webhook` | The route core mounts for the adapter's inbound webhook, and its signature scheme |
+| `costs` | The price table: what each capability costs, per unit. The adapter estimates a call's `cost` from it when the vendor does not report one |
+| `limits` | `batchSize` (the most items one call takes; core chunks to it) and `perSecond` |
+| `webhook` | The adapter's inbound webhook route, under `/api/webhooks/`, and its signature scheme |
+| `contract` | The adapter's contract test file. Required |
 
-An adapter with no `tools` is used only by core jobs.
+An adapter with no `tools` is called only by core's jobs and routes.
 
 ## Ports
 
@@ -173,7 +192,7 @@ export interface DiscoverySource {
 
 ### SignalSource
 
-Produces time-stamped events about accounts or people: a job change, hiring, funding, a public post, news. Signals give a first touch its dated reason, and drive the signal-response and re-engagement playbooks.
+Produces time-stamped events about accounts or people: a job change, hiring, funding, a public post, news. Signals give a first touch its dated reason ([SIGNALS.md](SIGNALS.md)). In this release the signal jobs read their sources through `DiscoverySource` capabilities (websets, news, find-similar, monitors) and the `HiringBoardSource` interface in `@gtm-agents/core/signals`; `poll` is declared for sources that produce events directly, and no core job calls it yet.
 
 ```ts
 export type SignalType =
@@ -199,7 +218,7 @@ export interface SignalSource {
 
 ### PeopleProvider and CompanyProvider
 
-Structured B2B data: people search and match, and firmographics. Many vendors can sit behind one gateway adapter. The capability allowlist and the daily credit cap belong to core's budgeted-provider wrapper, configured in `gtm.config.ts`, not to the adapter.
+Structured B2B data: people search and match, and firmographics. Many vendors can sit behind one gateway adapter. Spend limits belong to core, not to the adapter: every call goes through the calling job's spend gate and daily cap. Enrichment uses `searchPeople` to find people at an account's domain (`data-hunter` implements it). `CompanyProvider` has no adapter and no caller in this release; it is declared so a firmographics source has one shape.
 
 ```ts
 export interface PersonFilters {
@@ -255,7 +274,7 @@ export interface CompanyProvider {
 
 ### ContactFinder and EmailVerifier
 
-The email waterfall calls finders in the configured order until one returns a candidate, then verifies it. Verification semantics (cache lifetimes, confidence grades, the cold floor) belong to core. The adapter maps the vendor's vocabulary onto four statuses and nothing else.
+The email waterfall calls finders in the configured order until one returns a usable address (the second and later finders only while `discovery:email_waterfall_enabled` is on), then verifies it ([SOURCING.md](SOURCING.md)). Verification semantics (cache lifetimes, confidence grades, the cold floor) belong to core. The adapter maps the vendor's vocabulary onto four statuses and nothing else.
 
 ```ts
 export interface ContactFinder {
@@ -281,7 +300,7 @@ export interface EmailVerifier {
 
 ### EmailProvider
 
-Outbound email. The send path in core runs every check first (halt, suppression, lint, verification policy, window, caps, breaker), then calls `sendBatch` in chunks of `limits.batchSize`. The adapter sends and parses webhooks. It decides nothing.
+Outbound email. The send function in core runs every check first (the halt flag, the kill switch, suppression, the content lint, the verification policy, the send window, the caps and the circuit breaker), then calls `sendBatch` in chunks of at most 100 messages, or the adapter's `batchLimit` when that is lower. The adapter sends and parses webhooks. It decides nothing.
 
 ```ts
 export interface OutboundMessage {
@@ -310,7 +329,7 @@ export type EmailEvent =
 
 export interface EmailProvider {
   readonly name: string;
-  readonly batchLimit?: number;          // the most messages one sendBatch call takes; core chunks to it
+  readonly batchLimit?: number;          // the most messages one sendBatch call takes (the manifest's limits.batchSize); core chunks to it
   sendBatch(messages: OutboundMessage[]): Promise<{ outcomes: SendOutcome[]; cost?: Cost }>;
   /**
    * Verify the webhook signature (vendor scheme, 5-minute replay window) and return typed events.
@@ -320,8 +339,9 @@ export interface EmailProvider {
   /** Optional: delivery state for reconciliation. */
   getDelivery?(providerMessageId: string): Promise<{ state: "queued" | "delivered" | "bounced" | "complained" | "unknown"; at?: string }>;
   /**
-   * Optional: the RFC 5322 Message-ID the provider gave a sent message, or null when it has none.
-   * Follow-ups thread under it; core stores it on the send ledger, so it is asked once per send.
+   * Optional: the RFC 5322 Message-ID the provider gave a sent message, in angle brackets, or null
+   * when it has none (yet). Follow-ups thread under it; core stores it on the send ledger, so it is
+   * asked once per send. Without this method, follow-up steps cannot be threaded and the sweep holds them.
    */
   getMessageId?(providerMessageId: string): Promise<string | null>;
 }
@@ -329,7 +349,7 @@ export interface EmailProvider {
 
 ### InboxProvider
 
-A warm mailbox that receives replies and sends non-cold mail, such as replies and lifecycle follow-ups. Reply drafts are mirrored into it so the operator can review and send them from their own mail client. The system then learns from what was actually sent.
+A warm mailbox that receives replies and sends approved replies on their thread, through the send function. Cold, sequence and lifecycle mail never goes through it. Reply drafts are mirrored into it so the operator can review and send them from their own mail client. The system then learns from what was actually sent.
 
 ```ts
 export interface InboundMessage {
@@ -419,7 +439,7 @@ export interface OperatorChannel {
 }
 ```
 
-An approval button's callback payload is `<approvalId>.<the first 32 hex characters of the digest>`. Core re-reads the item, recomputes its digest and refuses the tap when they differ, so an approval never covers content the operator did not see. [OPERATOR.md](OPERATOR.md) covers setting up the channel.
+An approval button's callback payload is `<approvalId>.<the first 32 hex characters of the digest>`. Core re-reads the item, recomputes its digest and refuses the tap when they differ, so an approval never covers content the operator did not see. [OPERATOR.md](OPERATOR.md) covers setting up the operator chat.
 
 Authorization, meaning which chat and user ids may command the agent, belongs to core and comes from `gtm.config.ts`. The adapter only reports ids.
 
@@ -561,7 +581,7 @@ export interface CrmSink {
 
 ### Sandbox (modules only)
 
-Used by the `ship` and `code-mode` modules. It is not part of the core contract; it is declared here so module authors share one shape.
+Single commands in an isolated environment, for optional modules such as the planned `code-mode` module. Nothing in this release uses it, and it is not part of the core contract; it is declared here so module authors share one shape. The ship module runs its builds through `CodingSandbox` instead.
 
 ```ts
 export interface Sandbox {
@@ -574,12 +594,15 @@ export interface Sandbox {
 
 ### CodeHost (ship module)
 
-Holds the repositories the ship loop works on: reads a file, makes one commit per task, opens a pull request, reads pull request and check state, and verifies its own webhooks. [SHIP.md](SHIP.md) describes the build that uses it. It is declared in core (`packages/core/src/ports/code.ts`) so that a code host for another vendor is one more adapter.
+Holds the repositories the ship loop works on: reads a file, makes one commit per task, opens a pull request, reads pull request and check state, compares commits, and verifies its own webhooks. [SHIP.md](SHIP.md) describes the build that uses it. It is declared in core (`packages/core/src/ports/code.ts`) so that a code host for another vendor is one more adapter.
 
 - **Nothing in the port merges.** Merging code is a permanently human action class (`merge_code`), and an adapter must not add a way to do it.
 - **Every method checks the allowlist.** A repository outside `allowedRepos()` is refused with a non-retryable `invalid` error before any request, so the adapter's token can only touch the repositories its options list.
+- **`pushRefusal` says, without a request, why the host would not push a ship branch**, or null. The build reads it before it starts, so a build whose branch could never be pushed spends nothing. The reason names what the deployer must do or confirm, such as the CI isolation for the mode in use or a missing credential.
 - **`commit` is one commit, idempotent, and never forces.** It writes to `ship/<taskId>` (`shipBranch(taskId)`), with the base commit as the only parent. A retry that finds the branch at a commit with the same tree and parent returns it with `created: false`. A branch holding anything else is refused; the base branch is never written.
+- **A host may commit through a fork.** It then puts `ship/<taskId>` in a fork of the target and writes nothing in the target; `CommitResult.repo` names the repository the branch is in. In the fork it may only fast-forward its copy of `baseBranch` until the base commit is reachable, and refuses when it cannot. The pull request is still opened in the target, and webhooks still come from the target.
 - **`openPullRequest` is idempotent** per task branch: an existing pull request comes back with `created: false`.
+- **`contains` answers whether a commit is in another's history**, for deploy detection: true for a descendant and for the same commit, false when the descendant does not have the ancestor (including unrelated or unknown commits). A comparison the host fails throws; it is never reported as an answer.
 - **`verifyWebhook` checks the signature in constant time before it reads the body**, then maps the payload. Every event carries the vendor's delivery id so a redelivery can be recognized.
 - **Repository text is untrusted.** A file from `readFile` is full taint; check names and environment names are short third-party text (metadata taint).
 
@@ -609,12 +632,15 @@ export type CodeHostEvent =
 export interface CodeHost {
   readonly name: string;
   allowedRepos(): readonly string[];                          // lowercase owner/name
+  pushRefusal(): string | null;                               // why no ship branch would be pushed; no request
   branchHead(repo: string, branch: string): Promise<string | null>;
   readFile(args: { repo: string; path: string; ref: string; maxBytes?: number }): Promise<RepoFile | null>;
-  commit(req: { repo: string; taskId: string; baseSha: string; message: string; files: readonly ChangedFile[] }): Promise<{ branch: string; commitSha: string; treeSha: string; created: boolean }>;
-  openPullRequest(req: { repo: string; taskId: string; base: string; title: string; body: string; draft?: boolean }): Promise<{ number: number; url: string; headSha: string; created: boolean }>;
+  pathKind(args: { repo: string; path: string; ref: string }): Promise<"missing" | "file" | "symlink" | "directory" | "submodule">;
+  commit(req: { repo: string; taskId: string; baseSha: string; baseBranch: string; message: string; files: readonly ChangedFile[] }): Promise<{ repo: string; branch: string; commitSha: string; treeSha: string; created: boolean }>;   // repo: where the branch is (the target or its fork)
+  openPullRequest(req: { repo: string; taskId: string; base: string; title: string; body: string; draft?: boolean }): Promise<{ number: number; url: string; headSha: string; created: boolean }>;   // always in the target
   pullRequest(repo: string, number: number): Promise<{ number: number; url: string; state: "open" | "closed"; merged: boolean; mergeCommitSha: string | null; headSha: string; headBranch: string; baseBranch: string } | null>;
   checks(repo: string, sha: string): Promise<{ state: "pending" | "success" | "failure" | "none"; failing: string[] }>;
+  contains(repo: string, ancestorSha: string, descendantSha: string): Promise<boolean>;   // throws when the comparison fails
   verifyWebhook(request: Request): Promise<CodeHostEvent>;    // "auth", "invalid" or "unavailable" AdapterError
 }
 ```
@@ -662,16 +688,17 @@ export interface CodingSandbox {
 
 ## How adapters become tools
 
-Core registers each manifest `tools` entry as an agent tool with:
+The tool registry (`createToolRegistry` in `@gtm-agents/core/security`) merges each manifest's `tools` entries with core's own tool classes, and the dispatcher applies each entry's class to every call of that name:
 
 - **its taint.** Results from `full` tools are sanitized, fenced and raise the session's taint. `metadata` tools return ids, counts and short snippets only.
 - **its gate.** The action gate refuses the call when the session's taint is at or above the threshold.
 - **its egress class**, which the data-carrying-URL and email-in-query checks apply from metadata taint up.
 - **the `humanOnly` flag.** The action gate refuses the call without a matching approval digest.
-- **the cost table.** The budget gate checks before the call and records after it.
-- **the adapter's flag.** A tool whose adapter flag is off is not offered to the model at all.
+- **its rate category.** The call counts against that rate limit, and the budget gate checks before it runs; the cost the adapter reports is recorded after it.
 
-The security contract runs over every registered tool, including adapter tools, in CI. It checks that every tool is classified, that gates never loosen as taint rises, that refused calls never reach their handler, and that every taint source is fenced. Run it in your adapter's tests with `runSecurityContract(createToolRegistry({ manifests: [manifest] }))` from `@gtm-agents/core/testing`. [SECURITY-MODEL.md](SECURITY-MODEL.md) explains how to choose `taint`, `gate` and `egress` for a tool.
+A name declared by two sources is refused when the registry is built. Classifying a tool does not offer it to a model: an agent sees only the tools core or a module wires a handler for (the hub agent's are listed in [OPERATOR.md](OPERATOR.md)). In this release no adapter tool is offered to an agent; the classifications keep each adapter call under the security contract for when one is.
+
+The security contract runs over every registered tool, including adapter tools, in CI. It checks that every tool is classified, that gates never loosen as taint rises, that refused calls never reach their handler, that every taint source is fenced, and that every egress tool declares a rate category. Run it in your adapter's tests with `runSecurityContract` from `@gtm-agents/core/testing` and `createToolRegistry` from `@gtm-agents/core/security`: `await runSecurityContract(createToolRegistry({ manifests: [manifest] }))`. [SECURITY-MODEL.md](SECURITY-MODEL.md) explains how to choose `taint`, `gate` and `egress` for a tool.
 
 ## Contract tests
 
@@ -687,32 +714,35 @@ runModelGatewayContract(create, fixtures)         // _contract/model-gateway.ts;
 runInboxProviderContract(create, fixtures)        // _contract/inbox-provider.ts; capability-limited adapters declare what they cannot do
 runBillingProviderContract(create, fixtures)      // _contract/billing-provider.ts; signed, tampered, stale and multi-signature webhooks
 runCalendarProviderContract(create, fixtures)     // _contract/calendar-provider.ts; the request asks for no title or description
-runCodeHostContract(create, fixtures)             // _contract/code-host.ts; one idempotent commit, never the base branch, a force or a merge
+runCodeHostContract(create, fixtures)             // _contract/code-host.ts; one idempotent commit, never the base branch, a force or a merge; path kinds, containment, push refusal
 runCodingSandboxContract(fixtures)                // _contract/coding-sandbox.ts; a fake container: internet off, no secret inside, limits enforced
-// Runners for the other ports arrive with the adapters that need them.
+// SignalSource, PeopleProvider, CompanyProvider and CrmSink have no shared runner: an adapter tests
+// them in its own contract.test.ts, with the same recordedFetch and testContext.
 ```
 
-Each adapter's `contract.test.ts` calls the runner with a recorded-response `fetch`. Contract tests are hermetic and run in `npm test`. Live tests, which use real keys, sit behind `ADAPTER_LIVE=1` and never run in CI.
+Each adapter's `contract.test.ts` calls the runner with a recorded-response `fetch`. Contract tests are hermetic and run in `npm test`. No test in the repository uses a real key or reaches the network; an adapter that adds a live test must keep it out of `npm test` and CI.
 
-## v1 adapters
+## Adapters
+
+The adapters in `packages/adapters/`, each with a hermetic contract test, and the ones planned. None has yet been run against its live provider.
 
 | Adapter | Ports | Notes |
 |---|---|---|
-| `email-resend` | EmailProvider | Batch send, Svix-style webhook, tags for correlation. Available |
-| `email-gmail` | EmailProvider (non-cold sends from the warm mailbox) | Shares Google auth with the other Google adapters |
-| `inbox-gmail` | InboxProvider | Reading, draft mirroring, push watch when configured. Available |
+| `email-resend` | EmailProvider | Batch send, Svix-style webhook, tags for correlation, Message-ID lookup for threading. Available |
+| `email-gmail` | EmailProvider (non-cold sends from the warm mailbox) | Planned. Shares Google auth with the other Google adapters. Approved replies already go out from the warm mailbox through `inbox-gmail` |
+| `inbox-gmail` | InboxProvider | Reading, draft mirroring, approved reply sends, push watch when configured. Available |
 | `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending. Available |
 | `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests. Available |
 | `data-exa` | DiscoverySource | `search`, `watch` (websets), search monitors (signed deliveries), `find_similar` and dated news. Available |
-| `data-jobboards` | Hiring board source | Public Greenhouse, Lever and Ashby board JSON from their documented hosts only; returns role-kind counts, never titles. No key. Available |
-| `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Many providers behind one gateway; the allowlist and daily cap are core config |
+| `data-jobboards` | SignalSource, and `HiringBoardSource` from `@gtm-agents/core/signals` | Public Greenhouse, Lever and Ashby board JSON from their documented hosts only; returns role-kind counts, never titles. No key. Available |
+| `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Planned. Many providers behind one gateway, with spend bounded by core's budget gate |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
-| `data-xai` | SignalSource | Public-post signals with live search |
+| `data-xai` | SignalSource | Planned. Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |
-| `code-github` | CodeHost | GitHub over plain fetch, for the ship module: one commit per task through the git data API on `ship/<task>`, idempotent pull requests, `X-Hub-Signature-256` verified in constant time before parsing. It cannot merge. Available |
+| `code-github` | CodeHost | GitHub over plain fetch, for the ship module: one commit per task through the git data API on `ship/<task>`, in the target repository or a configured fork, idempotent pull requests, commit comparison for deploy detection, `X-Hub-Signature-256` verified in constant time before parsing. It cannot merge. Available |
 | `sandbox-cloudflare` | CodingSandbox | A Cloudflare Container per ship task with internet access off and no credentials; the Worker lets through a read-only clone, package reads and the coder model only. Agent profiles `claude-code` (default) and `opencode`. Needs a plan with Containers. Available |
-| `llm-gateway` | ModelGateway | Anthropic is available; OpenAI and Workers AI are planned. AI Gateway optional |
+| `llm-gateway` | ModelGateway | Anthropic's Messages API, with streaming, tools and structured output; Cloudflare AI Gateway optional. `embed()` is refused, because the Messages API has no embeddings endpoint. Available; OpenAI and Workers AI are planned |
 
 To request a new adapter, open an adapter request issue with:
 - the port or ports it implements;

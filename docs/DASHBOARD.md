@@ -1,6 +1,6 @@
 # The operator dashboard
 
-This page is for deployers who want the web dashboard at `/admin`: it covers putting Cloudflare Access in front of it, the `admin` section of `gtm.config.ts`, the `admin:enabled` flag, what each view shows and which actions it can take, the security model and the limits. Contributors adding a view or a method should read `packages/core/src/gateway/protocol.ts`, the contract between the Worker and `apps/admin`.
+This page is for deployers who want the operator dashboard at `/admin`: it covers putting Cloudflare Access in front of it, the `admin` section of `gtm.config.ts`, the `admin:enabled` flag, what each view shows and which actions it can take, the security model and the limits. Contributors adding a view or a method should read `packages/core/src/gateway/protocol.ts`, the contract between the Worker and `apps/admin`.
 
 ## How a connection is admitted
 
@@ -43,7 +43,7 @@ A socket keeps the identity it was admitted with. When the Access token expires,
 
 The static files under `/admin/*` hold no data, but put them behind the same Access application anyway so the dashboard is not served to strangers. The Worker serves them with `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`, so no other page can frame the dashboard. It does not verify the Access token on `/admin/*`: every piece of data comes over `/ws`, which does.
 
-A deployment that keeps a `CHANGELOG.md` in its static assets directory (next to the built dashboard, at the root, not under `/admin/`) gets it in the Changelog view; it is read through the ASSETS binding and is not served publicly.
+A deployment that keeps a `CHANGELOG.md` in its static assets directory (`public/CHANGELOG.md`, next to the built dashboard, not under `/admin/`) gets it in the Changelog view; it is read through the ASSETS binding and is not served publicly. The view reads the first 256 KB in the Keep a Changelog style: `## [1.2.0] - 2026-11-01` (or `## 1.2.0 (2026-11-01)`) starts a release, `### Area` starts an area, and each `- ` line is one entry.
 
 ## Views and actions
 
@@ -51,30 +51,34 @@ Every action runs through the module that owns it, with the same gates, digests 
 
 | View | Shows | Actions |
 |---|---|---|
-| Overview | Halt and kill switch state, flags on, failing jobs, measurement health | |
-| Cockpit | Cold pause, cold batch and delivery switches, per-domain and per-account caps, the deferred queue by status, sends and replies over 7 days, discovery over 14 days | Pause (a critical pause, which automation never lifts), resume (lifts both levels), drain (cancels up to 1,000 queued deferred sends; it can only stop mail), replay (up to 50 due deferred sends through the send boundary, only while `delivery:enabled` is on) |
+| Overview | System status (the halt flag and kill switch, flags that are on, failing jobs, measurement health), active agents, the contact base, pipeline value, cost today, security posture, infrastructure checks, the fitness trend over 30 days | |
+| GTM cockpit | Cold pause, cold batch and delivery switches, per-domain and per-account caps, the deferred queue by status, sends and replies over 7 days, discovery over 14 days | Pause (a critical pause, which automation never lifts), resume (lifts both levels), drain (cancels up to 1,000 queued deferred sends; it can only stop mail), replay (up to 50 due deferred sends through the send function, only while `delivery:enabled` is on) |
 | Pipeline | Deals by stage, value, weighted forecast (value times probability, open deals), win rate | Create a deal for a contact, update its value or notes, move it forward (or to closed_lost) through `transitionDeal` |
-| Contacts | Search, details, history, a plain summary, who to look at next | Edit first name, last name, job title and notes only |
-| Inbound | Mail, its triage, its reply draft | Done, ignore, archive (through the reply commands' code, so drafts, reminders and evidence close the same way); send a reply draft |
-| Drafts | Drafts waiting for approval, of any kind | Approve (nothing is sent), reject. A draft of kind `lifecycle` (a lifecycle follow-up, or mail an optional module sends to product users, such as the ship module's "it is live" notes) is approved or dropped in the operator chat instead, with the command shown when it was drafted (`fu-approve-<id>` or `fu-reject-<id>` for a follow-up), which checks the contact again and closes the module's record; the dashboard refuses both for one |
+| Inbound | Mail, its triage, its reply draft | Done, ignore, archive (through the reply commands' code, so drafts, reminders and evidence close the same way); approve, reject or send a reply draft |
 | Proposals | Autonomy level proposals, experiment proposals, learnings | Approve (autonomy needs its confirm code), reject. Rejecting an autonomy proposal dismisses it, as `autonomy-dismiss-<id>` does in the operator chat: no level changes, and it can never be confirmed afterwards |
+| Learning | The learnings document, pending learning proposals, a search of the last 90 days of operator chat history | Approve or reject, search |
+| Contacts | Search, details, history, a plain summary, who to look at next | Edit first name, last name, job title and notes only |
 | Agents | Model roles and their models; every registered job with its schedule, flag and last run | |
 | Chat | The hub agent, in a session of its own per operator | Send, abort |
 | Activity | The audit log, live while subscribed | Export a CSV (at most 31 days, 5,000 rows or 512 KB) |
-| Settings | Redacted configuration, flags, the security audit, cost | Set or unset a flag |
+| Link triage | The link-intake module's state, or that it is not installed | Refresh |
+| Settings | Redacted configuration, the cron schedule, capabilities, flags, the security audit | Set or unset a flag, run the audit |
+| Changelog | The deployment's `CHANGELOG.md`, release by release | Search, filter by area |
+
+**Drafts.** The gateway's `drafts.approve` approves a draft (nothing is sent) and `drafts.reject` drops it. A draft of kind `lifecycle` (a lifecycle follow-up, or mail an optional module sends to product users, such as the ship module's "it is live" notes) is approved or dropped in the operator chat instead, with the command shown when it was drafted (`fu-approve-<id>` or `fu-reject-<id>` for a follow-up), which checks the contact again and closes the module's record; the dashboard refuses both for one.
 
 **Approvals are bound to what was shown.** Every draft the dashboard receives carries the digest of exactly its recipient, subject and body, and the server records that it showed that content. Approving or sending echoes the digest back; the server re-reads the draft and refuses when the current content has another digest or is not what it showed. A refused approval leaves the draft pending: reload it and review it again. A reply send then goes through `sendApprovedReply`, which checks the approval digest, the thread and every send gate again. Proposals work the same way: the digest covers the source, the id and the exact detail text, and the source approves the content digest of the very read the gateway checked, never a fresh one.
 
 **Flags.** `flags.set` takes the same keys and values as `gtm flags set`, except:
 - `autonomy:<class>`: levels change only with `autonomy-set` and `autonomy-confirm` in the operator chat (or by approving a proposal with its confirm code), which check the evidence first. A permanently human-only class never goes above 1, anywhere;
-- `system:halt`: set and lift it with `gtm flags` or the operator chat;
+- `system:halt`: set and lift it with `gtm flags`;
 - the kill switch keys: use the cockpit;
 - switches that let mail go out without a person (`inbound:auto_send_tier`, `cold_batch:auto_approve`, `signal_response:auto_send`): use `gtm flags`;
 - state flags that jobs write.
 
 `flags.list` marks each entry `editable` accordingly.
 
-**Chat.** The same hub turn as the operator chat: the same tools, taint rules and budgets, while `operator:agent_enabled` is on. `/clean`, `/status` and `/help` work. Every other command (release, sequence, meeting, autonomy, experiment, lifecycle follow-up and learning commands, and any command an optional module adds) does not run here and is never passed to the model as a task: it is refused, because those commands are shown with their codes in the operator chat. To dismiss an autonomy proposal or decide a learning from the dashboard, use the Proposals view. Drafts a turn creates wait in the Drafts view.
+**Chat.** The same hub turn as the operator chat: the same tools, taint rules and budgets, while `operator:agent_enabled` is on. `/clean`, `/status` and `/help` work. Every other command (release, sequence, meeting, autonomy, experiment, lifecycle follow-up and learning commands, and any command an optional module adds) does not run here and is never passed to the model as a task: it is refused, because those commands are shown with their codes in the operator chat. To dismiss an autonomy proposal or decide a learning from the dashboard, use the Proposals view. Drafts a turn creates wait for approval, and the reply names their ids.
 
 When the model gateway streams (`llm-gateway` does), the answer appears as the model writes it:
 
@@ -100,6 +104,7 @@ A gateway without streaming answers in one `chat.delta` carrying the whole reply
 
 - One OperatorGateway instance serves every dashboard; a chat turn runs one at a time per operator.
 - The activity stream polls the audit log every 10 seconds while a dashboard subscribes; between polls, `activity.list` is the source.
-- Learnings, fitness scores and link triage appear when their modules are installed and passed to `createWorker` as `dashboard: { proposals, fitness, learning, linkTriage }`. Until then, pending learnings are listed read-only, fitness is empty and link triage reports `installed: false`.
+- Learnings, fitness scores and link triage appear when their sources are passed to `createWorker` as `dashboard: { proposals, fitness, learning, linkTriage }`. The worker template passes `learningDashboard()` from the learning module, so learnings and fitness appear; link triage needs the link-intake module, which has not shipped, so its view reports `installed: false`. Without the learning sources, pending learnings are listed read-only and fitness is empty.
+- The dashboard lists only reply drafts, in Inbound. The gateway's `drafts.list` returns drafts of every kind, but no view shows it, so a draft a dashboard chat turn creates waits as `pending_approval`, named by id in the reply, without a view that lists it.
 - Contact summaries are built from the database, without a model call.
 - A model call aborted part way records no cost row, streamed or not: usage comes back only with a finished call. The vendor may still bill the tokens it produced before the abort.

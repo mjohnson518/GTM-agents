@@ -244,12 +244,14 @@ export interface BuildRigOptions {
   without?: ReadonlyArray<"codeHost" | "sandbox" | "workflow" | "operator">;
   /** What the code host's pushRefusal answers; null (the default) allows the push. */
   pushRefusal?: string | null;
+  /** A fork the code host commits the ship branches to, as owner/name. */
+  fork?: string;
 }
 
 /** Everything the build side needs, faked, over the suite's real D1 and R2 bindings. */
 export function buildRig(base: Env, options: BuildRigOptions = {}): BuildRig {
   const kv = memoryKv(options.flags ?? { ...BUILD_ON });
-  const host = fakeCodeHost({ repo: SHIP_TEST_REPO, webhookSecret: BUILD_WEBHOOK_SECRET, files: options.baseFiles ?? {}, ...(options.pushRefusal ? { pushRefusal: options.pushRefusal } : {}) });
+  const host = fakeCodeHost({ repo: SHIP_TEST_REPO, webhookSecret: BUILD_WEBHOOK_SECRET, files: options.baseFiles ?? {}, ...(options.pushRefusal ? { pushRefusal: options.pushRefusal } : {}), ...(options.fork ? { fork: options.fork } : {}) });
   const sandbox = scriptedSandbox({ ...(options.files ? { files: options.files } : {}), ...(options.script ? { script: options.script } : {}) });
   const operator = recordingOperator();
   const workflow = fakeWorkflow();

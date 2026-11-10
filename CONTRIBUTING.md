@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping build GTM-agents. This guide covers setup, the rules every change follows, how to submit an adapter, and how agent-assisted contributions work. [CLAUDE.md](CLAUDE.md) is the full engineering contract; this page is the short path through it.
+This page is for contributors, and for the coding agents they work with. Thanks for helping build GTM-agents. This guide covers setup, the rules every change follows, how to submit an adapter, and how agent-assisted contributions work. [CLAUDE.md](CLAUDE.md) is the full engineering contract; this page is the short path through it.
 
 ## Set up
 
@@ -16,9 +16,10 @@ npm run check      # must be green before you open a pull request
 2. lint (with the house-rule, doc-link and conflict-copy checks);
 3. tests;
 4. evals;
-5. the placeholder, secret, migration and license checks.
+5. the placeholder, secret, migration and license checks;
+6. validation of the example brain (`examples/brains/acme`).
 
-The pre-commit hook runs the same checks on what your commit would contain. If a hook fails, fix the cause. Never pass `--no-verify`.
+The pre-commit hook runs the conflict-copy, secret and placeholder checks on what your commit would contain, then the migration-order check, typecheck, lint and tests. If a hook fails, fix the cause. Never pass `--no-verify`.
 
 ## The rules every change follows
 
@@ -34,7 +35,7 @@ These are the non-negotiables from [CLAUDE.md](CLAUDE.md). A pull request that w
 8. New behavior ships behind a flag that defaults to off.
 9. Every job is bounded and leaves a run row, and every outside write is idempotent or claimed first.
 10. The database is the truth.
-11. Email is plain text with a postal footer and unsubscribe headers, and no tracking.
+11. Email is plain text with unsubscribe and threading headers on every message, a postal footer on cold and follow-up mail, and no tracking.
 12. No em dashes or en dashes anywhere.
 
 Some contributions will not be accepted, however well written:
@@ -81,7 +82,7 @@ An adapter connects one vendor to one or more ports. Read [docs/INTERFACES.md](d
 - [ ] All network calls use `ctx.fetch`, never the global `fetch`.
 - [ ] Side-effecting calls pass core's `effectKey` to the vendor as the idempotency key when the vendor supports one.
 - [ ] Webhooks verify the vendor's signature, with its replay window, inside `parseWebhook` and throw `AdapterError("auth")` on failure.
-- [ ] `contract.test.ts` runs the shared contract for each port with a recorded-response `fetch`. Live tests sit behind `ADAPTER_LIVE=1` and never run in CI.
+- [ ] `contract.test.ts` runs the shared contract for each port with a recorded-response `fetch` (`recordedFetch` from `packages/adapters/_contract/`). Tests that call a real vendor never run in `npm test` or in CI.
 - [ ] Recorded responses are scrubbed: no real names, addresses, keys or account ids.
 - [ ] The security contract passes with the adapter's tools registered: `runSecurityContract` from `@gtm-agents/core/testing` ([docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)).
 
@@ -96,7 +97,7 @@ Coding agents are welcome, as long as a person stays accountable for every commi
 - **Hooks are never bypassed** by the agent or by the person.
 - **Say so in the pull request** when an agent wrote a substantial part of the change, and confirm that you reviewed the full diff yourself.
 
-`.githooks/` runs `.local/hooks/<name>` last, if that file exists. `.local/` is gitignored. Use it for checks that only make sense on your machine.
+Both hooks in `.githooks/` run `.local/hooks/pre-commit` or `.local/hooks/commit-msg` last, if that file exists and is executable. `.local/` is gitignored. Use it for checks that only make sense on your machine.
 
 ## Reporting security issues
 

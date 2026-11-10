@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Each record states a structural choice, why it was made, and what it costs. A change that reverses one of these gets a new record that supersedes it, instead of an edit to the old one.
+This page is for adopters judging whether the system's structure fits them, and for contributors who need to know why it is built the way it is before changing it. Each record states a structural choice, why it was made, and what it costs. A change that reverses one of these gets a new record that supersedes it, instead of an edit to the old one.
 
 | ADR | Decision | Status |
 |---|---|---|
@@ -59,7 +59,7 @@ Assembling those from several vendors means several bills, several auth models a
 - Every adapter ships a manifest (secrets, flags, per-tool taint and gate, price table, limits) and passes a shared contract test with a recorded `fetch`.
 
 **Consequences.**
-- Swapping a provider is a configuration change.
+- Swapping a provider changes a deployment's wiring and configuration (`src/index.ts`, `gtm.config.ts` and secrets), never core.
 - Policy has exactly one implementation.
 - Adapters are small and testable without network access.
 - Every new capability needs a port first, which is slower for the first integration of a kind.
@@ -139,7 +139,7 @@ Measurement health (ledger coverage, unrouted product events) gates every conclu
 **Consequences.**
 - Every commit has a human author who read the staged diff.
 - Agent-assisted work takes one extra step per commit.
-- Local hooks (`.local/hooks/<name>`) give each maintainer a place for checks that only make sense on their machine.
+- The shared hooks run a machine-local `.local/hooks/<name>` last when it exists and is executable (`.local/` is gitignored), so each contributor has a place for checks that only make sense on their machine.
 
 ## ADR-009: Source-first TypeScript on Node 24
 

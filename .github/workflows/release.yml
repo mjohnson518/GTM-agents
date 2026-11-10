@@ -1,18 +1,19 @@
 # GTM-agents release. Publishes every package to npm, with provenance, when a tag named v<version>
 # is pushed. A manual run defaults to a dry run: it packs, checks, smoke-tests and runs
 # `npm publish --dry-run`, and publishes nothing. A manual run publishes only when it is started on
-# a v* tag with dry_run turned off. docs/RELEASING.md covers the whole process, the NPM_TOKEN
-# secret and the npm scope.
+# a v* tag with dry_run turned off. docs/RELEASING.md covers the whole process, the first release
+# with an NPM_TOKEN secret, trusted publishing after it, and the npm scope.
 #
 # Jobs: preflight (decide, check the tag against every package version) -> pack (build the
 # tarballs after `npm ci --ignore-scripts`, so no dependency's install script runs where they are
 # made; upload them with release.json, which lists each tarball's SHA-256, and report release.json's
 # own SHA-256 as a job output) -> verify (a normal `npm ci`, the full check, then the smoke test and
 # `npm publish --dry-run` against the downloaded artifact, checking every hash) -> publish (in the
-# npm environment that holds NPM_TOKEN: check the token, download the same artifact, check every
+# npm environment: sign in with the NPM_TOKEN secret when it is set (the first release), otherwise
+# through npm's trusted publishing (OIDC, no stored token); download the same artifact, check every
 # hash against the pack job's output again, publish in dependency order). A job output cannot be
 # changed by a later job, so nothing verify runs can swap what publish ships. Only the publish job
-# can request an OIDC token, and only its token check and publish steps see the npm token.
+# can request an OIDC token, and only its sign-in and publish steps see the npm token, when there is one.
 # Third-party actions are pinned to commit SHAs, checkouts keep no credentials, and the release uses
 # no dependency cache.
 name: Release
@@ -138,8 +139,9 @@ jobs:
     needs: [preflight, pack, verify]
     if: needs.preflight.outputs.publish == 'true' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    # Holds the NPM_TOKEN secret. Limit it to v* tags and add required reviewers under Settings,
-    # Environments, so neither another branch's workflow nor an unreviewed run can read the token.
+    # The environment trusted publishing names on npmjs.com, and the one that holds NPM_TOKEN for a
+    # first release. Limit it to v* tags and add required reviewers under Settings, Environments,
+    # so neither another branch's workflow nor an unreviewed run can publish.
     environment: npm
     permissions:
       contents: read
@@ -152,15 +154,15 @@ jobs:
         with:
           node-version-file: .nvmrc
           registry-url: https://registry.npmjs.org
-      - name: Require the NPM_TOKEN secret
+      - name: Choose how to sign in to npm (the NPM_TOKEN secret, else trusted publishing)
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          if [ -z "$NPM_TOKEN" ]; then
-            echo "::error::The NPM_TOKEN secret is not set in the npm environment. Add a granular access token that can publish to the package scope (docs/RELEASING.md), then re-run this job."
-            exit 1
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "Signing in with the NPM_TOKEN secret. After the first release, delete it and configure trusted publishing (docs/RELEASING.md)."
+          else
+            echo "No NPM_TOKEN secret: publishing through npm trusted publishing (OIDC) with npm $(npm --version)."
           fi
-          echo "NPM_TOKEN is set."
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-tarballs

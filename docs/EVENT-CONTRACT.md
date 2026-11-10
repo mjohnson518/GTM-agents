@@ -1,6 +1,6 @@
 # Product event contract
 
-This is the wire contract between the product being sold (the "host application") and its GTM-agents deployment. Any product can implement it in an afternoon. It has five parts:
+This page is for developers connecting the product being sold (the "host application") to its GTM-agents deployment, and for contributors changing either side of the wire contract between them. Any product can implement it in an afternoon. It has five parts:
 - one webhook the host posts to;
 - three signed read endpoints the host serves;
 - one cookie for attribution;
@@ -29,7 +29,9 @@ Both sides hold two secrets, and they are different values:
 - `PRODUCT_WEBHOOK_SECRET`: the host signs pushes with it and the agent verifies them.
 - `PRODUCT_READ_SECRET`: the agent signs pulls and proof calls with it and the host verifies them.
 
-On the agent side they are Worker secrets; on the host side they are environment variables. When either is unset, that direction does nothing: the host's emitter is a no-op, and the agent's webhook returns 503.
+On the agent side they are Worker secrets; on the host side they are environment variables. When either is unset, that direction does nothing:
+- `PRODUCT_WEBHOOK_SECRET` unset on the host makes its emitter a no-op; unset on the agent, the webhook answers 503.
+- `PRODUCT_READ_SECRET` unset on the agent skips the nightly pull; unset on the host, the read endpoints answer 503.
 
 ## 1. Push: host to agent
 
@@ -53,16 +55,18 @@ The signature covers the raw bytes the host sent, not a re-serialization. The ag
 |--------|---------|
 | `200 {"ok":true,"duplicate":false}` | Recorded and dispatched (`"late":true` is added for an event older than 7 days) |
 | `200 {"ok":true,"duplicate":true}` | Already seen (same `id`); nothing is dispatched again |
-| `400` | Bad shape (fails the schema below) |
+| `400` | The body is not JSON, or it fails the schema below |
 | `401` | Bad or missing signature, or `X-Event-Id` missing or different from `body.id` (a body without an `id` cannot match) |
-| `503` | The agent is not accepting product events: `PRODUCT_WEBHOOK_SECRET` is unset, or the deployment has not turned lifecycle on. A `user.deleted` event is the exception: once its signature verifies, it is always recorded and honored, so a deletion is never lost |
+| `413` | The body is larger than 100 KiB (102,400 bytes) |
+| `500` | The event could not be recorded; nothing was kept, and the nightly pull repairs it |
+| `503` | The agent is not accepting product events: `PRODUCT_WEBHOOK_SECRET` is unset, the deployment has not wired the lifecycle, or `lifecycle:enabled` is off. A `user.deleted` event is the exception: once its signature verifies, it is always recorded and honored, whatever the flags say, so a deletion is never lost |
 
-The agent handles a push in this order:
+The agent checks the signature before it parses anything, and handles a valid push in this order:
 1. Write the raw payload to blob storage.
 2. Insert the event row, keyed by `id` (insert-or-ignore).
-3. Dispatch it to the queue.
+3. Dispatch it to the queue, or route it inline when no queue is bound.
 
-It returns 200 only after the row is written. Processing is asynchronous: a 200 means "accepted", not "acted on".
+It returns 200 only after the row is written. Processing is asynchronous: a 200 means "accepted", not "acted on". For `user.deleted`, the tombstone and the suppression are written before the event is recorded (section 4).
 
 ### Delivery semantics
 
@@ -87,20 +91,20 @@ It returns 200 only after the row is written. Processing is asynchronous: a 200 
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `id` | yes | Globally unique and stable across retries. A ULID or UUID is recommended |
+| `id` | yes | Globally unique and stable across retries, 1 to 128 printable ASCII characters. A ULID or UUID is recommended |
 | `version` | yes | `1` |
-| `type` | yes | One of the catalogue below, or `custom.<name>` |
-| `occurred_at` | yes | ISO 8601, UTC |
-| `user` | yes, for user-scoped types | `id` is required. `email` is required except on `user.deleted`. `name` and `role` are optional |
-| `org` | yes, or `null` | The host's tenant. `id` and `name` are required when present. `domain` and `plan_tier` are optional but valuable, because the agent keys accounts by domain |
-| `ref` | optional | The attribution token the host stored at sign-up (see section 3); `null` when none |
-| `data` | yes | The type-specific payload below. Unknown keys are kept and ignored |
+| `type` | yes | One of the catalogue below, or `custom.<name>` (lowercase letters, digits, `_`, `.` and `-`) |
+| `occurred_at` | yes | ISO 8601; the agent stores it as UTC |
+| `user` | yes, except on `custom.<name>` | `id` (1 to 128 printable characters) is required. `email` is required except on `user.deleted`. `name` and `role` are optional |
+| `org` | yes, or `null` | The host's tenant. `id` and `name` are required when present. `domain` and `plan_tier` are optional. The agent keeps `plan_tier`; it keys the account by the user's own address domain, never by `org.domain` |
+| `ref` | optional | The attribution token the host stored at sign-up (see section 3): 1 to 64 letters, digits, `_` or `-`. `null` when none; any other value is ignored |
+| `data` | yes | An object: the type-specific payload below. Unknown keys are kept and ignored |
 
 The agent resolves identity in this order:
 1. Tombstones first. An erased person is refused (see section 4).
 2. An existing linked `user.id`.
-3. The attribution `ref` token.
-4. An exact email match.
+3. The attribution `ref` token, when it names the same mailbox.
+4. An email match: the same address, or another `+tag` of the same mailbox.
 5. The account domain, which means a new person at a known account.
 6. Otherwise, a new inbound contact.
 
@@ -118,11 +122,11 @@ The agent resolves identity in this order:
 | `billing.payment_failed` | A payment attempt fails | `{amount, currency, attempt}` |
 | `billing.topup_purchased` | A one-off credit pack is bought | `{sku, amount, currency}` |
 | `org.api_key_created` | An API key is created, a strong expansion and technical-buyer signal | `{scopes?}` |
-| `feedback.submitted` | In-product feedback or a comment | `{text, context?, rating?}`. The text is full taint on the agent side |
+| `feedback.submitted` | In-product feedback or a comment | `{text, context?, rating?}`. `text` is required; the agent keeps at most 4,000 characters of it, as full taint |
 | `user.deleted` | A user is erased | See section 4. `user` carries only `id` and `email_sha256` |
-| `custom.<name>` | Anything else the host wants the agent to know | Free-form. Routed only if a playbook subscribes to it |
+| `custom.<name>` | Anything else the host wants the agent to know | Free-form, full taint. Recorded only: nothing subscribes to custom events yet |
 
-`billing.*` events can come from the host (recommended, since the host already knows its customers) or from the agent's own billing adapter webhook. Pick one per deployment; `gtm doctor` warns when both are configured.
+`billing.*` events can come from the host (recommended, since the host already knows its customers) or from the agent's own billing adapter webhook. Pick one per deployment, so one payment is not counted twice under two event ids.
 
 ### Minimal host implementation
 
@@ -147,14 +151,15 @@ export async function emitProductEvent(event: ProductEvent): Promise<void> {
 }
 ```
 
-`@gtm-agents/sdk`, which ships with the lifecycle milestone, exports:
+`@gtm-agents/sdk` ([packages/sdk](../packages/sdk/README.md)) exports:
 - `createProductEmitter({url, secret})`, which behaves exactly like the function above;
-- a typed event builder for every catalogue entry;
-- `verifyReadSignature()`, for section 2.
+- a typed event builder for every catalogue entry, and `eventProblem()`, which says why the agent would refuse an event;
+- `createReadHandler()`, `verifyReadRequest()` and `verifyReadSignature()`, for section 2;
+- the `gtm_ref` cookie helpers, for section 3.
 
 ## 2. Pull: agent to host (reconciliation)
 
-The push does not retry, so the agent reconciles nightly. It reads up to 3 pages of 200 per run, and the whole history once a week. The host serves three read-only endpoints under `PRODUCT_APP_URL`:
+The push does not retry, so the agent reconciles nightly. It reads up to 3 pages of 200 per resource per run, and the whole history once a week. Each read waits at most 10 seconds, accepts at most 2 MiB, does not follow redirects, and counts any status but 200 as a failure. `PRODUCT_APP_URL` must be an `https` URL with no credentials, query or fragment. The host serves three read-only endpoints under it:
 
 | Endpoint | Returns |
 |----------|---------|
@@ -221,21 +226,21 @@ Pagination: `cursor` is the last item's id; it is omitted when there is no next 
 
 ## 3. Attribution
 
-- Every link the agent puts in an outreach email, booking page or follow-up carries `?ref=<token>`. The token identifies the contact and the touch (campaign, step, variant). It is opaque and it expires.
-- The host's middleware copies a valid `ref` from the query string into a first-party cookie on the first request: `gtm_ref`, 30 days, `SameSite=Lax`, `Secure`, `HttpOnly`. At sign-up, the host copies the cookie's value to `users.signup_ref`. The host validates only the token's shape (an opaque string of bounded length); the agent resolves it.
-- The host sends the token back as `ref` on `user.signed_up` and `org.created`. The agent credits the conversion to the touch and the experiment variant that produced it. That is how experiments measure conversions, not just replies.
+- A link the agent puts in outreach may carry `?ref=<token>`. The token identifies the contact and the touch's campaign. It is opaque and it expires: the agent honors it for 90 days after issuing it. The agent does not add tokens to links yet (`outreach:ref_tokens_enabled` is reserved for it), so a host that implements this part is ready for it.
+- The host's middleware copies a valid `ref` from the query string into a first-party cookie on the first request: `gtm_ref`, 30 days, `SameSite=Lax`, `Secure`, `HttpOnly`. At sign-up, the host copies the cookie's value to `users.signup_ref`. The host validates only the token's shape (1 to 64 letters, digits, `_` or `-`); the agent resolves it.
+- The host sends the token back as `ref` on `user.signed_up` and `org.created`. While `outreach:ref_tokens_enabled` is on, a token the agent issued to the same mailbox identifies the person, and its campaign is recorded as the sign-up's attribution; a token used by anyone else (a forwarded link) still credits its campaign but never decides who the person is.
+- Whether or not a token comes back, every sign-up, activation and payment is credited to the contact's latest first touch in the 60 days before it, and to the experiment arm the contact last received. That is how experiments measure conversions, not just replies.
 
 ## 4. Erasure
 
 - When the host erases a user, it emits `user.deleted` with `user: {id, email_sha256}`, and no email or name. `email_sha256` is the hex SHA-256 of the lowercased, trimmed address.
 - On receipt, the agent:
-  1. suppresses the hash;
-  2. tombstones the contact, keeping only the hash and a timestamp and deleting everything else;
-  3. stops sequences;
-  4. deletes drafts and inbound bodies;
-  5. records the erasure in its audit log.
+  1. writes a tombstone holding only the hash, the product user id and the time;
+  2. suppresses the hash;
+  3. stops the person's sequences and erases every contact that is the person: drafts, inbound mail and its bodies, event payloads, feedback, billing records (down to a marker) and the contact row itself;
+  4. records the erasure in its audit log, with counts only.
 
-  From then on, any event or enrichment result that resolves to a tombstoned hash is refused.
+  It stores the event itself as its id, time, user id and hash only, and carries it out whatever the deployment's flags say. From then on, any event or enrichment result that resolves to a tombstoned hash or user id is refused.
 - The host keeps `deletions` readable for at least 90 days. It is the repair path for a missed `user.deleted`, and the agent's nightly pull applies any deletion it has not seen.
 - The agent never sends the host a contact's data. Each direction of the bridge is one-way by design.
 
@@ -249,17 +254,11 @@ Some products can show a prospect something concrete before a call: a sample rep
 - The request body is `{ "kind": "<proof kind>", "account_domain": "acme.example", "contact_email": "ada@acme.example", "effect_key": "<agent effect key>" }`.
 - The host responds either with `{ "url": "https://...", "expires_at": "...", "summary": "one line the agent may quote" }`, or with `202 {"job_id": "..."}` followed later by a `custom.proof_ready` event carrying the same fields.
 
-Sending a proof to a prospect is a permanently human-only action in the agent. The agent prepares the email, and the operator approves the send.
+Sending a proof to a prospect is a permanently human-only action in the agent: the agent prepares the email, and the operator approves the send. The agent does not call this endpoint yet; it is part of the contract so a host can build it ahead of the agent.
 
-## 6. Product signals and privacy
+## 6. Product usage and privacy
 
-The agent derives signals from these events:
-- expansion notices;
-- plan-mismatch intent;
-- a per-account usage signal, at most once a month;
-- a fast welcome on sign-up.
-
-Two rules apply everywhere:
+The agent keeps product usage (activation, limits, usage this period, top-ups, API keys) on the user's own lifecycle row, where it moves their lifecycle state and deal. It derives no signals or openers from product events. Two rules apply everywhere:
 
 - Product usage is never used as an opener to a colleague of the user ("I saw your teammate ran three reports"). It may inform account scoring and the operator's view. It does not appear in copy sent to anyone but the user it belongs to.
 - Feedback text is full taint. It is sanitized and fenced, never pasted into a prompt as instructions, and never quoted back to anyone outside the account.
@@ -295,10 +294,10 @@ X-Signature: sha256=4e1acd1ab4d0f676df2045bdf5767b49afc849de516b3b3b4dd91898d3ae
 
 ## 8. Example host
 
-[`examples/host-nextjs/`](../examples/host-nextjs/) shows the whole contract in a Next.js app for the fictional company Acme:
+[`examples/host-nextjs/`](../examples/host-nextjs/) maps the contract onto a Next.js app for the fictional company Acme:
 - the emitter wired to sign-up, activation and billing webhooks;
 - the `gtm_ref` middleware;
 - the three read routes, behind the signature check and a whitelist query;
 - the proof route, returning a stub.
 
-It uses no real data.
+The app itself is not in the repository yet. [packages/sdk](../packages/sdk/README.md) has each piece as code, and `tests/contract/sdk-host.test.ts` exercises the host side end to end with invented data.

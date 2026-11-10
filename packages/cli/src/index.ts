@@ -22,7 +22,7 @@ Commands, in the order a new deployment uses them:
   brain diff        show which components and templates differ from what is uploaded
   flags             list, get, set or unset feature flags in KV, checked against the flag registry
   doctor            check bindings, the cron trigger, configuration, adapters, secrets, webhooks,
-                    the kill switch and flags (--remote reads the deployed secrets and flags)
+                    the kill switch and flags (--remote reads the deployed secrets and the stop flags)
   deploy            doctor, migrate, a brain diff warning, then wrangler deploy (--dry-run changes nothing)
 
 Commands that talk to Cloudflare take --env staging|production (production is the default) and run

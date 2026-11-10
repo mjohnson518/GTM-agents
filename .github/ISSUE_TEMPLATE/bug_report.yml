@@ -28,7 +28,7 @@ body:
     id: version
     attributes:
       label: Version or commit
-      placeholder: e.g. main at abc1234
+      placeholder: e.g. 0.1.0, or main at abc1234
     validations:
       required: true
   - type: dropdown
@@ -41,7 +41,8 @@ body:
         - An adapter
         - CLI (gtm)
         - Worker template
-        - Admin dashboard
+        - Operator dashboard
+        - Ship module
         - Brain or templates
         - Docs
         - Repository checks or CI

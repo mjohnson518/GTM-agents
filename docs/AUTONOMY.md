@@ -22,11 +22,11 @@ The code that owns an action reads its class's level when it acts. These classes
 | `cold_batch` | The cold batch and its follow-up steps send drafts that pass the quality gate and the model reviewer without a release code ([OUTREACH.md](OUTREACH.md), [SEQUENCES.md](SEQUENCES.md)) |
 | `reply_send` | A reply to someone who wants a call, carrying your booking link, goes out at once when every auto-send rule passes, and you are told after |
 | `reply_demo_link` | A reply carrying one approved asset to someone who asked to see the product goes out at once when every auto-send rule passes, and you are told after |
-| `lifecycle_activation`, `feedback`, `reengage`, `at_risk` | The lifecycle follow-up of that class goes out from its approved template when the sweep drafts it, and you are told after ([LIFECYCLE.md](LIFECYCLE.md)). The upgrade and win-back offers never do: they belong to `offers` |
+| `lifecycle_activation`, `feedback`, `reengage`, `at_risk` | The lifecycle follow-up of that class goes out from its approved template instead of being drafted, and at level 2 you are told after ([LIFECYCLE.md](LIFECYCLE.md)). The upgrade and win-back offers never do: they belong to `offers` |
 | `brain_edit`, `retrospective_actuation` | A learning loop's own proposal of that class applies without you, only for changes that never reach a prospect on their own ([LEARNING.md](LEARNING.md)) |
 | `ship_spec`, `ship_notification` | With the optional ship module: a low-risk spec is approved without you (at most 2 a run), and an "it is live" note that passes the quality gate goes out ([SHIP.md](SHIP.md)). Merging stays with a person |
 
-Every other class drafts for approval at every level. Level 3 behaves like level 2 for now: every automatic action is still announced as it happens, and the digest-only mode is not built.
+Every other class drafts for approval at every level. The digest that level 3 names is not built. For the cold batch and automatic replies, level 3 behaves like level 2: every automatic action is still announced as it happens. The lifecycle follow-ups and the ship module's specs and notes announce only at level 2; at level 3 they act without a notice, so keep those classes at 2 if you want to hear about each one.
 
 The weekly review proposes a promotion only for the first three (`AUTOMATIC_PATHS` in `promotion.ts`), which have an outcome or auto-send rule set to judge them by. The others collect evidence, shown in `autonomy-status`, and change level only when you set it with `autonomy-set`.
 
@@ -50,7 +50,7 @@ A class acts at the **lower** of two values:
 
 So a recorded change can only lower what the flag says. A class with no recorded change acts at its flag or its starting level, which only someone with access to the deployment's flag store or `gtm.config.ts` can set: that is a deployment decision, not an earned level. Once a class has a recorded change, raising it past that change needs a confirmed operator change; a demotion holds even when the flag store cannot be written; and a value written straight to the flag store (`gtm flags set`) cannot lift a class above its latest recorded change. Use `autonomy-set` from the operator chat to change levels.
 
-Every read fails closed, toward level 1: a flag that cannot be read or holds anything but one digit from 0 to 3, a change record that cannot be read (which also counts as a standing demotion), and an unknown class name all read as 1 at most. The cold batch, the follow-up sweep and automatic replies all read their level through this one reader (`readAutonomyLevel` in `store.ts`).
+Every read fails closed, toward level 1: a flag that cannot be read or holds anything but one digit from 0 to 3, a change record that cannot be read (which also counts as a standing demotion), and an unknown class name all read as 1 at most. The cold batch, the follow-up sweep, automatic replies and the lifecycle follow-ups all read their level through this one reader (`readAutonomyLevel` in `store.ts`).
 
 A **standing demotion** (the latest recorded change is a demotion), or level 0, also stops the cold batch's `cold_batch:auto_approve` switch: after harm, nothing in that class goes out on its own until a person records a level again with `autonomy-set`, even `autonomy-set cold_batch 1` to keep the switch.
 
@@ -69,7 +69,7 @@ Every decision about an action writes one row in `autonomy_events`, through one 
 Who writes what:
 
 - **The cold batch:** `approved_unchanged` when you release a batch (a whole batch is one decision, written once), `auto_sent` when a batch goes out on its own.
-- **The follow-up sweep:** the same, under `cold_batch`: `sequence-release` is one decision, and each automatic sweep that sends is one `auto_sent`.
+- **The follow-up sweep:** the same, under `cold_batch`: a `sequence-release-<id>-<code>` is one decision, and each automatic sweep that sends is one `auto_sent`.
 - **Replies:** `approved_unchanged` or `approved_edited` when an approved reply is sent, from chat or from the mailbox ([REPLIES.md](REPLIES.md)); `rejected` when one is turned down or left unsent for 7 days; `auto_sent` when one went out automatically.
 - **Meeting drafts** (the recap, the rebook and the post-demo follow-ups, [CONVERT.md](CONVERT.md)): `approved_unchanged` when approved in chat, `rejected` when rejected there. Chat approval cannot change the text, and these drafts are sent from your mail client, so edits made there are not seen.
 - **Lifecycle follow-ups** ([LIFECYCLE.md](LIFECYCLE.md)): under the class its rule names (`lifecycle_activation`, `feedback`, `reengage` or `at_risk`), `approved_unchanged` or `approved_edited` on `fu-approve`, `rejected` on `fu-reject`, and `auto_sent` when the sweep sends at an earned level. The upgrade and win-back offers record nothing, under any class.
@@ -132,6 +132,7 @@ After a demotion the operator is told within the hour, and the class's flag is w
 | `meeting-recap` | `convert/drafts.ts` (fixed text) | `post_meeting_followup` | `tests/evals/writers.eval.ts` |
 | `meeting-rebook` | `convert/drafts.ts` (fixed text) | `rebook` | `tests/evals/writers.eval.ts` |
 | `post-demo-follow-ups` | `convert/drafts.ts` (fixed text) | `post_meeting_followup` | `tests/evals/writers.eval.ts` |
+| `lifecycle-follow-ups` | `lifecycle/followup-rules.ts` (templates) | `lifecycle_activation`, `feedback`, `reengage`, `at_risk`, `offers` | `tests/evals/writers.eval.ts` |
 | `operator-agent-drafts` | `tools/drafts-create.ts` (the chat agent) | `other` | none yet |
 
 Each eval runs the writer's real code for invented contacts and scores the result with the deterministic scorers in `scorers.ts`: no em or en dash, the content lint passes, no figure absent from what the writer was given, and length bounds. The reply drafter is a model writer, so a fake model stands in for it, and the eval also checks its prompt contract (approved material only in the system prompt, the sender's text fenced in the user turn). Every suite also proves the scorers catch a bad output. `tests/evals/reply-auto-send.eval.ts` scores the auto-send decision over realistic replies and injected instructions.
@@ -223,7 +224,7 @@ export default createWorker(config, {
 
 ## Limits
 
-- **Level 3 is announced like level 2.** Every automatic action still sends its own notice; the digest-only mode is not built.
+- **The level 3 digest is not built.** The cold batch and automatic replies still announce every automatic action at level 3; the lifecycle follow-ups and the ship module's specs and notes do not, and nothing reports them in a digest yet.
 - **The review proposes only three classes** (`cold_batch`, `reply_send`, `reply_demo_link`). The lifecycle, learning and ship classes act on their level too, but only you raise them, with `autonomy-set`.
 - **The cold batch's rate check reads all outreach** in its window, not only the batches that went out on their own. The window restarts only when the operator raises the class: it then starts at that raise, so sends judged before it do not demote the class straight back. A lowering, or a level set again at the same value, does not restart it.
 - **A level set before any recorded change** (`gtm flags set`, or `autonomy.defaults`) applies without the two-step command. Use `autonomy-set` so every change is recorded.

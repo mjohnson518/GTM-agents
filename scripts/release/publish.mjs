@@ -7,7 +7,8 @@
 // hash of release.json that the pack job reported as a job output. Before
 // anything is published it checks that every tarball's package.json carries the release version
 // and that the tag is v<that version>. A real publish also requires GitHub Actions (for provenance)
-// and a non-empty NODE_AUTH_TOKEN, and refuses otherwise. A version already on the registry is
+// and a way to sign in to npm: a non-empty NODE_AUTH_TOKEN (the first release), or else npm's
+// trusted publishing, which needs the job's OIDC token and npm 11.5.1 or later. It refuses otherwise. A version already on the registry is
 // skipped when its integrity matches the local tarball and stops the run when it does not, so a run
 // that failed halfway can be re-run. Prereleases publish under the "next" dist-tag; a stable version
 // older than the registry's latest publishes under "maintenance", so "latest" never moves backwards.
@@ -20,7 +21,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { TARBALL_DIR, capture, distTagFor, publishProblems, readReleaseRecord, run } from "./lib.mjs";
+import { TARBALL_DIR, capture, distTagFor, publishAuth, publishProblems, readReleaseRecord, run } from "./lib.mjs";
 
 const { values } = parseArgs({ options: { "dry-run": { type: "boolean" }, tag: { type: "string" }, "record-sha256": { type: "string" } } });
 const dryRun = values["dry-run"] === true;
@@ -30,8 +31,10 @@ function main() {
   const record = readReleaseRecord(values["record-sha256"] !== undefined ? { expectedRecordSha256: values["record-sha256"] } : {});
   const tag = values.tag ?? (process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : undefined);
   const manifests = record.packages.map((p) => ({ expected: p.name, ...JSON.parse(capture("tar", ["-xzOf", join(TARBALL_DIR, p.tarball), "package/package.json"])) }));
-  const problems = publishProblems({ version: record.version, tag, dryRun, env: process.env, manifests });
+  const env = { ...process.env, NPM_CLI_VERSION: dryRun ? "" : capture("npm", ["--version"]).trim() };
+  const problems = publishProblems({ version: record.version, tag, dryRun, env, manifests });
   if (problems.length) throw new Error(problems.join("; "));
+  if (!dryRun) console.log(`publish: signing in to npm with ${publishAuth(env).mode === "token" ? "the NPM_TOKEN secret" : "trusted publishing (OIDC)"}`);
 
   console.log(`publish: ${record.packages.map((p) => `${p.name}@${record.version}`).join(", ")}${dryRun ? " (dry run)" : ""}`);
   for (const p of record.packages) {

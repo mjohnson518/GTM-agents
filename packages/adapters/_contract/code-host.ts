@@ -19,6 +19,13 @@
 //     (a path out of the repository, a .git path, a submodule) are refused before any request;
 //   - openPullRequest opens one when none exists and returns the existing one, without writing,
 //     when it does;
+//   - contains answers true for a commit in another's history and for the same commit, false for
+//     one that is not, and throws (never answers) when the comparison fails;
+//   - for a host that can commit through a fork (fixtures.fork): the commit lands on the task
+//     branch in the fork with exactly one ref write, and no request writes the target; a fork that
+//     is behind is brought up to the base commit first; a fork whose base branch has commits of
+//     its own is refused with nothing written; a missing fork token fails with "auth" before any
+//     request and makes pushRefusal give a reason; the pull request is opened in the target;
 //   - readFile answers from recorded responses and null for a missing file;
 //   - recorded failures become AdapterErrors with the expected code, and the adapter uses only the
 //     injected fetch, never the global one.
@@ -68,13 +75,43 @@ export interface CodeHostFixtures {
     retry: RecordedRoute[];
     /** The branch already points at something else. */
     conflict: RecordedRoute[];
-    expected: { branch: string; commitSha: string; treeSha: string };
+    /** The result without `created`; its repo is the target. */
+    expected: { repo: string; branch: string; commitSha: string; treeSha: string };
   };
   pullRequest: {
     request: PullRequestRequest;
     fresh: RecordedRoute[];
     existing: RecordedRoute[];
     expected: { number: number; url: string };
+  };
+  /**
+   * Recorded comparisons. The cases cover a descendant (true), the same commit (true) and a commit
+   * that does not contain the ancestor (false); `failing` is a comparison the host fails.
+   */
+  contains: {
+    routes: RecordedRoute[];
+    cases: Array<{ name: string; ancestor: string; descendant: string; expected: boolean }>;
+    failing: { routes: RecordedRoute[]; ancestor: string; descendant: string };
+  };
+  /** For a host that can commit through a fork: options that send `repo`'s ship branches to `forkRepo`. */
+  fork?: {
+    options: Record<string, unknown>;
+    /** Every secret, the fork's token included. */
+    secrets: Record<string, string>;
+    forkTokenName: string;
+    forkRepo: string;
+    /** True for a request addressed to the fork rather than the target. */
+    isForkRequest(request: Request): boolean;
+    commit: {
+      /** The fork's copy of the base branch already reaches the base commit. */
+      fresh: RecordedRoute[];
+      /** The fork's copy is behind the target's, and is brought up to the base commit first. */
+      behind: RecordedRoute[];
+      /** The fork's copy has commits the target does not have. */
+      diverged: RecordedRoute[];
+      expected: { branch: string; commitSha: string; treeSha: string };
+    };
+    pullRequest: { fresh: RecordedRoute[]; existing: RecordedRoute[]; expected: { number: number; url: string } };
   };
   readFile: { path: string; ref: string; routes: RecordedRoute[]; expected: RepoFile; missingPath: string };
   /** A recorded answer for each kind of path: the gatekeeper tells a directory from a file, symlink or submodule with it. */
@@ -114,9 +151,9 @@ export function runCodeHostContract(create: (ctx: AdapterContext) => CodeHost, f
       expect(calls, "the adapter called the global fetch").toBe(0);
     });
 
-    const adapterWith = (routes: RecordedRoute[] = [], secrets = fixtures.secrets) => {
+    const adapterWith = (routes: RecordedRoute[] = [], secrets = fixtures.secrets, options = fixtures.options) => {
       const recorded = recordedFetch(routes);
-      return { recorded, adapter: create(testContext({ secrets, fetch: recorded.fetch, now: fixtures.now, options: fixtures.options })) };
+      return { recorded, adapter: create(testContext({ secrets, fetch: recorded.fetch, now: fixtures.now, options })) };
     };
     const sample = fixtures.events[0] ?? { event: "ping", body: "{}" };
 
@@ -197,6 +234,7 @@ export function runCodeHostContract(create: (ctx: AdapterContext) => CodeHost, f
         adapter.openPullRequest({ ...fixtures.pullRequest.request, repo: other }),
         adapter.pullRequest(other, 1),
         adapter.checks(other, fixtures.commit.request.baseSha),
+        adapter.contains(other, fixtures.commit.request.baseSha, fixtures.commit.expected.commitSha),
       ];
       for (const call of calls) expect((await adapterError(call)).code).toBe("invalid");
       expect(recorded.calls).toHaveLength(0);
@@ -262,6 +300,74 @@ export function runCodeHostContract(create: (ctx: AdapterContext) => CodeHost, f
       expect(found).toMatchObject({ ...fixtures.pullRequest.expected, created: false });
       expect(existing.recorded.calls.every((c) => c.method === "GET")).toBe(true);
     });
+
+    it("answers whether one commit contains another, and throws rather than answer when the comparison fails", async () => {
+      const answers = new Set(fixtures.contains.cases.map((c) => c.expected));
+      expect(answers.has(true) && answers.has(false), "the cases need a commit that contains the ancestor and one that does not").toBe(true);
+      expect(fixtures.contains.cases.some((c) => c.ancestor === c.descendant && c.expected), "the cases need the same commit").toBe(true);
+      const { adapter, recorded } = adapterWith(fixtures.contains.routes);
+      for (const c of fixtures.contains.cases) expect(await adapter.contains(fixtures.repo, c.ancestor, c.descendant), c.name).toBe(c.expected);
+      expect(recorded.calls.every((c) => c.method === "GET"), "a comparison writes").toBe(true);
+      const failing = adapterWith(fixtures.contains.failing.routes);
+      await adapterError(failing.adapter.contains(fixtures.repo, fixtures.contains.failing.ancestor, fixtures.contains.failing.descendant));
+    });
+
+    const fork = fixtures.fork;
+    if (fork) {
+      describe("through a fork", () => {
+        const forkAdapter = (routes: RecordedRoute[], secrets = fork.secrets) => adapterWith(routes, secrets, fork.options);
+        /** In fork mode nothing but opening the pull request may write the target. */
+        const writes = (calls: Request[]) => calls.filter((c) => c.method !== "GET" && c.method !== "HEAD");
+
+        it("declares the fork's token as an optional secret", () => {
+          expect(manifestSchema.parse(fixtures.manifest).optionalSecrets).toContain(fork.forkTokenName);
+        });
+
+        it("commits once to the task branch in the fork and writes nothing in the target", async () => {
+          const { recorded, adapter } = forkAdapter(fork.commit.fresh);
+          expect(await adapter.commit(fixtures.commit.request)).toEqual({ ...fork.commit.expected, repo: fork.forkRepo.toLowerCase(), created: true });
+          const refWrites = recorded.calls.filter((c) => fixtures.isRefWrite(c));
+          expect(refWrites).toHaveLength(1);
+          expect(refWrites.every((c) => fork.isForkRequest(c)), "a ref was written outside the fork").toBe(true);
+          expect(writes(recorded.calls).every((c) => fork.isForkRequest(c)), "the commit wrote the target").toBe(true);
+          await assertNoForbiddenWrites(recorded.calls);
+        });
+
+        it("brings a fork that is behind up to the base commit before it commits, forcing nothing", async () => {
+          const { recorded, adapter } = forkAdapter(fork.commit.behind);
+          expect(await adapter.commit(fixtures.commit.request)).toEqual({ ...fork.commit.expected, repo: fork.forkRepo.toLowerCase(), created: true });
+          expect(recorded.calls.filter((c) => fixtures.isRefWrite(c))).toHaveLength(1);
+          expect(writes(recorded.calls).every((c) => fork.isForkRequest(c)), "the sync or the commit wrote the target").toBe(true);
+          await assertNoForbiddenWrites(recorded.calls);
+        });
+
+        it("refuses a fork whose base branch has commits of its own, and writes nothing", async () => {
+          const { recorded, adapter } = forkAdapter(fork.commit.diverged);
+          expect((await adapterError(adapter.commit(fixtures.commit.request))).code).toBe("invalid");
+          expect(writes(recorded.calls)).toHaveLength(0);
+        });
+
+        it("fails before any request when the fork's token is missing, and pushRefusal says so", async () => {
+          const without = { ...fork.secrets };
+          delete without[fork.forkTokenName];
+          const { recorded, adapter } = forkAdapter(fork.commit.fresh, without);
+          expect(adapter.pushRefusal()).toEqual(expect.stringContaining(fork.forkTokenName));
+          expect((await adapterError(adapter.commit(fixtures.commit.request))).code).toBe("auth");
+          expect(recorded.calls).toHaveLength(0);
+        });
+
+        it("opens the pull request in the target from the fork's branch, once", async () => {
+          const fresh = forkAdapter(fork.pullRequest.fresh);
+          expect(await fresh.adapter.openPullRequest(fixtures.pullRequest.request)).toMatchObject({ ...fork.pullRequest.expected, created: true });
+          const opened = writes(fresh.recorded.calls);
+          expect(opened).toHaveLength(1);
+          expect(opened.some((c) => fork.isForkRequest(c)), "the pull request was opened in the fork").toBe(false);
+          const existing = forkAdapter(fork.pullRequest.existing);
+          expect(await existing.adapter.openPullRequest(fixtures.pullRequest.request)).toMatchObject({ ...fork.pullRequest.expected, created: false });
+          expect(writes(existing.recorded.calls)).toHaveLength(0);
+        });
+      });
+    }
 
     it("answers pushRefusal with a reason or null, without a request", () => {
       const { adapter, recorded } = adapterWith([]);

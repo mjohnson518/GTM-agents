@@ -1,6 +1,6 @@
 # Brain and template schema
 
-Everything a deployment knows about its company, market and voice lives in two folders next to `gtm.config.ts`:
+This page is for deployers writing the brain and templates for their company, and for contributors changing the brain or template engines (`packages/core/src/brain/` and `packages/core/src/templates/`). Everything a deployment knows about its company, market and voice lives in two folders next to `gtm.config.ts`:
 
 - **`brain/`:** short, typed, operator-approved lists that prompts read instead of whole documents.
 - **`templates/`:** operator-written email templates. Cold copy is assembled from these by substitution, never generated.
@@ -261,7 +261,7 @@ Is that something your team tracks today, or does it mostly show up as frustrati
 | `kind` | yes | One of `cold_intro`, `follow_up`, `breakup`, `check_in`, `proposal`, `lifecycle` |
 | `status` | yes | `draft` or `approved` |
 | `step` | for sequence kinds | The sequence step: `cold_intro` is 1, then `follow_up`, then `breakup` |
-| `angle` | no | The signal angle the opener uses: `none` (the default), `job_change`, `hiring`, `funding`, `leadership`, `launch`, `news`, `custom`. Follow-ups match the angle of step 1 |
+| `angle` | no | The signal angle the opener uses: `none` (the default), `job_change`, `hiring`, `funding`, `leadership`, `launch`, `news`, `custom`. A follow-up step prefers templates written for the first email's angle, then those with angle `none` |
 | `subject` | yes | At most 90 characters after substitution. May use variables |
 | `volume_weight` | no | A number from 0 to 1 (default 1): the operator's share before experiments take over |
 | `segments`, `personas`, `team_sizes` | no | Targeting lists. A template with targeting is offered only to matching contacts |
@@ -273,16 +273,16 @@ Is that something your team tracks today, or does it mostly show up as frustrati
 |---|---|
 | `{{first_name}}`, `{{last_name}}`, `{{title}}` | The contact |
 | `{{account_name}}` | The account |
-| `{{angle_opener}}` | The operator's fixed opener for the signal angle, with only the account name substituted. Third-party text never reaches an email |
+| `{{angle_opener}}` | The operator's fixed opener for the signal angle, with only the account name substituted, from the contact's own real, unexpired signal. Third-party text never reaches an email |
 | `{{angle_age}}` | How long ago the signal happened, for example "last week" |
+| `{{angle_headline}}` | The signal's cleaned headline, only for source types you whitelist ([SIGNALS.md](SIGNALS.md)). Every draft from a template that uses it is reviewed by a person |
 | `{{persona_hint}}` | The persona playbook line for the contact's persona |
-| `{{proven_insight}}` | An approved learning snippet |
-| `{{original_subject}}` | The step-1 subject, for follow-ups that thread under it |
+| `{{original_subject}}` | The first email's subject, for follow-up steps. A follow-up's subject is always `Re: ` and that subject, so it threads |
 | `{{booking_url}}` | The booking link from config |
 | `{{sender_name}}` | The agent name from config |
-| `{{company_context}}` | Up to 300 characters of the account's own site text. Using it marks every draft from the template for individual review |
 | `{{segment_line}}`, `{{team_size_line}}`, `{{persona_line}}` | Operator-written copy lines for the contact's segment, team size or persona. Each must sit alone on its line; when it is empty, the whole line is removed |
-| `{{attributes.<key>}}` | A field from the contact's or account's `attributes` |
+| `{{attributes.<key>}}` | A field from the contact's or account's `attributes`, when it is short single-line text with no link. Every draft from a template that uses one is reviewed by a person |
+| `{{proven_insight}}`, `{{company_context}}` | Reserved for an approved learning snippet and the account's own site text. They validate, but nothing fills them in this release, so a template that uses either is held for every contact |
 
 **Skip rather than guess.** If any variable a template uses has no value for a contact, the draft is held for that contact. Nothing ever falls back to "Hi there" or "your company".
 
@@ -290,7 +290,7 @@ Is that something your team tracks today, or does it mostly show up as frustrati
 
 ### Template rules
 
-- The body is plain text. It has no footer, unsubscribe line or tracking: the send path appends the postal footer and the unsubscribe line to every email.
+- The body is plain text. It has no footer, unsubscribe line or tracking: the send function appends the postal footer and the unsubscribe line to every email sent from a template.
 - The only links allowed are `{{booking_url}}` and URLs on your own company domain.
 - Word counts after substitution: `cold_intro` 30 to 180, `follow_up`, `breakup` and `check_in` 12 to 120, `proposal` and `lifecycle` 12 to 160. Validation rejects a body that is already over the maximum before substitution, and warns when it may be under the minimum; the send-time quality gate enforces the bounds on the rendered draft.
 - `{{company_context}}` is not allowed in a subject.
@@ -304,12 +304,14 @@ These are structural checks. At send time, every rendered draft also passes the 
 
 ```bash
 npx gtm brain validate                 # ./brain and ./templates
-npx gtm brain validate path/to/brain   # a brain directory; also checks a templates/ folder inside it
+npx gtm brain validate path/to/brain   # a brain directory, with the templates/ folder inside it (or next to it, when the directory is named brain)
 npx gtm brain validate --write-lock    # validate, then write brain/brain.lock.json
 ```
 
+`--templates <dir>` names another templates folder, and `--domain <domain>` sets the company domain for the template link check (otherwise it comes from `gtm.config.ts`).
+
 **Errors** (non-zero exit):
-- a file name that is not one of the fourteen components;
+- a file name that is not one of the fourteen components, or a file in the brain folder that is not Markdown (`README.md` and the lock file excepted);
 - invalid frontmatter;
 - an unknown field or a missing required field;
 - a wrong enum value, an out-of-range number or a malformed date;

@@ -1,5 +1,6 @@
 // GTM-agents: a CodeHost for the ship build's tests: an in-memory repository at one base commit,
-// commits and pull requests that are idempotent per task the way the port requires, and webhooks
+// commits and pull requests that are idempotent per task the way the port requires, a commit
+// history that contains() answers from, an optional fork the ship branches go to, and webhooks
 // "signed" with a shared secret in a header. No vendor is involved, and every repository, commit
 // and pull request is invented.
 import { AdapterError, shipBranch, type ChecksState, type CodeHost, type CodeHostEvent, type CommitRequest, type CommitResult, type PathKind, type PullRequestRef, type PullRequestRequest, type PullRequestState } from "@gtm-agents/core/ports";
@@ -18,6 +19,8 @@ export interface FakeCodeHostOptions {
   /** Paths that are a symlink or submodule (or anything else) at the base commit, overriding what files implies. */
   kinds?: Record<string, PathKind>;
   baseSha?: string;
+  /** Commit the ship branches to this fork (lowercase owner/name) instead of the repository. */
+  fork?: string;
 }
 
 export interface FakeCodeHost extends CodeHost {
@@ -32,6 +35,12 @@ export interface FakeCodeHost extends CodeHost {
   bodiesRead: number;
   /** Make the next commit throw, to test a failing step. */
   failCommit: Error | null;
+  /** The history contains() answers from: a commit to the commits it has in its history. */
+  history: Map<string, Set<string>>;
+  /** Every contains() call, as [ancestor, descendant]. */
+  compared: Array<[string, string]>;
+  /** Make contains() throw this, to test a comparison that fails. */
+  failContains: Error | null;
 }
 
 const sha = (n: number) => n.toString(16).padStart(40, "0");
@@ -54,6 +63,9 @@ export function fakeCodeHost(options: FakeCodeHostOptions): FakeCodeHost {
     calls: [],
     bodiesRead: 0,
     failCommit: null,
+    history: new Map(),
+    compared: [],
+    failContains: null,
     allowedRepos: () => [repo],
     pushRefusal: () => options.pushRefusal ?? null,
     branchHead(r, branch) {
@@ -84,6 +96,7 @@ export function fakeCodeHost(options: FakeCodeHostOptions): FakeCodeHost {
       host.calls.push("commit");
       assertRepo(req.repo);
       if (host.failCommit) return Promise.reject(host.failCommit);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(req.baseBranch) || req.baseBranch.startsWith("ship/")) return Promise.reject(new AdapterError("the base branch is not a branch a ship change can target", "invalid", false));
       const branch = shipBranch(req.taskId);
       const fingerprint = JSON.stringify([req.baseSha, req.files]);
       const existing = committed.get(branch);
@@ -92,7 +105,7 @@ export function fakeCodeHost(options: FakeCodeHostOptions): FakeCodeHost {
         return Promise.resolve({ ...existing.result, created: false });
       }
       host.commits.push(req);
-      const result: CommitResult = { branch, commitSha: sha(0xc0 + next), treeSha: sha(0xd0 + next), created: true };
+      const result: CommitResult = { repo: options.fork?.toLowerCase() ?? repo, branch, commitSha: sha(0xc0 + next), treeSha: sha(0xd0 + next), created: true };
       next += 1;
       committed.set(branch, { result, fingerprint });
       return Promise.resolve(result);
@@ -121,6 +134,13 @@ export function fakeCodeHost(options: FakeCodeHostOptions): FakeCodeHost {
       host.calls.push("checks");
       assertRepo(r);
       return Promise.resolve({ state: "none", failing: [] });
+    },
+    contains(r, ancestorSha, descendantSha) {
+      host.calls.push("contains");
+      assertRepo(r);
+      host.compared.push([ancestorSha, descendantSha]);
+      if (host.failContains) return Promise.reject(host.failContains);
+      return Promise.resolve(ancestorSha === descendantSha || (host.history.get(descendantSha)?.has(ancestorSha) ?? false));
     },
     async verifyWebhook(request) {
       host.calls.push("verifyWebhook");

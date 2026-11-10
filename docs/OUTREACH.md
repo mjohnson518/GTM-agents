@@ -1,6 +1,6 @@
 # Outreach: composing the daily cold batch
 
-This page is for deployers turning on cold outreach, and for contributors changing how first touches are built or checked. It covers how templates and copy lines become drafts, the quality gate and every code it reports, the model reviewer, the daily cold batch step by step, who selection may and may not write to, campaign readiness, approval manifests and the release command, the holdout, auto-approve, and the flags and jobs involved. Delivery (the provider boundary, send windows, caps, the warm-up ramp, unsubscribe and the bounce monitor) is the send function's job and has its own guide. The code lives in `packages/core/src/outreach/` and `packages/core/src/quality/`, published as `@gtm-agents/core/outreach` and `@gtm-agents/core/quality`.
+This page is for deployers turning on cold outreach, and for contributors changing how first touches are built or checked. It covers how templates and copy lines become drafts, the quality gate and every code it reports, the model reviewer, the daily cold batch step by step, who selection may and may not write to, campaign readiness, approval manifests and the release command, the holdout, auto-approve, and the flags and jobs involved. Delivery (the email provider, send windows, caps, the warm-up ramp, unsubscribe and the bounce monitor) is the send function's job and has its own guide, [SENDING.md](SENDING.md). The code lives in `packages/core/src/outreach/` and `packages/core/src/quality/`, published as `@gtm-agents/core/outreach` and `@gtm-agents/core/quality`.
 
 ## What it does
 
@@ -18,7 +18,7 @@ Once a weekday the batch picks the best-fitting cold contacts, one per account, 
 
 1. **Templates.** Write `templates/*.md` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#templates)) and validate them with `npx gtm brain validate`. At runtime the batch serves templates from KV under the same rules as the brain: a lock at `templates:lock` (`{"version": 1, "hash": ..., "files": {"cold-intro.md": "<sha256 of the file>"}}`, built by `computeTemplateLock`) and each file at `template:file:<id>`. A template is served only when its bytes match the lock, it says `status: approved`, and it passes validation with your company's domain. `gtm brain upload` writes these keys ([DEPLOYING.md](DEPLOYING.md)); alternatively, pass the files bundled with the Worker as `templates` (below).
 2. **The brain.** Upload an approved, locked brain. The batch reads the `icp` never list (a brain that cannot be read whole stops the batch), and the reviewer and the claims check read `voice`, `facts` and `message-pillars`.
-3. **Register the job** in `apps/worker/src/index.ts`, with the send function and the day's volume from the send path:
+3. **Register the job** in `src/index.ts` (the template, `apps/worker/src/index.ts`, already does), with the send function and the day's volume from the warm-up ramp:
 
    ```ts
    import { createWorker, type Env } from "@gtm-agents/core";
@@ -45,8 +45,8 @@ Once a weekday the batch picks the best-fitting cold contacts, one per account, 
    ```
 
    `sendOutreach` is what the release command sends through; without it, a release is refused.
-4. **The operator chat.** The release command arrives through the operator agent, so it needs the operator channel's webhook, the `CHAT_QUEUE` binding with its consumer (`agent: { chatQueue }` in `createWorker`), and `operator:agent_enabled` set to `true` ([OPERATOR.md](OPERATOR.md)). Without them the batch still drafts and writes its manifest, but nothing can release it.
-5. **Turn the batch on:** set `cold_batch:enabled` to `true` in KV. Leave auto-approve off: every batch then waits for your release.
+4. **The operator chat.** The release command arrives as a chat message, so it needs the operator channel's webhook, the `CHAT_QUEUE` binding with its consumer (`agent: { chatQueue }` in `createWorker`), and `operator:agent_enabled` set to `true` ([OPERATOR.md](OPERATOR.md)). Without them the batch still drafts and writes its manifest, but nothing can release it.
+5. **Turn the batch on:** `npx gtm flags set cold_batch:enabled true`. Leave auto-approve off: every batch then waits for your release.
 
 ## Templates and variables
 
@@ -81,7 +81,7 @@ Every draft passes the deterministic gate on NFKC-normalized text. A **block** m
 | `LINT_EMPTY_SUBJECT`, `LINT_EMPTY_BODY` | block | Nothing to send |
 | `LINT_HIDDEN_CHARACTER` | block | Zero-width, direction or control characters |
 | `LINT_HOUSE_RULE_CHARACTER` | block | An em or en dash |
-| `LINT_PLACEHOLDER_LEAK` | block | `{{ }}`, `{ }`, `[INSERT ...]`, `[Your ...]`, template tags, `%s`, TODO, TBD, lorem ipsum |
+| `LINT_PLACEHOLDER_LEAK` | block | `{{ }}`, `{ }`, `[INSERT ...]`, `[Your ...]`, template tags, template literals, `%s`, `%d`, TODO, TBD, lorem ipsum |
 | `LINT_URL_SHORTENER`, `LINT_HTML` | block | A link shortener; HTML markup |
 | `RECIPIENT_MISMATCH` | block | The recipient is not exactly one address equal to the contact's |
 | `UNUSABLE_ACCOUNT_NAME` | block | The copy names an account name the identity rules reject |
@@ -96,7 +96,7 @@ Every draft passes the deterministic gate on NFKC-normalized text. A **block** m
 | `NO_QUESTION` | hold | A cold intro that asks nothing |
 | `EXCLAMATIONS` | hold | More than one exclamation mark |
 | `MISSING_VARIABLE`, `NO_TEMPLATE` | hold | The copy could not be built (above) |
-| `PER_DRAFT_REVIEW` | hold | The template uses per-contact text from outside (site text or attributes), so a person reviews each draft |
+| `PER_DRAFT_REVIEW` | hold | The template uses per-contact text from outside (site text, attributes or a quoted headline), so a person reviews each draft |
 | `REVIEW_UNAVAILABLE` | hold | The model reviewer is off, or could not give a valid verdict |
 | `REVIEW_FAILED` | hold | The model reviewer did not pass the draft's template |
 
@@ -118,14 +118,14 @@ Behind `quality:model_review_enabled`, off by default.
 The `cold_batch` job runs at 13:00 UTC, Monday to Thursday. One run:
 
 1. **Gates.** `cold_batch:enabled` must be on and cold outreach must not be paused; either unreadable stops the run.
-2. **Templates and the brain.** A brain that cannot be read whole stops the run. No servable template stops a new batch and tells you once that day.
+2. **Templates and the brain.** A brain that cannot be read whole stops the run. No servable template stops the run too, and tells you once that day. An account weekly cap of 0, or one that cannot be read, also stops it.
 3. **Resume.** With auto-approve on, approved first touches from the last 14 days that were never handed over and are due (a YELLOW deferral, an interrupted run) are re-checked and handed over first, under the same readiness policy. They count against the day's volume. Only batches whose run has finished, or was interrupted more than 15 minutes ago, are resumed, so a rerun never races a run still writing its batch. A draft whose template is no longer served is refused.
 4. **The daily key.** Today's campaign id is fixed: `cb<YYYYMMDD>`. If today's campaign exists, the run only resumes it (in manual mode, it writes a missing manifest for its passing drafts) and never starts a second batch.
-5. **Volume.** The day's warm-up volume from the send path, lowered by `cold_batch:daily_limit`, the batch maximum of 1,500, the job's row ceiling, and today's room under `delivery:domain_daily_cap`. A volume that cannot be read is 0.
+5. **Volume.** The day's volume from the warm-up ramp, lowered by `cold_batch:daily_limit`, the batch maximum of 1,500, the job's row ceiling, and today's room under `delivery:domain_daily_cap`. A volume that cannot be read is 0.
 6. **Selection**, oversampled 1.5 times and divided by one minus the holdout rate, then **the picker**, then the canonical suppression check over the picks (a check that fails stops the run).
 7. **The campaign row** is inserted; that insert is the daily key, so of two concurrent runs only one continues.
-8. **An atomic claim per contact** in the effects ledger (`cold_pick:<date>:<contact id>`), then **the holdout split**, walking the claimed contacts in rank order until the batch is full.
-9. **Compose, gate and review** each draft.
+8. **The intent filter** while `intent_score:enforce` is on, then **an atomic claim per contact** in the effects ledger (`cold_pick:<date>:<contact id>`), then **the holdout split**, walking the claimed contacts in rank order until the batch is full.
+9. **Plan, compose, gate and review.** Each contact's template, experiment arm, subject line and send slot are planned and pinned first ([EXPERIMENTS.md](EXPERIMENTS.md)), then each draft is composed, gated and, with the reviewer on, reviewed.
 10. **Store.** A draft is `approved`, with `approved_digest` and `approved_by` (`auto:flag` or `auto:autonomy_level`), only when auto-approve applies and the draft passed the whole gate; otherwise `pending_approval`. Blocked copy is never stored. Each draft carries the idempotency key `cold:<date>:<contact id>`; the contact's `campaign_contacts` row is `pending` (or `skipped` when no draft could be built).
 11. **Readiness** over the drafts that passed, salvaged once (below).
 12. **Policy.** RED holds everything and pages you once that day. In manual mode, the batch writes the approval manifest and sends you samples and the release command. With auto-approve, a GREEN batch is handed over whole, and a YELLOW batch by half (at least five) with the rest deferred 24 hours.
@@ -188,7 +188,7 @@ The reply names what was sent, deferred, blocked or refused, and why. Sending th
 
 Follow-up steps are governed by the same autonomy class: at its default level each sweep's due steps wait for their own release command, `sequence-release-<id>-<code>`, which is separate from this one and cannot release a cold batch ([SEQUENCES.md](SEQUENCES.md)).
 
-Held drafts are not part of a manifest. They stay `pending_approval` (counted by `/status`) as a record of what the gate stopped and why, and expire after 14 days. No path sends a held cold draft today: approving one through the operator channel marks it approved, but only a manifest release hands cold drafts to the send function. Fix the cause (a template variable, a claim, the brain) and the contact is drafted again by a later batch once the draft expires.
+Held drafts are not part of a manifest. They stay `pending_approval` (counted by `/status`) as a record of what the gate stopped and why. A release never includes one: approving a held draft marks it approved, and only the auto-approve resume step (with auto-approve on) hands an approved cold draft over without a manifest. After 14 days a held draft no longer keeps its contact out of selection, so once you fix the cause (a template variable, a claim, the brain) a later batch drafts the contact again.
 
 ## Holdout
 
@@ -236,7 +236,6 @@ Change them with `createOutreachJobs({ ..., options: { batchSchedule, reviewMaxS
 
 ## Limits
 
-- **Weighted rotation only.** Allocation does not yet learn from replies.
-- **No signal angles yet.** Templates that use angle variables, insights, site text or an original subject are held until those sources exist.
+- **Some variables have no source.** The cold batch fills no `{{proven_insight}}`, `{{original_subject}}` or `{{company_context}}`, so a template that uses one is held for every contact.
 - **One template per contact.** A contact held for a missing variable is not offered another template that day.
-- **Held drafts are not sent.** A held cold draft is informational: there is no command yet that lists held drafts or releases one individually.
+- **Held drafts are not released.** A held cold draft is informational: no command lists held drafts or releases one individually.

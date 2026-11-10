@@ -14,6 +14,7 @@ import {
   lockstepProblems,
   mapExport,
   normalizeRepository,
+  publishAuth,
   publishProblems,
   publishablePackages,
   publishedManifest,
@@ -207,7 +208,19 @@ describe("release: publish guards", () => {
     expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: true, env: {}, manifests: [{ ...manifests[0]!, version: "1.2.2" }] })[0]).toMatch(/expected @gtm-agents\/core@1.2.3/);
     expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: true, env: {}, manifests: [{ ...manifests[0]!, private: true }] })[0]).toMatch(/marked private/);
     expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: false, env: { NODE_AUTH_TOKEN: "set" }, manifests })[0]).toMatch(/only in GitHub Actions/);
-    expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: false, env: { GITHUB_ACTIONS: "true", NODE_AUTH_TOKEN: "" }, manifests })[0]).toMatch(/NODE_AUTH_TOKEN is empty/);
+    expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: false, env: { GITHUB_ACTIONS: "true", NODE_AUTH_TOKEN: "" }, manifests })[0]).toMatch(/no way to sign in to npm/);
+  });
+
+  it("publishes with the token when there is one, else through trusted publishing with a new enough npm", () => {
+    const oidc = { GITHUB_ACTIONS: "true", ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.example/x", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "t" };
+    expect(publishAuth({ ...oidc, NODE_AUTH_TOKEN: "set" })).toEqual({ mode: "token" });
+    expect(publishAuth({ ...oidc, NPM_CLI_VERSION: "11.5.1" })).toEqual({ mode: "oidc" });
+    expect(publishAuth({ ...oidc, NPM_CLI_VERSION: "12.0.0" })).toEqual({ mode: "oidc" });
+    expect(publishProblems({ version: "1.2.3", tag: "v1.2.3", dryRun: false, env: { ...oidc, NPM_CLI_VERSION: "11.19.1" }, manifests })).toEqual([]);
+    // Without a token, an npm too old for the exchange, or a job without the OIDC permission, refuses.
+    for (const env of [{ ...oidc, NPM_CLI_VERSION: "11.5.0" }, { ...oidc, NPM_CLI_VERSION: "10.9.2" }, { ...oidc }, { GITHUB_ACTIONS: "true", NPM_CLI_VERSION: "11.19.1" }]) {
+      expect(publishAuth(env).mode, JSON.stringify(env)).toBe("none");
+    }
   });
 
   it("never moves latest backwards, and keeps prereleases off latest", () => {

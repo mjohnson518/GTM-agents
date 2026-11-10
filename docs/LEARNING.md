@@ -34,15 +34,15 @@ A write that fails puts it back to pending. Approvals and rejections of loop pro
 
 ### For the dashboard
 
-`toProposalView(proposal)` returns the gateway protocol's `Proposal` shape (`id` is the short id; `source` is `learning`, `brain` or `copy`; `digest` is what to echo back). The functions a gateway calls:
+`learningDashboard()` returns the learning module's sources for the operator dashboard ([DASHBOARD.md](DASHBOARD.md)); the worker template passes it to `createWorker` as `dashboard`. `toProposalView(proposal)` returns the gateway protocol's `Proposal` shape (`id` is the short id; `source` is `learning`, `brain` or `copy`; `digest` is what to echo back). The gateway methods it serves:
 
 | Method | Function |
 |---|---|
-| `proposals.list`, `learning.list` | `listLearningProposals(db, { status, kinds })`, mapped with `toProposalView` |
-| `proposals.approve` | `approveLearningProposal({ db, kv, now }, id, shownDigest, "operator:<email>")` |
+| `proposals.list`, `learning.list` | `listLearningProposals(db, { status: "pending" })`, mapped with `toProposalView` |
+| `proposals.approve` | `approveLearningProposal({ db, kv, now }, id, digest, "operator:<email>")`, with the digest of the gateway's own read once it has checked the digest you were shown against it |
 | `proposals.reject` | `rejectLearningProposal({ db, now }, id, "operator:<email>", reason)` |
-| `fitness.trend` | `fitnessTrend(db, now, days)`: one point per day, `{ day, score, dimensions }`, null where nothing was scored |
-| `learning.summary` | `learningsText(db)` and `listLearningProposals` counts |
+| `fitness.trend` | `fitnessTrend(db, now, days)` (30 days unless asked): one point per day, `{ day, score, dimensions }`, null where nothing was scored |
+| `learning.summary` | `learningsText(db)`, the learnings document |
 
 ## The learnings document
 
@@ -83,7 +83,7 @@ Once a day the strategist reads the matured outreach numbers, template results, 
 
 ### Agent review (weekday mornings, judge)
 
-A top-tier model grades the last day's drafts and worker actions A to F and gives at most three corrective notes, stored as memory (`memories`, indexed in `memory_fts`). Drafts and task previews may quote outside text, so they reach the prompt only fenced as data; the system prompt is the fixed rubric. An answer that cannot be parsed stores nothing. Notes must meet the snippet constraints and name no one. The day's grade feeds the fitness score's research dimension.
+The `judge` model grades the last day's drafts and worker actions A to F and gives at most three corrective notes, stored as memory (`memories`, indexed in `memory_fts`). Drafts and task previews may quote outside text, so they reach the prompt only fenced as data; the system prompt is the fixed rubric. An answer that cannot be parsed stores nothing. Notes must meet the snippet constraints and name no one. The day's grade feeds the fitness score's research dimension.
 
 ### Fitness (daily, no model)
 
@@ -160,23 +160,25 @@ Every model call goes through the spend gate (the job's daily cap, the global li
 
 ## Wiring
 
+The worker template wires the loops already. In `src/index.ts`:
+
 ```ts
-// apps/worker/src/index.ts
-import { createLearningJobs } from "@gtm-agents/core/learning";
+import { createLearningJobs, learningDashboard } from "@gtm-agents/core/learning";
 
 const learning = createLearningJobs<Env>({
-  model: (env) => gateway(env),
+  model,
   operator,
   options: { fitnessTargets: { newPayingPerWeek: 2 } },
 });
 
 export default createWorker(config, {
   jobs: [...sourcing, ...outreach, ...replies, ...autonomy, ...learning],
+  dashboard: learningDashboard<Env>(),
   // ...
 });
 ```
 
-Give the `strategist`, `judge`, `writer`, `worker` and `triage` roles a model and a price in `gtm.config.ts` for the loops that call them. The operator commands need nothing more: the chat consumer routes them, and `voice-build` reads threads through the same mailbox the reply commands use (`inbox` in the operator agent options). Apply migration `0027_learning.sql` (`npx gtm migrate`).
+The template leaves `fitnessTargets` unset, so the revenue dimension stays unknown until you set `newPayingPerWeek`. Give the `strategist`, `judge`, `writer`, `worker` and `triage` roles a model and a price in `gtm.config.ts` for the loops that call them. The operator commands need nothing more: the chat consumer routes them, and `voice-build` reads threads through the same mailbox the reply commands use (the `inbox` option of `createWorker`, which the template sets). Apply the migrations, `0027_learning.sql` among them, with `npx gtm migrate`.
 
 ## Limits
 

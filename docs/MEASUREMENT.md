@@ -6,7 +6,7 @@ This page is for deployers who want to know what their deployment's numbers mean
 
 Every metric has exactly one implementation, a function in `packages/core/src/metrics/` that reads the database for a time window. Every report, experiment and promotion check calls those functions, so two reports asking about the same window always show the same number. A report module never counts anything itself: it holds no SQL at all, and a test fails the build if one ever does. The same holds for the send gates' bounce rates: a test fails the build if any module outside `metrics/` counts bounces or divides by them.
 
-Reports make no model calls. A number that cannot be read is shown as "could not be read", never as a zero, and a line that depends on something not measured (quotas; meetings while calendar sync is off; sign-ups, activations and paid customers while lifecycle is off) says "not measured yet".
+Reports make no model calls. A number that cannot be read is shown as "could not be read", never as a zero, and a line that depends on something not measured (quotas; meetings while calendar sync is off; sign-ups, activations and paid customers until the product bridge has delivered an event) says "not measured yet".
 
 ## Windows
 
@@ -70,7 +70,7 @@ A rate is always a count over its own denominator. When the denominator is zero 
 
 ## Matured samples
 
-Experiments (a later milestone) judge templates on matured samples only:
+Experiments ([EXPERIMENTS.md](EXPERIMENTS.md)) judge templates on matured samples only:
 
 - first touches only, because a reply is credited to the first touch that opened the conversation;
 - not hard bounced, because a bad address says nothing about copy;
@@ -93,14 +93,14 @@ One operator message each weekday at 12:00 UTC, behind `ops:daily_scorecard`. Ea
 
 | Line | What it shows |
 |---|---|
-| Week to date | First touches, positive replies, and (while their sources are on) meetings booked, sign-ups, activations and new paying customers since Monday. Quotas: not measured yet |
+| Week to date | First touches, positive replies, and (once their sources are measured) meetings booked, sign-ups, activations and new paying customers since Monday. Quotas: not measured yet |
 | Sends | First touches and follow-ups for the day, and for 7 days, and unnumbered sends when there are any |
 | Delivery, 7 days | Delivered of sends (delivered coverage), hard bounces and complaints with their rates. Flagged when hard bounces reach 2% of sends, complaints reach 0.1% of delivered mail, or delivered and bounce events together cover under 95% of sends (then the two rates cannot be trusted; check that the provider's webhook is arriving) |
 | Replies | Human and positive replies for the day and for 7 days, and over 7 days how many came after step 1, step 2 and so on |
 | Reply SLA | Replies owed for more than 4 hours and the oldest one's age (flagged when any), and the median time to answer over 30 days |
 | Spend | Spend for the day, and the six most expensive jobs |
 | Failed jobs | Failed runs for the day, by job (flagged when any) |
-| Convert, 30 days | Meetings booked and held, sign-ups, activations and paid, each while its source is on |
+| Convert, 30 days | Meetings booked and held (while calendar sync is on), and sign-ups, activations and paid (once the product bridge has delivered an event) |
 | Cohorts | First touches sent in 30 days and their positive replies, per cohort |
 | Measurement | ok, with the ledger coverage, or conclusions held and why (flagged) |
 | Waiting on you | Drafts pending approval by kind, cold batches and follow-up releases waiting, owed replies, manual touches |
@@ -121,7 +121,7 @@ It is sent at most once per UTC day: the day is claimed in the effects ledger be
 
 - held: contacts held out in that span; written to: contacts whose first touch was sent in it, leaving out anyone also held out;
 - positive: a positive reply from the contact received within 60 days after they entered, read from inbound mail the same way for both groups, so a held contact who writes in on their own counts just as a written-to one does;
-- sign-ups within 30 days, from the product outcome definition, while lifecycle is on. Otherwise the sign-up line says "not measured yet";
+- sign-ups within 30 days, from the product outcome definition, once the product bridge has delivered an event. Until then the sign-up line says "not measured yet";
 - lift: the written-to rate minus the held rate, in points.
 
 A lift is sufficient only with 100 or more contacts in each group and healthy measurement. Spillover within an account (a held contact's colleague was written to and passed it on) makes the held group look better than no outreach at all, so lift reads low, never high. The report says so every time.
@@ -147,7 +147,7 @@ Register the report jobs in `apps/worker/src/index.ts`, with the operator channe
 ```ts
 import { createReportJobs } from "@gtm-agents/core/reports";
 
-const reports = createReportJobs<Env>({ operator });
+const reports = createReportJobs<Env>({ operator, options: { owedWindowDays } });
 
 export default createWorker(config, {
   jobs: [...reports /* , the other jobs */],
@@ -156,7 +156,7 @@ export default createWorker(config, {
 });
 ```
 
-Reports go to `options.chatId`, or the first chat in `operator.allowedChatIds`. Then turn on the reports you want:
+`owedWindowDays` is the same value the template gives `createReplyJobs` (14 days), so the scorecard counts owed replies over the reply jobs' window. Reports go to `options.chatId`, or the first chat in `operator.allowedChatIds`. Then turn on the reports you want:
 
 ```bash
 npx gtm flags set ops:daily_scorecard true
@@ -183,11 +183,11 @@ A flag that cannot be read counts as off.
 | `funnel_digest` | 09:00 on Mondays | `ops:funnel_digest` | One message, 1 minute |
 | `cost_digest` | 14:00, Monday to Friday | `ops:cost_digest` | One message, 30 seconds |
 
-None calls a model or spends, and each is safe to rerun. Change a schedule or the chat with `createReportJobs({ operator, options: { scorecardSchedule, funnelSchedule, costSchedule, chatId } })`.
+None calls a model or spends, and each is safe to rerun. Change a schedule or the chat with `createReportJobs({ operator, options: { scorecardSchedule, funnelSchedule, costSchedule, chatId, owedWindowDays } })`.
 
 ## Limits
 
-- **Each source must be on.** Meetings need calendar sync, and sign-ups, activations and paid customers need lifecycle; while a source is off its lines say "not measured yet", and positive replies come from triage intent alone when calendar sync is off.
+- **Each source must be on.** Meetings need calendar sync, and sign-ups, activations and paid customers need the product bridge (lifecycle) to have delivered an event; until then their lines say "not measured yet", and positive replies come from triage intent alone when calendar sync is off.
 - **Outcomes are as of now.** A first touch's outcome keeps changing until its 60-day attribution window closes, so a report run later can show more replies for the same sends. Sends and delivery counts for a closed window do not change.
 - **Subject lines are today's.** The subject slice reads the template's subject line as it stands now, so editing a subject mid-window credits the whole window to the new line.
 - **Two bounce thresholds.** The scorecard flags hard bounces at 2% or more at any volume; the funnel digest flags them over 2% at 50 or more sends. Both read the same number for the same window.

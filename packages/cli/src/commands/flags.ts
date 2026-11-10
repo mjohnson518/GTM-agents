@@ -36,7 +36,6 @@ const ALLOWED: Array<[RegExp, readonly string[]]> = [
   [/^sequences:reply_intake$/, ["poll", "routed"]],
   [/^outreach:allocation_mode$/, ["weighted", "thompson"]],
   [/^outreach:min_email_confidence$/, ["high", "medium", "low"]],
-  [/^classifier_tier:/, ["off", "shadow", "on"]],
 ];
 /** Number flags that are shares rather than counts: [pattern, smallest, largest, smallest allowed exactly]. */
 const SHARES: Array<[RegExp, number, number, boolean]> = [

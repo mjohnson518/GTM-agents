@@ -58,8 +58,8 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
                      src/index.ts, gtm.config.ts, brain/, templates/)
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/, ship/ (the ship module wired in)
-docs/                ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, LEARNING, SHIP, DEPLOYING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+docs/                QUICKSTART, ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -176,6 +176,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How the operator dashboard is secured and what it can do | [docs/DASHBOARD.md](docs/DASHBOARD.md) |
 | How the learning loops propose and apply improvements | [docs/LEARNING.md](docs/LEARNING.md) |
 | How the optional ship module turns feedback into a pull request | [docs/SHIP.md](docs/SHIP.md) |
+| How to get from nothing to a first staging deployment | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
 | How to deploy and roll out a deployment | [docs/DEPLOYING.md](docs/DEPLOYING.md) |
 | The whole design in one place | [docs/BLUEPRINT.md](docs/BLUEPRINT.md) |
 | How does a host application talk to the agent | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) |

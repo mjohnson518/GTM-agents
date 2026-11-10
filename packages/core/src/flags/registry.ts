@@ -25,14 +25,12 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "cold_batch:enabled", kind: "boolean", default: "false", description: "Master switch for the daily cold batch." },
   { key: "cold_batch:auto_approve", kind: "boolean", default: "false", description: "Send passing drafts without a release code." },
   { key: "cold_batch:daily_limit", kind: "number", default: null, description: "An operator limit that can only lower the warm-up ramp level." },
-  { key: "cold_batch:run_now", kind: "boolean", default: null, description: "Run the cold batch on demand at the next minute." },
   { key: "outreach:ramp_level", kind: "number", default: "0", description: "Warm-up ramp level index." },
   { key: "outreach:min_email_confidence", kind: "string", default: "medium", description: "Verification floor for cold sends." },
   { key: "outreach:holdout_rate", kind: "number", default: "0.05", description: "Share of the ready window held out as a no-send control." },
   { key: "outreach:allocation_mode", kind: "string", default: "weighted", description: "Template allocation (docs/EXPERIMENTS.md). weighted: rotation by volume_weight. thompson: Thompson sampling with guardrails among general templates once every arm has 50 matured sends (a protected control of at least 20%, other arms at least 15%). Any other value, or a read error, is weighted." },
   { key: "quality:model_review_enabled", kind: "boolean", default: "false", description: "The model reviewer (judge role) in the quality gate. Off, or unavailable, nothing is approved automatically: drafts that would auto-send are held with REVIEW_UNAVAILABLE." },
   { key: "outreach:send_time_experiment", kind: "boolean", default: "false", description: "The send-time test (docs/EXPERIMENTS.md): each cold first touch's account gets a recipient-local slot, early (08 to 10) or afternoon (13 to 15), balanced within its time zone, and the send function narrows the window to it. Unreadable counts as off." },
-  { key: "outreach:seed_inboxes", kind: "json", default: null, description: "Seed inboxes for placement checks." },
   { key: "outreach:ref_tokens_enabled", kind: "boolean", default: "false", description: "Attribution tokens on product links." },
 
   // Experiments (docs/EXPERIMENTS.md). No model calls; nothing applies a copy change without a person.
@@ -74,10 +72,6 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "signals:lookalikes_enabled", kind: "boolean", default: "false", description: "Responder lookalikes (signal_lookalikes): companies similar to accounts that replied positively, booked meetings, signed up or pay; 30 raw candidates a run." },
   { key: "signals:coverage_fill_enabled", kind: "boolean", default: "false", description: "Coverage fill (signal_coverage_fill): up to 2 more people at fit 7+ accounts with fewer than 2 seats and a recent signal, reply or sign-up; 5 accounts a run, 30-day cooldown per account." },
   { key: "scoring:intent_enabled", kind: "boolean", default: "false", description: "The nightly intent score (intent_scoring), written to each cold contact's attributes. Shadow: it filters nothing unless intent_score:enforce is on." },
-  { key: "enrichment:second_provider_enabled", kind: "boolean", default: "false", description: "The second-provider step of the email waterfall." },
-  { key: "enrichment:job_check_enabled", kind: "boolean", default: "false", description: "Job-change checks for stale contacts." },
-  { key: "enrichment:job_check_required", kind: "boolean", default: "false", description: "Hold stale contacts that have not been job-checked." },
-  { key: "verification:backfill_daily", kind: "number", default: "50", description: "Addresses verified by the nightly backfill." },
 
   // Replies, sequences and convert.
   { key: "inbox:enabled", kind: "boolean", default: "false", description: "Inbox intake (docs/INBOX.md): the poll, sweep and watch renewal jobs, the push webhook's poll and Email Routing intake. Off, or unreadable, nothing is recorded or acted on: the push webhook verifies and acknowledges only, and routed mail is forwarded when a forward address is set, otherwise rejected." },
@@ -93,13 +87,9 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "sequences:reply_intake", kind: "string", default: "poll", description: "How replies reach the database, so the follow-up reply check knows it is not blind. poll (default): a step goes out only when inbox:enabled is on and the latest inbox poll completed in the last 10 minutes. routed: Cloudflare Email Routing only, where mail is recorded as it arrives; inbox:enabled alone is enough. Any other value, or a read error, holds every step." },
   { key: "sequences:enabled", kind: "boolean", default: "false", description: "Master switch for the cold sequence's follow-up steps (docs/SEQUENCES.md): the follow-up sweep, the stale-sequence check and the sequence-release command. Off, or unreadable, no follow-up is drafted or sent; replies still stop sequences." },
   { key: "followup:manual_channel_enabled", kind: "boolean", default: "false", description: "Ask the operator for a manual LinkedIn or X touch before the last step. Nothing is posted automatically." },
-  { key: "followup:multithread_enabled", kind: "boolean", default: "false", description: "Write to a colleague after silence." },
-  { key: "followup:reengage_enabled", kind: "boolean", default: "false", description: "Re-engage on a new signal." },
   { key: "convert:calendar_enabled", kind: "boolean", default: "false", description: "Calendar sync (docs/CONVERT.md): bookings found and attributed every 15 minutes, outreach to a booked contact's account stopped, the deal stepped to demo_scheduled, a prep brief, reminders at 24 hours and 1 hour, the held or no-show question, recap and rebook drafts, and the meeting commands. Off, or unreadable, nothing is read or changed. Nothing is ever sent but operator notices." },
   { key: "convert:post_demo_enabled", kind: "boolean", default: "false", description: "Draft the post-demo follow-ups on day 4 and day 10 after a held meeting, each for approval, once the recap is approved. They stop on any mail from the account, a suppressed address or a newer meeting. Never sent automatically." },
   { key: "convert:handoff_enabled", kind: "boolean", default: "false", description: "Write a static handoff brief for the operator when a deal reaches proposal or negotiation (hourly, no model call)." },
-  { key: "convert:booking_redirect_enabled", kind: "boolean", default: "false", description: "Serve booking links through the deployment, so the booking URL can change without editing templates. Records nothing per contact; bookings are detected by calendar sync." },
-  { key: "convert:pov_enabled", kind: "boolean", default: "false", description: "Proof-of-value requests." },
 
   // Lifecycle, the product bridge and billing (docs/LIFECYCLE.md).
   { key: "lifecycle:enabled", kind: "boolean", default: "false", description: "The product bridge and the customer lifecycle: POST /api/webhooks/product records signed events, the event spine routes them, sign-ups and payments move contacts and deals, and the lifecycle jobs run (stalled and dormant checks, the daily MRR snapshot, payload retention). Off, or unreadable, the product webhook answers 503 and records nothing, and recorded events wait unrouted, except user.deleted: an erasure is always recorded and carried out in full, whatever this flag says. No model calls." },
@@ -113,11 +103,8 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "ops:daily_scorecard", kind: "boolean", default: "false", description: "The daily scorecard (docs/MEASUREMENT.md): one operator message each weekday at 12:00 UTC, no model call. It carries spend, so the daily cost digest stands down while it is on." },
   { key: "ops:funnel_digest", kind: "boolean", default: "false", description: "The weekly funnel digest, Mondays at 09:00 UTC: sends, replies, delivery, the matured reply rate and holdout lift, flagging a reply rate under 3% or hard bounces over 2% at 50 or more sends. No model call." },
   { key: "ops:cost_digest", kind: "boolean", default: "false", description: "The daily cost digest, weekdays at 14:00 UTC: spend per job since the previous report. Skipped while ops:daily_scorecard is on. No model call." },
-  { key: "ops:target_accounts_page", kind: "boolean", default: "false", description: "The weekly target-accounts page." },
   { key: "scheduler:queue_enabled", kind: "boolean", default: "false", description: "Send each due job to JOBS_QUEUE, whose consumer runs one job per invocation with its own wall time. Needs the JOBS_QUEUE binding and its consumers in wrangler.jsonc. Off, unreadable, or without the binding, due jobs run inside the cron invocation (4 at a time, a 14-minute budget per minute)." },
   { key: "ops:retention_enabled", kind: "boolean", default: "false", description: "Daily run-row retention (run_retention, 03:40 UTC): deletes execution_runs rows that are skipped and over 7 days old, completed and over 30, or failed and over 90, always keeping the newest row of each job and status and never touching running rows. Off, or unreadable, nothing is deleted. The deployment must register createRetentionJob() in its jobs." },
-  { key: "runs:durable", kind: "boolean", default: "false", description: "Journaled, resumable delegated runs." },
-  { key: "security:structured_taint", kind: "boolean", default: "false", description: "The structured-taint extractor." },
   { key: "ship:enabled", kind: "boolean", default: "false", description: "The ship loop module." },
   { key: "ship:themes_enabled", kind: "boolean", default: "false", description: "Ship loop themes (docs/SHIP.md): the daily ship_themes job (06:10 UTC, triage and embedding roles, 50 cents a day) triages new product feedback with a schema-bound call per item, closes items that cannot be acted on, embeds each neutral summary, joins the nearest live theme at cosine 0.83 or more, and rescores the themes. Needs ship:enabled. Off, or unreadable, nothing is read or spent." },
   { key: "ship:specs_enabled", kind: "boolean", default: "false", description: "Ship loop specs (docs/SHIP.md): the daily ship_specs job (06:40 UTC, strategist role, $1 a day) writes a spec for up to 3 open themes at or above the score threshold, declines infeasible or high-risk specs, and auto-approves at most 2 low-risk specs a run while ship_spec is at level 2 or above. Needs ship:enabled. Off, or unreadable, no spec is written or approved automatically; ship-approve-<id> still works." },
@@ -148,7 +135,6 @@ export const FLAGS: readonly FlagDefinition[] = [
   // Autonomy and the classifier tier.
   { key: "autonomy:<class>", kind: "number", default: "1", description: "Autonomy level per action class (0 to 3). Permanently human-only classes are capped at 1. A class acts at the lower of this flag and its latest recorded change (autonomy-set from the operator chat, or a demotion), so raise a level with autonomy-set; a value written here cannot lift a class above its latest recorded change, so it cannot undo a demotion. Unreadable or malformed reads as 1." },
   { key: "autonomy_review:enabled", kind: "boolean", default: "false", description: "The weekly autonomy review (autonomy_review, Mondays 06:00 UTC): it proposes promotions from evidence, each applied only by the operator's autonomy-confirm command. No model call. Demotion has no flag: it is always on." },
-  { key: "classifier_tier:<call_site>", kind: "string", default: "off", description: "The cheap classifier tier per call site: off, shadow or on." },
 ];
 
 export function findFlag(key: string): FlagDefinition | undefined {

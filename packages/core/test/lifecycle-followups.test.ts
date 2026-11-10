@@ -211,6 +211,12 @@ describe("the sweep", () => {
     expect(operator.messages.some((m) => m.text.includes("level 2"))).toBe(true);
   });
 
+  it("announces a send at level 3 as at level 2, since no digest exists yet", async () => {
+    await productUser("signed_up", 25 * HOUR);
+    expect((await sweep({}, { "autonomy:lifecycle_activation": "3" })).sent).toBe(1);
+    expect(operator.messages.some((m) => m.text.includes("level 3 (act and notify)"))).toBe(true);
+  });
+
   it("never sends an offer, whatever the levels say, and the database refuses to record one sent without a person", async () => {
     const person = await productUser("at_wall", 20 * 60_000);
     const result = await sweep({}, { "autonomy:offers": "3", "autonomy:lifecycle_activation": "3" });

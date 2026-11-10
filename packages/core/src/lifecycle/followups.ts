@@ -459,7 +459,8 @@ async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule,
     return offerDraft([`The automatic send could not run (${why}), so it waits for you.`]);
   }
   if (settled === "sent" || settled === "queued") await recordFollowupEvidence(db, { followupId: id, rule, outcome: "auto_sent", detail: `sent at level ${level}`, now });
-  if (settled === "sent" && level === 2) await tellOperator(deps, `Sent the ${rule.label} to ${who} [${id}]: ${rule.actionClass} is at level 2 (act and notify).`);
+  // Level 3 is announced like level 2: the digest-only mode does not exist yet.
+  if (settled === "sent" && level >= 2) await tellOperator(deps, `Sent the ${rule.label} to ${who} [${id}]: ${rule.actionClass} is at level ${level} (act and notify).`);
   return settled;
 }
 

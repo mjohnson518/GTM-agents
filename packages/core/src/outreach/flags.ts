@@ -102,20 +102,6 @@ export async function readConfidenceFloor(flags: FlagReader): Promise<Confidence
   return value === "medium" || value === "low" ? value : "high";
 }
 
-/**
- * Which allocation mode the operator asked for, and the one in use. Only weighted rotation by
- * volume_weight exists today; Thompson sampling arrives with experiments, so every mode runs as
- * weighted rotation and the summary says so.
- */
-export async function readAllocationMode(flags: FlagReader): Promise<{ requested: string; used: "weighted" }> {
-  try {
-    const raw = (await flags.get(OUTREACH_FLAGS.allocationMode))?.trim().toLowerCase();
-    return { requested: raw || "weighted", used: "weighted" };
-  } catch {
-    return { requested: "unreadable", used: "weighted" };
-  }
-}
-
 export interface AutoApproveDecision {
   /** True when passing drafts may be approved without a person. */
   auto: boolean;

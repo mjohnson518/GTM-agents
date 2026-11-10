@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/adapters",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Vendor integrations for GTM-agents, one folder per adapter behind a port, exported as subpaths.",
   "license": "Apache-2.0",
@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "@cloudflare/sandbox": "1.0.3",
-    "@gtm-agents/core": "0.0.0",
+    "@gtm-agents/core": "0.1.0",
     "postal-mime": "4.1.4"
   }
 }

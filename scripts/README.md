@@ -1,6 +1,6 @@
 # Repository checks
 
-These scripts keep the repository and the worker template safe to publish and safe to deploy from placeholders. `npm run check` runs all of them, together with typecheck, lint, tests and evals. The pre-commit hook in `.githooks/` runs them on what a commit would contain, and CI runs them on every push.
+This page is for contributors running or changing the repository checks. These scripts keep the repository and the worker template safe to publish and safe to deploy from placeholders. `npm run check` runs all of them, together with typecheck, lint, tests and evals. The pre-commit hook in `.githooks/` runs them on what a commit would contain, and CI runs them on every push.
 
 Each check accepts the same inputs: no flag (tracked files plus untracked files that are not ignored), `--staged` (staged contents only), or `--files <paths...>`.
 
@@ -11,7 +11,7 @@ Each check accepts the same inputs: no flag (tracked files plus untracked files 
 | `check-migration-order.mjs` | Migration names out of order or with gaps; CREATE without `IF NOT EXISTS`; DROP without `IF EXISTS`; seeds without `INSERT OR IGNORE`; an unguarded `ADD COLUMN` (precede it with a `-- once:` comment); a table without `created_at` |
 | `check-house-rules.mjs` | Em dashes and en dashes anywhere in tracked text |
 | `check-conflict-copies.mjs` | Duplicates left by file-sync tools, such as `index 2.ts` or `notes (1).md` |
-| `check-doc-links.mjs` | Relative Markdown links that point at missing files |
+| `check-doc-links.mjs` | Relative Markdown links that point at missing files (anchors are not checked) |
 | `check-licenses.mjs` | A production dependency of any workspace whose license is not on the permissive allowlist (MIT, ISC, Apache-2.0, BSD, 0BSD, BlueOak, CC0, Unlicense). Development tooling is not shipped and is not checked |
 | `generate-brain-schema.ts` | Not a check. It regenerates the brain's JSON Schemas in `packages/core/brain/schema/` after a schema change; a test fails if they are out of date |
 | `check-commit-msg.mjs` | A commit subject that is empty, not capitalized, longer than 72 characters, or ends with a period (run by `.githooks/commit-msg`) |

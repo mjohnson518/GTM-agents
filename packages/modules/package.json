@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/modules",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Optional GTM-agents features behind flags: ship, link-intake, classifier-tier and code-mode.",
   "license": "Apache-2.0",
@@ -12,6 +12,6 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@gtm-agents/core": "0.0.0"
+    "@gtm-agents/core": "0.1.0"
   }
 }

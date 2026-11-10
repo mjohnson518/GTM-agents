@@ -7,7 +7,7 @@ An open-source, multi-agent go-to-market system that runs as a single Cloudflare
 
 A person approves every send until the system has earned autonomy for that kind of action, from evidence.
 
-> **Status: early.** Sourcing, outreach, delivery, replies, follow-ups and measurement are built and tested, each behind a flag that defaults to off, but no capability has yet been proven on a live deployment. [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists today and what comes next; [docs/DEPLOYING.md](docs/DEPLOYING.md) is the full path to your own deployment.
+> **Status: early (0.1.0).** Every capability listed below is built and covered by hermetic tests, and each ships behind a flag that defaults to off. None has yet been run against live providers. [CHANGELOG.md](CHANGELOG.md) lists what this release contains, [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists and what comes next, and [docs/DEPLOYING.md](docs/DEPLOYING.md) is the full path to your own deployment.
 
 ## Who it is for
 
@@ -19,17 +19,18 @@ A person approves every send until the system has earned autonomy for that kind 
 
 | Area | What the system covers |
 |---|---|
-| Sourcing | Semantic and structured search, list-building agents, monitors, hiring and funding signals, lookalikes of accounts that replied, coverage of high-fit accounts |
-| Enrichment | An email waterfall across providers, verification with cached results, firmographics, per-field evidence and conflict holds, job-change checks |
-| Scoring | Account fit against your rubric, person fit from buying roles, intent from dated signals, engagement and coverage |
+| Sourcing | Semantic and structured search, standing person searches (websets), search monitors, hiring and funding signals, lookalikes of accounts that responded, coverage of high-fit accounts |
+| Enrichment | An email finder and verifier waterfall with cached verification, per-field evidence and conflict holds, identity and duplicate rules |
+| Scoring | A free nightly account prescore, an optional model fit score against your rubric, person fit from buying roles, an intent score from dated signals |
 | Outreach | Templates and operator-written copy lines (cold copy is assembled, never generated), a deterministic quality gate plus a model reviewer, approval manifests, send windows, warm-up ramp, kill switch |
-| Follow-up | Threaded sequences that stop on any reply from the account, colleague follow-up after silence, re-engagement on a new signal, lifecycle follow-ups for product users |
+| Follow-up | Threaded sequences that stop on any reply from the account, an optional manual LinkedIn or X touch you make yourself, lifecycle follow-ups for product users |
 | Experiments | A per-send ledger, Thompson sampling with a protected control, account-clustered assignment, a no-send holdout, pre-registered experiments, an approval-gated copy-change process |
 | Replies | Push and poll detection, structural and model triage, intent routing, drafts grounded in approved facts, a reply-owed clock, drafts mirrored into your mailbox |
-| Convert | Booking links, calendar sync that never reads event titles, reminders, no-show recovery, post-demo sequences, an optional proof-of-value hook |
-| Lifecycle | A signed event bridge from your product, a lifecycle state machine, billing webhooks, MRR snapshots, erasure with tombstones |
+| Convert | A booking link variable, calendar sync that never reads event titles, attribution without click tracking, prep briefs, reminders, held and no-show handling, post-meeting drafts |
+| Lifecycle | A signed product bridge and host SDK, a lifecycle state machine, the deal mirror, billing webhooks (a Stripe adapter), MRR snapshots, erasure with tombstones |
 | Self-improvement | A daily retrospective (one change at a time), learnings proposals you approve, a voice profile built from your own sent mail, mining of your edits |
-| Operator | A chat channel with one-tap approvals, a web dashboard, a daily scorecard, approvals bound to exactly what you saw |
+| Ship (optional module) | Product feedback grouped into themes, specs you approve, a sandboxed coding agent that opens a pull request a person merges, "it is live" notes to the people who asked |
+| Operator | An operator chat with one-tap approvals, a web dashboard behind Cloudflare Access, a daily scorecard, approvals bound to exactly what you saw, earned autonomy per action class |
 
 ## How it stays safe
 
@@ -37,14 +38,14 @@ A person approves every send until the system has earned autonomy for that kind 
 - **Skip rather than guess.** A missing first name holds the draft; it never becomes "Hi there". An unverifiable address is not emailed.
 - **Gates fail closed, bookkeeping fails open.** If the halt flag, the kill switch, suppression or a budget cannot be read, the action is blocked.
 - **Autonomy is earned per action class.** Pricing, offers, code merges, proof-of-value sends and data deletion are permanently human-only.
-- **Plain-text email from work addresses,** with a postal footer and one-click unsubscribe. No tracking pixels, no click tracking, no LinkedIn automation.
+- **Plain-text email from work addresses,** with one-click unsubscribe on every message and a postal footer on cold and follow-up mail. No tracking pixels, no click tracking, no LinkedIn automation.
 
 ## Architecture at a glance
 
 ```
 operator chat + dashboard -> OperatorGateway -> hub agent -> tools (taint-classified, budgeted)
                                                    |
-            D1 (truth) . KV (flags) . R2 (payloads) . Vectorize (memory) . Queues . Durable Objects
+            D1 (truth) . KV (flags) . R2 (payloads) . Vectorize (reserved) . Queues . Durable Objects
                                                    |
                  scheduled jobs (job registry) . webhooks (email, mailbox, product, billing)
 ```
@@ -57,7 +58,7 @@ operator chat + dashboard -> OperatorGateway -> hub agent -> tools (taint-classi
 
 ## Quick start
 
-From a published release (Node 24 or later):
+[docs/QUICKSTART.md](docs/QUICKSTART.md) is the shortest path from nothing to a staging deployment whose operator chat answers `/status`, with everything else still off. In short, from a published release (Node 24 or later):
 
 ```bash
 npx @gtm-agents/cli@<version> init my-agent   # every package pinned to that version
@@ -87,12 +88,15 @@ npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 
 | Document | For |
 |---|---|
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Your first staging deployment, step by step |
+| [docs/DEPLOYING.md](docs/DEPLOYING.md) | Deploying, the staged rollout, operating and troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How a deployment works |
 | [docs/INTERFACES.md](docs/INTERFACES.md) | Writing an adapter |
 | [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) | Connecting your product to a deployment |
 | [docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md) | Writing your brain and templates |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Why the structure is what it is |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What exists and what is coming |
+| [CHANGELOG.md](CHANGELOG.md) | What each release contains |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing code, adapters and docs |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
 | [ACCEPTABLE-USE.md](ACCEPTABLE-USE.md) | What this system may and may not be used for |

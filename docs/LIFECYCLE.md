@@ -85,7 +85,7 @@ The wire contract is [EVENT-CONTRACT.md](EVENT-CONTRACT.md). The host installs `
    ```
 
    and `PRODUCT_APP_URL` (an `https` URL with no credentials or query) as a var in `wrangler.jsonc`. Give the host the same two secrets and the agent's webhook URL, `{AGENT_BASE_URL}/api/webhooks/product`.
-2. Wire the lifecycle in `apps/worker/src/index.ts` (below), deploy, then turn it on:
+2. Deploy with the lifecycle wired (the template's `src/index.ts` already wires it; [Turning it on](#turning-it-on) shows how), then turn it on:
 
    ```bash
    npx gtm flags set lifecycle:enabled true
@@ -107,11 +107,11 @@ The wire contract is [EVENT-CONTRACT.md](EVENT-CONTRACT.md). The host installs `
 | `billing.subscription_canceled` | churned | status canceled, MRR 0; the reason is kept as an enum only |
 | `billing.payment_failed` | at risk | status past due |
 | `billing.topup_purchased`, `org.api_key_created` | none | usage fields |
-| `feedback.submitted` | none | filed for the ship loop (below) |
+| `feedback.submitted` | none | filed as feedback for the optional ship module (below) |
 | `user.deleted` | deleted | the erasure (below) |
 | `custom.<name>` | none | recorded; nothing subscribes to custom events yet |
 
-Any of these but `user.signed_up` proves the person has an account, so a contact still before sign-up is signed up first: events can arrive out of order, and users can predate the bridge.
+Every event in the table but `user.signed_up`, `user.deleted` and `custom.<name>` proves the person has an account, so a contact still before sign-up is signed up first: events can arrive out of order, and users can predate the product bridge.
 
 **Feedback** is full taint. Its text is stored in `feedback_items` (source `product`) and nowhere else: not in a contact, an audit row or an operator message. Whatever reads it later fences it as untrusted data. The same feedback arriving by push and by the nightly pull is filed once.
 
@@ -175,7 +175,7 @@ Creating a checkout link is an offer, so it is permanently human-only: core neve
 
 ## Lifecycle follow-ups
 
-Short notes to product users, each a fixed delay after they entered a state, written only from your approved `lifecycle` templates (`packages/core/src/lifecycle/followups.ts`, the `lifecycle_followups` job). Turn them on with `lifecycle:followups_enabled` (which needs `lifecycle:enabled`), after wiring `createLifecycleFollowups` in `apps/worker/src/index.ts`.
+Short notes to product users, each a fixed delay after they entered a state, written only from your approved `lifecycle` templates (`packages/core/src/lifecycle/followups.ts`, the `lifecycle_followups` job). Turn them on with `lifecycle:followups_enabled` (which needs `lifecycle:enabled`); the template's `src/index.ts` wires `createLifecycleFollowups`.
 
 | Follow-up | State | After | Template id | Action class |
 |---|---|---|---|---|
@@ -187,9 +187,9 @@ Short notes to product users, each a fixed delay after they entered a state, wri
 | At-risk check-in | at_risk | 1 hour | `lifecycle-at-risk` | `at_risk` |
 | Win-back offer | churned | 30 days | `lifecycle-win-back` | `offers`, permanently human |
 
-A follow-up is decided only while it is fresh, at most 4 go to one person in 30 days, and each kind keeps a gap since the last one. Each passes a yes or no classifier call over structured facts (role `classifier`, budget-gated, failing closed) and the deterministic quality gate. At level 2 or above for its class it is sent through the send function, which runs every send check itself; otherwise it is drafted for `fu-approve-<id>` or `fu-reject-<id>`, which check the contact, the caps, the content and the window again. The offers are always drafts a person approves, whatever any level says.
+A follow-up is decided only while it is fresh, at most 4 go to one person in 30 days, and each kind keeps a gap since the last one. Each passes a yes or no classifier call over structured facts (role `classifier`, budget-gated, failing closed) and the deterministic quality gate. At level 2 or above for its class it is sent through the send function, which runs every send check itself (at level 2 you are told after; at level 3 it goes without a notice, and no digest reports it yet); otherwise it is drafted for `fu-approve-<id>` or `fu-reject-<id>`, which check the contact, the caps, the content and the window again. The offers are always drafts a person approves, whatever any level says.
 
-**Templates.** One approved template of kind `lifecycle` per follow-up, under the ids above (`createLifecycleFollowups({ templateIds })` names others). The writer fills only `{{first_name}}`, `{{last_name}}`, `{{sender_name}}` and `{{booking_url}}`, from the contact and the config, and nothing else: no product usage, no attributes. A template that uses any other variable skips every follow-up of its kind (skip rather than guess), and a kind with no approved template waits. Upload them with `gtm brain upload` like the rest ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#templates)). `examples/brains/acme/templates/lifecycle-*.md` is a complete set for a fictional company: plain text, no figures, and offer words (a plan) only in the two offers.
+**Templates.** One approved template of kind `lifecycle` per follow-up, under the ids above (`createLifecycleFollowups({ templateIds })` names others). The writer fills only `{{first_name}}`, `{{last_name}}`, `{{sender_name}}` and `{{booking_url}}`, from the contact and the config, and nothing else: no product usage, no attributes. A variable with no value skips the follow-up (skip rather than guess), so a template that uses any other variable skips every follow-up of its kind, and one that uses `{{first_name}}` skips a contact without a usable first name. A kind with no approved template waits. Upload them with `gtm brain upload` like the rest ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#templates)). `examples/brains/acme/templates/lifecycle-*.md` is a complete set for a fictional company: plain text, no figures, and offer words (a plan) only in the two offers.
 
 **Autonomy evidence.** Every decision on a follow-up is evidence for its kind's action class, written once per follow-up through the autonomy module's evidence functions ([AUTONOMY.md](AUTONOMY.md#evidence)):
 
@@ -216,34 +216,37 @@ A product erasure (`user.deleted`, or a row from the deletions pull):
 1. writes the tombstone first, with the address hash and the product user id, so every later event, pull row and billing event naming the person is refused (a route that was resolving the person while the erasure arrived checks again when it finishes, and erases what it wrote);
 2. suppresses the hash (no address is kept);
 3. moves every contact that is the person (linked by user id, or holding the hash as address or mailbox) to `deleted`, which stops their sequences and runs the erasure ([DATA-MODEL.md](DATA-MODEL.md#erasure)): drafts, inbound mail and bodies, event payloads about them, feedback filed under their product user id, the contact row itself, and their billing customer records down to a marker;
-4. with no such contact, erases by hash alone;
+4. erases by hash what no contact holds: inbound mail and calendar entries found by the hash, and the product user's own event payloads and feedback (with no such contact, this is the whole erasure);
 5. writes an audit row with counts only.
 
 Running it again changes nothing. None of it waits on `lifecycle:enabled`: the webhook, the sweep and the pull's deletions carry out an erasure whatever that flag says.
 
 ## Turning it on
 
-In `apps/worker/src/index.ts`:
+In the deployment's `src/index.ts` (the template, `apps/worker/src/index.ts`, wires this already):
 
 ```ts
-import { createLifecycle } from "@gtm-agents/core/lifecycle";
+import { createLifecycle, createLifecycleFollowups } from "@gtm-agents/core/lifecycle";
+import { createAdapter as createStripe } from "@gtm-agents/adapters/billing-stripe";
 
 const lifecycle = createLifecycle<Env>({
-  // Monthly list price in cents per plan: the MRR fallback, and what makes a plan change an upgrade.
+  // Optional: monthly list price in cents per plan, the MRR fallback and what makes a plan change an upgrade.
   prices: { free: 0, pro: 4900, team: 19900 },
-  // The EVENTS_QUEUE names from wrangler.jsonc, one per environment.
-  eventsQueue: ["gtm-agent-events", "gtm-agent-staging-events"],
-  // billing: (env) => createBillingAdapter(context(env, "billing-<vendor>")),   // when you have one
+  // The EVENTS_QUEUE names from wrangler.jsonc, one per environment (gtm setup names them <worker>-events).
+  eventsQueue: ["acme-agent-events", "acme-agent-staging-events"],
+  // The billing adapter behind POST /api/webhooks/billing. Leave it out to take billing events from the host only.
+  billing: (env) => createStripe(context(env, "billing-stripe")),
 });
+const followups = createLifecycleFollowups<Env>({ send: sendOutreach, model, operator });
 
 export default createWorker(config, {
-  jobs: [/* the other jobs */ ...lifecycle.jobs],
+  jobs: [/* the other jobs */ ...lifecycle.jobs, ...followups.jobs],
   lifecycle,
   // ...
 });
 ```
 
-Without `lifecycle` both webhooks answer 503. Without `billing` the billing route answers 503.
+Without `lifecycle` both webhooks answer 503. Without `billing` the billing route answers 503. `eventsQueue` defaults to `gtm-events`; events that arrive on a queue it does not list are still routed, with a warning in the logs, so list your own queue names.
 
 ## Flags
 
@@ -278,4 +281,5 @@ Only `lifecycle_followups` calls a model (the classifier, through the spend gate
 - **Lifecycle follow-up templates are yours to write.** The worker template ships none; the example brain's set shows the shape. The weekly review does not propose the lifecycle classes yet, whatever their evidence.
 - **The pull cannot see billing state.** The users endpoint has no subscription status, so a missed payment event is repaired only by the billing provider's own redelivery.
 - **A cancellation counts when it arrives**, even when the subscription runs to the end of its period.
-- **Pre-sign-up moves other than a booked meeting** (qualified, outreach sent, replied, sequence exhausted, unsubscribed) are in the table, but nothing calls them yet.
+- **Pre-sign-up moves other than a booked meeting** (qualified, parked, outreach sent, replied, sequence exhausted, unsubscribed) are in the table, but nothing calls them yet.
+- **No signals come from product events.** Usage stays on the user's own lifecycle row; nothing turns it into a signal or an opener.

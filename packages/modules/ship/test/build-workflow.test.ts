@@ -7,9 +7,10 @@ import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Env } from "@gtm-agents/core";
 import { createShipBuild } from "../src/build.ts";
-import { FAKE_BASE_SHA } from "../src/code-host-testing.ts";
+import { FAKE_BASE_SHA, fakeCodeWebhook } from "../src/code-host-testing.ts";
 import { resetShipTables, seedFeedback, SHIP_TEST_CHAT, SHIP_TEST_REPO } from "../src/planning-testing.ts";
-import { BUILD_ON, buildRig, collectedFile, fakeStep, seedShipTask, taskState, type BuildRig, type BuildRigOptions } from "../src/sandbox-testing.ts";
+import { BUILD_ON, BUILD_WEBHOOK_SECRET, buildRig, collectedFile, fakeStep, seedShipTask, taskState, type BuildRig, type BuildRigOptions } from "../src/sandbox-testing.ts";
+import { handleCodeWebhook } from "../src/webhooks.ts";
 import { RISK_APPROVAL_EVENT, runShipBuild } from "../src/workflow.ts";
 
 const base = env as unknown as Env;
@@ -67,6 +68,26 @@ describe("a ship build", () => {
     // The coding agent is given the approved spec and nothing else: no feedback text crosses over.
     expect(rig.sandbox.starts[1]?.step).toEqual({ kind: "agent", spec });
     expect(JSON.stringify(rig.sandbox.starts)).not.toMatch(/Dana|Globex|urgent/);
+  });
+
+  it("opens the pull request in the target when the code host commits through a fork, and follows it by the target's webhooks", async () => {
+    const rig = buildRig(base, { fork: "acme-ship-bot/quarantine" });
+    const { taskId } = await seedShipTask(db);
+
+    const outcome = await runShipBuild(rig.deps, rig.env, taskId, fakeStep());
+
+    expect(outcome).toEqual({ status: "pr_open", prNumber: 41, prUrl: "https://code.example/acme-example/quarantine/pull/41" });
+    // The module asks for the commit against the target and its base branch; where the branch lands is the host's.
+    expect(rig.host.commits[0]).toMatchObject({ repo: SHIP_TEST_REPO, baseBranch: "main", baseSha: FAKE_BASE_SHA });
+    expect(rig.host.pulls[0]).toMatchObject({ repo: SHIP_TEST_REPO, base: "main" });
+    const audit = await db.prepare("SELECT details FROM audit_log WHERE action = 'ship_pr_opened'").first<{ details: string }>();
+    expect(JSON.parse(audit?.details ?? "{}")).toMatchObject({ taskId, pr: 41, branchRepo: "acme-ship-bot/quarantine" });
+
+    // The merge arrives from the target repository, by its pull request number, as for any other pull request.
+    const merge = { type: "pull_request" as const, deliveryId: "delivery-fork-1", repo: SHIP_TEST_REPO, number: 41, action: "closed" as const, merged: true, mergeCommitSha: "c".repeat(40), headSha: "a".repeat(40), headBranch: `ship/${taskId}`, baseBranch: "main" };
+    const response = await handleCodeWebhook(rig.deps, rig.env, fakeCodeWebhook(merge, { secret: BUILD_WEBHOOK_SECRET }), NOW);
+    expect(await response.json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect(await taskState(db, taskId)).toMatchObject({ status: "merged", merge_commit_sha: "c".repeat(40) });
   });
 
   it("stores the collected files under their digest and commits exactly those files", async () => {

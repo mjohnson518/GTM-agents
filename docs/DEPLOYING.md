@@ -42,7 +42,7 @@ One Cloudflare Worker per environment (production and staging), each with its ow
 
 ### Bindings
 
-`gtm doctor` fails unless every one of these is declared in `wrangler.jsonc`. `gtm setup` creates the resources and fills their ids in.
+`gtm doctor` fails unless every one of these, except the optional `JOBS_QUEUE`, is declared in `wrangler.jsonc`. `gtm setup` creates the resources and fills their ids in.
 
 | Binding | Cloudflare product | Name `gtm setup` gives it | Used for |
 |---|---|---|---|
@@ -52,11 +52,11 @@ One Cloudflare Worker per environment (production and staging), each with its ow
 | `MEMORY` | Vectorize | `<worker>-memory` | Long-term memory (1536 dimensions, cosine, unless you choose otherwise at setup) |
 | `AI` | Workers AI | (no resource) | Embeddings and small classifiers |
 | `GATEWAY` | Durable Object `OperatorGateway` | (declared in the file) | The dashboard's WebSocket connection |
-| `FOLLOWUP_AGENT` | Durable Object `FollowupAgent` | (declared in the file) | Per-contact lifecycle timers |
+| `FOLLOWUP_AGENT` | Durable Object `FollowupAgent` | (declared in the file) | Reserved: bound so later capabilities need no new resource; lifecycle follow-ups keep their timers in D1 |
 | `EVENTS_QUEUE` | Queue | `<worker>-events`, with `<worker>-events-dlq` as its dead-letter queue | The event spine |
 | `CHAT_QUEUE` | Queue | `<worker>-chat` | Operator chat turns, moved off the webhook path |
-| `JOBS_QUEUE` | Queue | `<worker>-jobs`, with `<worker>-jobs-dlq` as its dead-letter queue | Optional. With `scheduler:queue_enabled` on, each due job runs in its own consumer invocation with a 15-minute wall time. Each message costs about 3 queue operations, so the default jobs use about 9,000 a day |
-| `ASSETS` | Static assets | (the `public/` folder) | The admin dashboard at `/admin` |
+| `JOBS_QUEUE` | Queue | `<worker>-jobs`, with `<worker>-jobs-dlq` as its dead-letter queue | Optional. With `scheduler:queue_enabled` on, each due job runs in its own consumer invocation with a 15-minute wall time. Each message costs about 3 queue operations, so the template's jobs (about 3,100 due a day) use about 9,300 a day |
+| `ASSETS` | Static assets | (the `public/` folder) | The operator dashboard at `/admin` |
 
 `<worker>` is the environment's Worker name: `acme-agent` for production and `acme-agent-staging` for staging. `MEMORY`, `AI`, `EVENTS_QUEUE` and the two Durable Objects are bound now so later capabilities need no new resources; the capabilities in this guide barely touch them, so they add little or nothing to your bill today. [ARCHITECTURE.md](ARCHITECTURE.md#bindings) describes each binding.
 
@@ -68,15 +68,18 @@ The Worker has exactly one cron trigger, `* * * * *`. Every minute the scheduled
 
 | Adapter | Port | What it does | Needed for |
 |---|---|---|---|
-| `operator-telegram` | OperatorChannel | Your chat with the agent: commands, approvals, release codes, pages | Everything you operate |
+| `operator-telegram` | OperatorChannel | Your chat with the agent: commands, approvals, release commands, pages | Everything you operate |
 | `llm-gateway` | ModelGateway | Anthropic model calls, optionally through Cloudflare AI Gateway | Chat, fit scoring, the reviewer, reply triage and drafting |
 | `data-exa` | DiscoverySource | Account and people search | Sourcing |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finding and verifying work email addresses | Sourcing |
 | `email-resend` | EmailProvider | Sending cold and follow-up mail, delivery and bounce webhooks | Delivery |
 | `inbox-gmail` | InboxProvider | Reading the reply mailbox, mirroring reply drafts, sending approved replies | Inbox and replies |
 | `email-cloudflare` | InboxProvider (receive only) | Mail that Cloudflare Email Routing delivers to the Worker | Inbox, as an alternative to Gmail |
+| `calendar-google` | CalendarProvider | Reading the operator's calendar, read-only, for bookings | Meetings |
+| `data-jobboards` | SignalSource | Open-role counts from public hiring boards; no key | Signals |
+| `billing-stripe` | BillingProvider | Signed billing webhooks and subscription reads | Lifecycle billing |
 
-Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
+The template's `gtm.config.ts` and `src/index.ts` wire all ten. Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
 
 ## 2. Requirements by capability
 
@@ -84,7 +87,7 @@ Start with the foundation and the operator chat, then add one capability at a ti
 
 | Capability | Depends on | Accounts | Secrets | `gtm.config.ts`, brain, templates | Flags | DNS and webhooks | Cost drivers |
 |---|---|---|---|---|---|---|---|
-| **Foundation** | | Cloudflare on Workers Paid | `GATEWAY_TOKEN`, `UNSUBSCRIBE_SIGNING_KEY` | `company`, `agent`, `sending` (all required by the schema from the first deploy) | none | A hostname for `AGENT_BASE_URL` (a custom domain, or the Worker's workers.dev URL) | About 1,440 Worker invocations and 2,400 run rows a day with everything off |
+| **Foundation** | | Cloudflare on Workers Paid | `GATEWAY_TOKEN`, `UNSUBSCRIBE_SIGNING_KEY` | `company`, `agent`, `sending` (all required by the schema from the first deploy) | none | A hostname for `AGENT_BASE_URL` (a custom domain, or the Worker's workers.dev URL) | About 1,440 Worker invocations and 3,100 run rows a day with everything off |
 | **Operator chat** | Foundation | Telegram, Anthropic | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY` (`AI_GATEWAY_TOKEN` optional) | `adapters` `operator-telegram` (with `options.chatId`) and `llm-gateway`; `models.roles.strategist` and its price; `operator.allowedChatIds` and `allowedUserIds` | `operator:agent_enabled` | Register the bot's webhook at `/api/webhooks/operator` | Model calls per chat turn (capped by `chat:turn_max_cents`) |
 | **Sourcing** | Operator chat | Exa, Hunter | `EXA_API_KEY`, `HUNTER_API_KEY` | `adapters` `data-exa`, `data-hunter`; brain `personas`, `icp`, `keyword-portfolio`; `models.roles.classifier` and its price for the optional fit score | `discovery:enabled`; optional `fit:prescore_enabled`, `fit:scoring_enabled` | none | Searches, people lookups, email finds and verifications (job cap 300 cents a day); fit scoring model calls (100 cents a day) |
 | **Inbox** | Operator chat | Google Cloud and a Gmail or Workspace mailbox, or Cloudflare Email Routing | Gmail: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`; for push `MAIL_PUSH_SECRET` and the topic (`GMAIL_PUBSUB_TOPIC` or an option). Email Routing: none | `sending.replyTo` is the watched mailbox; `adapters` `inbox-gmail` (`options.address`, `options.pubsubTopic`) or `email-cloudflare` | `inbox:enabled`; `sequences:reply_intake` set to `routed` for Email Routing only | Gmail push: a Pub/Sub push subscription to `/api/webhooks/mail`. Email Routing: MX records on a domain or subdomain on Cloudflare DNS, and a rule sending to the Worker | `inbox_poll` runs every minute (about 1,440 run rows a day); Pub/Sub messages; no model calls |
@@ -93,12 +96,12 @@ Start with the foundation and the operator chat, then add one capability at a ti
 | **Replies** | Inbox; delivery for sending | none | none | `models.roles.triage` and `writer` with prices; brain `facts`, `objections`, `competitors`, `voice`, `stack`, `personas` | `replies:triage_enabled`, `replies:reminders_enabled`, `replies:drafting_enabled`, `replies:mirror_enabled`, `replies:send_enabled` | none | Triage and drafting model calls (100 cents a day for the triage job) |
 | **Follow-ups** | Delivery, inbox recording, operator chat | none | none | Approved `follow_up` (step 2) and `breakup` (step 3) templates; `sequences.cold` | `sequences:enabled`; `sequences:reply_intake`; optional `followup:manual_channel_enabled` | none | Emails sent; one reviewer call per template per sweep when the reviewer is on (25 cents a day) |
 | **Reports** | Operator chat | none | none | none | `ops:daily_scorecard`, `ops:funnel_digest`, `ops:cost_digest` | none | None: no model calls, no spend |
-| **Lifecycle** (product events and billing) | Operator chat | Your product (the host application), and a billing provider adapter if you want billing events | `PRODUCT_WEBHOOK_SECRET`; `PRODUCT_READ_SECRET` for the pull; the billing adapter's own secrets | `PRODUCT_APP_URL`; in `src/index.ts`, `createLifecycle` with your events queue names and, when you have one, `billing` | `lifecycle:enabled`; optional `lifecycle:reconcile_enabled`, `billing:enabled`; `outreach:ref_tokens_enabled` for attribution tokens | Your host posts to `/api/webhooks/product`; your billing provider to `/api/webhooks/billing` | Event sweeps every 5 minutes, hourly lifecycle checks, a nightly pull of at most 1,800 rows; no model calls |
+| **Lifecycle** (product events and billing) | Operator chat | Your product (the host application), and a billing provider (the template wires Stripe) if you want billing events | `PRODUCT_WEBHOOK_SECRET`; `PRODUCT_READ_SECRET` for the pull; for Stripe, `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` | `PRODUCT_APP_URL`; in `src/index.ts`, `createLifecycle` with your events queue names (its `billing` is already `billing-stripe`); `adapters` `billing-stripe` | `lifecycle:enabled`; optional `lifecycle:reconcile_enabled`, `billing:enabled`; `outreach:ref_tokens_enabled` for attribution tokens | Your host posts to `/api/webhooks/product`; your billing provider to `/api/webhooks/billing` | Event sweeps every 5 minutes, hourly lifecycle checks, a nightly pull of at most 1,800 rows; no model calls |
 | **Meetings** (calendar sync) | Operator chat; inbox and delivery recommended | Google Cloud and the operator's Google Calendar | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (shared with the inbox), `GOOGLE_CALENDAR_REFRESH_TOKEN` | `adapters` `calendar-google` | `convert:calendar_enabled`; optional `convert:post_demo_enabled`, `convert:handoff_enabled` | none | `calendar_sync` every 15 minutes; no model calls, no spend |
 
 The cents figures are each job's default daily spend cap in this toolkit, always enforced; they are not vendor prices.
 
-**Adding capabilities one at a time.** The template's `gtm.config.ts` enables all eight adapters, and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
+**Adding capabilities one at a time.** The template's `gtm.config.ts` enables all ten adapters, and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
 
 ```ts
 adapters: {
@@ -110,6 +113,8 @@ adapters: {
   "inbox-gmail": { enabled: false, options: {} },
   "email-cloudflare": { enabled: false, options: {} },
   "calendar-google": { enabled: false, options: {} },
+  "data-jobboards": { enabled: false, options: {} },
+  "billing-stripe": { enabled: false, options: {} },
 },
 ```
 
@@ -117,7 +122,7 @@ Remove `enabled: false` from each adapter as you reach its stage, set its secret
 
 ## 3. Before you start
 
-- **Cloudflare on the Workers Paid plan.** The Free plan's CPU, subrequest and KV write limits are far below what the scheduled jobs and the send path need. Upgrade the account before you run `gtm setup`. The [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [pricing](https://developers.cloudflare.com/workers/platform/pricing/) pages have the current numbers.
+- **Cloudflare on the Workers Paid plan.** The Free plan's CPU, subrequest and KV write limits are far below what the scheduled jobs and the send function need. Upgrade the account before you run `gtm setup`. The [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) and [pricing](https://developers.cloudflare.com/workers/platform/pricing/) pages have the current numbers.
 - **Node 24 or later on macOS or Linux** (on Windows, use WSL), and git.
 - **The packages, from npm or from a checkout.** From a published release, `npx @gtm-agents/cli@<version> init <dir>` creates a deployment that installs every package from npm at exactly that version. For code that is not released yet, use a checkout of this repository and `gtm init --local <checkout>`; pin the checkout to a release or commit you have reviewed (`git checkout <tag-or-commit>`), because your deployment links to it. [RELEASING.md](RELEASING.md) explains how releases are published.
 - **A domain you control.** Cold mail goes out from an isolated sending subdomain (for example `outreach.acme.example`), replies come back to a mailbox on your domain, and the Worker needs a stable public https origin for unsubscribe links and webhooks.
@@ -218,11 +223,12 @@ Warm the domain up slowly: the warm-up ramp ([section 9](#the-warm-up-ramp)) doe
    | Role | Used by | Needed from |
    |---|---|---|
    | `strategist` | The operator chat agent | Stage 1 |
-   | `classifier` | The optional account fit score | Stage 2, if you turn on `fit:scoring_enabled` |
+   | `classifier` | The optional account fit score; the yes/no check on each lifecycle follow-up | Stage 2, if you turn on `fit:scoring_enabled`; lifecycle follow-ups |
    | `judge` | The optional model reviewer for cold drafts and follow-ups | When you turn on `quality:model_review_enabled` |
    | `triage`, `writer` | Reply triage and reply drafts | Stage 6 |
+   | `strategist`, `judge`, `writer`, `worker`, `triage` | The model-calling learning loops (retrospective, agent review, benchmark, evolution) | When you turn on their `learning:*` flags |
 
-   `worker`, `coder` and `embedding` are reserved for later capabilities.
+   `coder` and `embedding` serve only the optional ship module ([SHIP.md](SHIP.md)).
 3. Optional: route calls through Cloudflare AI Gateway with `adapters["llm-gateway"].options.aiGatewayBaseUrl` (the gateway's provider URL ending in `/anthropic`), plus `AI_GATEWAY_TOKEN` for an authenticated gateway, and `byok: true` to let the gateway supply its stored provider key. The adapter's other options are listed in [section 6](#adapter-options).
 
 [Anthropic Console](https://console.anthropic.com/), [pricing](https://www.anthropic.com/pricing)
@@ -314,8 +320,10 @@ Before the first deploy, Wrangler offers to create the Worker so it can hold the
 | `GOOGLE_CALENDAR_REFRESH_TOKEN` | `calendar-google` | Yes, when enabled | The OAuth grant with a read-only calendar scope (it can be the same grant as the inbox's) | Calendar sync fails with an auth error; nothing else is affected |
 | `GMAIL_PUBSUB_TOPIC` | `inbox-gmail` | No | `projects/<project-id>/topics/<topic>`; or use the `pubsubTopic` option instead | No push; the poll still detects mail |
 | `MAIL_PUSH_SECRET` | `inbox-gmail` push, `/api/webhooks/mail` | No (needed for push) | Generate: `openssl rand -hex 32`; also goes in the push subscription's endpoint | `/api/webhooks/mail` answers 503 |
+| `STRIPE_SECRET_KEY` | `billing-stripe` | Yes, when enabled | Stripe: a secret or restricted key that can read customers and subscriptions | Customer and subscription reads fail |
+| `STRIPE_WEBHOOK_SECRET` | `billing-stripe` | Yes, when enabled | Stripe: the webhook endpoint's signing secret | `/api/webhooks/billing` answers 503 |
 
-`email-cloudflare` needs no secret. "Required, when enabled" means `gtm setup` and `gtm doctor` ask for it while the adapter is enabled in `gtm.config.ts`; `gtm doctor --remote` fails until each required secret is set, and `gtm setup` ends by printing one `npx wrangler secret put` line per missing secret.
+`email-cloudflare` and `data-jobboards` need no secret. "Required, when enabled" means `gtm setup` and `gtm doctor` ask for it while the adapter is enabled in `gtm.config.ts`; `gtm doctor --remote` fails until each required secret is set, and `gtm setup` ends by printing one `npx wrangler secret put` line per missing secret.
 
 These are vars, not secrets, set in `wrangler.jsonc`:
 
@@ -336,7 +344,7 @@ These are vars, not secrets, set in `wrangler.jsonc`:
 | `company.url` | Yes | Your website, https only. Its host passes the link check | `"https://acme.example"` |
 | `company.product.name` | Yes | The product you sell (1 to 120 characters) | `"Acme Quarantine"` |
 | `company.product.description` | Yes | One or two sentences the triage model and the reviewer read (1 to 500 characters) | `"Detects flaky tests in CI and quarantines them automatically, ..."` |
-| `agent.name` | Yes | The name the agent signs with and introduces itself by (`{{sender_name}}`) | `"Avery"` |
+| `agent.name` | Yes | The name the agent signs with and introduces itself by (`{{sender_name}}`), 1 to 60 characters | `"Avery"` |
 | `sending.from` | Yes | The cold sender, `{ email, name? }`. The address must be on `sending.domain` | `{ email: "avery@outreach.acme.example", name: "Avery at Acme" }` |
 | `sending.domain` | Yes | The isolated sending subdomain. Must be a subdomain of `company.domain` | `"outreach.acme.example"` |
 | `sending.replyTo` | Yes | The real mailbox replies go to: the one the inbox watches | `"avery@acme.example"` |
@@ -352,9 +360,10 @@ These are vars, not secrets, set in `wrangler.jsonc`:
 | `autonomy.defaults` | No | Starting autonomy level (0 to 3) per action class; every class starts at 1, "draft and ask", unless set here. `merge_code`, `pricing_billing_auth`, `offers`, `proof_of_value_send` and `data_deletion` can never start above 1. Leave it empty to start | `{}` |
 | `sequences.cold.steps` | No | The cold sequence: 1 to 5 steps numbered 1, 2, 3 in order, each `{ step, kind, delayDays }` with `kind` one of `cold_intro`, `follow_up`, `breakup`, and `delayDays` (0 to 60) counted from the previous step | Default: `cold_intro` at 0, `follow_up` 3 days later, `breakup` 7 days after that |
 | `modules.ship` | No | `{ enabled }` for the optional ship module, which turns product feedback into reviewed pull requests ([SHIP.md](SHIP.md)). Off by default; it also needs its own bindings, adapters and flags | (omitted) |
-| `modules.linkIntake`, `modules.classifierTier`, `modules.codeMode` | No | `{ enabled }` for optional modules that have not shipped yet. Leave them off | (omitted) |
+| `modules.linkIntake`, `modules.classifierTier`, `modules.codeMode` | No | `{ enabled }` for optional modules that are not built. Leave them off | (omitted) |
 | `operator.allowedChatIds` | No | Chat ids allowed to command the agent. Empty denies everyone | `["123456789"]` |
 | `operator.allowedUserIds` | No | User ids allowed to command the agent; a chat is served only when both lists match | `["123456789"]` |
+| `admin` | No | The operator dashboard's Cloudflare Access settings: `accessTeamDomain`, `accessAud`, `allowedEmails` (1 to 50) and optional `allowedOrigins`. Without it `/ws` answers 503 ([DASHBOARD.md](DASHBOARD.md)) | (omitted) |
 
 Never put a literal secret in this file. Everything specific to what you sell lives here, in `brain/` and in `templates/`; selling a different product never needs a code change.
 
@@ -364,19 +373,25 @@ Never put a literal secret in this file. Everything specific to what you sell li
 |---|---|
 | `operator-telegram` | `chatId` (where messages without a chat go: pages, release messages; set it), `apiBaseUrl` (a self-hosted Bot API server) |
 | `llm-gateway` | `aiGatewayBaseUrl`, `byok`, `anthropicVersion` (default `2026-10-21`), `promptCache` (default `true`), `fallbacks` (`"default"` turns on the provider's server-side fallback), `roles` (used only when core sends no model id) |
-| `data-exa` | `baseUrl`, `searchType` (default `auto`), `accountCategory` (default `company`), `personCategory` (default `people`), `highlightChars` (default 400) |
+| `data-exa` | `baseUrl`, `searchType` (default `auto`), `accountCategory` (default `company`), `personCategory` (default `people`), `highlightChars` (default 400), `websetEmail` (default `true`: websets ask for a work email), `creditUsd` (dollars per websets credit, default 0.006) |
 | `data-hunter` | `baseUrl`, `usdPerCredit` (set it to your plan's price per credit) |
 | `email-resend` | `apiBaseUrl`, `usdPerEmail` (set it to your plan's price per email) |
 | `inbox-gmail` | `address` (the mailbox's own address; set it), `pubsubTopic`, `userId` (default `me`), `scanLimit` (1 to 500, default 200), `apiBaseUrl` |
 | `email-cloudflare` | `ownAddresses`, `maxBytes` (default 25 MiB) |
+| `calendar-google` | `apiBaseUrl`, `maxPages` (pages of events listed per sync, 1 to 20, default 10) |
+| `billing-stripe` | `apiBaseUrl`, `checkoutPrices` (plan name to Stripe price id, for checkout links), `checkoutSuccessUrl`, `checkoutCancelUrl` |
+| `data-jobboards` | none |
 
 ### What lives in `src/index.ts`
 
-`src/index.ts` wires the adapters and jobs into `createWorker`. You rarely change it, but three settings live there:
+`src/index.ts` wires the adapters and jobs into `createWorker`. You rarely change it, but these settings live there. The template ships with `gtm-agent` queue names; replace them with your Worker's. A message on a queue that is not listed is still handled, with a warning in the logs.
 
-- `agent.chatQueue`: each environment's `CHAT_QUEUE` name, as `gtm setup` creates it (`<worker>-chat`): `["acme-agent-chat", "acme-agent-staging-chat"]`. The template ships with `gtm-agent` names; a chat message on an unlisted queue is still handled, with a warning in the logs.
+- `agent.chatQueue`: each environment's `CHAT_QUEUE` name, as `gtm setup` creates and prints it (`<worker>-chat`): `["acme-agent-chat", "acme-agent-staging-chat"]`.
+- `scheduler.jobsQueue` and `scheduler.deadLetterQueue`: each environment's `JOBS_QUEUE` name and its dead-letter queue, which `gtm setup` also prints (`<worker>-jobs`, `<worker>-jobs-dlq`).
+- `eventsQueue` in `createLifecycle`: each environment's `EVENTS_QUEUE` name (`<worker>-events`).
 - `cronHealth.schedule`: when the cron health check runs (the template: `"30 10,15 * * *"`, twice a day).
 - `inboundEmail.forwardTo`: the human copy of Email Routing mail ([4.8](#48-cloudflare-email-routing-the-alternative-inbox)).
+- `monitors`: the search monitors you create at the provider ([Signals](#signals)).
 
 Each `create*Jobs` factory also takes `options` to change a job's schedule, rows or spend cap; the per-topic pages list them.
 
@@ -432,7 +447,7 @@ npx gtm doctor
 
 # 3. Create the staging resources
 npx gtm setup --env staging --base-url https://agent-staging.acme.example
-#    then list the chat queue names in agent.chatQueue in src/index.ts
+#    then put the queue names it prints in src/index.ts (section 6)
 
 # 4. Set the secrets it lists
 npx wrangler secret put GATEWAY_TOKEN --env staging      # and every other line setup printed
@@ -474,7 +489,7 @@ Fill in `gtm.config.ts` ([section 6](#6-configuration-reference)): company, agen
 - **The Vectorize index's dimensions cannot change later.** The default is 1536 with cosine distance; pass `--vector-dimensions` and `--vector-metric` (`cosine`, `euclidean` or `dot-product`) before the first run if your embedding model needs others.
 - **`--base-url`** fills `AGENT_BASE_URL` with an https origin (no path). Without it, setup lists `vars.AGENT_BASE_URL` as still to fill in, and `gtm deploy` refuses to run until it is.
 
-Setup ends with the chat queue's name and the missing secrets. Put each environment's chat queue name in `agent.chatQueue` in `src/index.ts` ([section 6](#what-lives-in-srcindexts)).
+Setup ends with the chat queue's name, the jobs queue and its dead-letter queue, and the missing secrets. Put each environment's queue names in `src/index.ts`: the chat queue in `agent.chatQueue`, the jobs queues in `scheduler.jobsQueue` and `scheduler.deadLetterQueue`, and the events queue (`<worker>-events`) in `createLifecycle`'s `eventsQueue` ([section 6](#what-lives-in-srcindexts)).
 
 ### Step 4: set the secrets
 
@@ -484,13 +499,13 @@ Run each `npx wrangler secret put <NAME> --env staging` line setup printed: the 
 
 - **`gtm migrate`** checks that the migrations are numbered in order with no gaps, then runs `wrangler d1 migrations apply DB --remote`. Migrations are idempotent and D1 records which ones ran, so running it again is harmless. **Always migrate before new code runs**: new code can rely on new columns.
 - **`gtm brain validate --write-lock`** locks what you approved. **`gtm brain upload`** validates again and uploads nothing on an error, without a lock, or when an approved file changed after it was locked. It writes each approved file to KV (`brain:file:<component>`, `template:file:<id>`), then, in a separate call, the locks (`brain:lock`, `templates:lock`). The runtime serves a file only when its bytes match the lock, so an upload that stops halfway is never served half-written; rerun it. KV takes up to a minute to reach every Cloudflare location. `--dry-run` lists the keys without writing.
-- **`gtm deploy`** runs, in order: `gtm doctor` (any FAIL stops it), a check that no `${...}` placeholder is left, `gtm migrate` (a failure stops it), `gtm brain diff` (differences are a warning), then `wrangler deploy`. `gtm deploy --dry-run` runs the checks, lists pending migrations and bundles the Worker without changing anything.
+- **`gtm deploy`** runs, in order: `gtm doctor` (any FAIL stops it), a check that no `${...}` placeholder is left, `gtm migrate` (a failure stops it), `gtm brain diff` (differences are a warning), then `wrangler deploy`. `gtm deploy --dry-run` runs the checks, lists pending migrations and bundles the Worker without changing anything; while placeholders remain, it skips the migration and brain checks, which need real resources.
 
 ### Step 6: verify
 
 | Check | Expect |
 |---|---|
-| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered" |
+| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, jobs queue, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered" |
 | `curl -s https://agent-staging.acme.example/health` | `{"ok":true,"service":"gtm-agents"}` |
 | `curl -s -o /dev/null -w "%{http_code}\n" https://agent-staging.acme.example/api/ping` (any `/api/` path; this one does not exist) | `401` without a token (the bearer token is set). `503` means `GATEWAY_TOKEN` is unset |
 | The Worker's Cron Events in the Cloudflare dashboard | An invocation every minute |
@@ -509,7 +524,7 @@ q "SELECT task_name, status, summary, started_at FROM execution_runs ORDER BY st
 2. Message the bot, find your ids in `npx wrangler tail --env staging`, and add them to `operator.allowedChatIds`, `operator.allowedUserIds` and `adapters["operator-telegram"].options.chatId` ([4.4](#44-telegram-operator-channel), steps 4 and 5).
 3. Redeploy: `npx gtm deploy --env staging`.
 
-The agent itself stays off until stage 1 of the rollout.
+The agent itself stays off until stage 1 of the rollout: until then the bot answers every message from an allowlisted chat, commands included, with "The operator agent is turned off for this deployment ...".
 
 ### Production
 
@@ -528,14 +543,14 @@ npx gtm flags get operator:agent_enabled --env staging
 npx gtm flags unset operator:agent_enabled --env staging   # back to the default (off)
 ```
 
-`gtm flags` refuses a key that is not in the flag registry and a value that does not fit the flag's kind, and never sets a permanently human-only action class above level 1. Flags live in KV, so a change can take up to a minute to reach every location. Jobs run on their schedules: plan each check around the times in [section 13](#13-reference-scheduled-jobs). (`cold_batch:run_now` appears in the registry but nothing reads it yet, so there is no on-demand run.)
+`gtm flags` refuses a key that is not in the flag registry and a value that does not fit the flag's kind, and never sets a permanently human-only action class above level 1. Flags live in KV, so a change can take up to a minute to reach every location. Jobs run on their schedules: plan each check around the times in [section 13](#13-reference-scheduled-jobs).
 
 The order differs from a pure "sourcing, then sending" order in one place: the inbox is turned on before any mail is sent, so that the very first send already has its replies, unsubscribe requests and bounces recorded, and the cold batch's rules about accounts that have written in can see them.
 
 ### Stage 0: deployed, everything off
 
 - **Doctor:** `gtm doctor --remote` passes, as in [step 6](#step-6-verify).
-- **Run rows:** every due job `skipped` with `flag off`; `cron_health` `completed` twice a day with a summary such as "6 critical job(s) checked, 0 unhealthy, 0 paged, 0 rerun".
+- **Run rows:** every due job that has a flag `skipped` with `flag off`; `event_sweep` and `autonomy_watch`, which have none, `completed`; `cron_health` `completed` twice a day with a summary such as "8 critical job(s) checked, 0 unhealthy, 0 paged, 0 rerun".
 - **Messages:** none.
 - **Before moving on:** `/health` answers, Cron Events show every minute, and run rows are being written (if there are none, see [no jobs run](#jobs-and-scheduling)).
 
@@ -600,7 +615,7 @@ Turn the reply flags on one at a time, in this order:
 | `replies:send_enabled` | Approved replies go out from the mailbox, on the thread (needs `delivery:enabled` too) | `replies_send` every 5 minutes: "sent 1, refused 0, held 0, ..."; or `/reply_send <draft id>` |
 
 - **Needs:** stage 3 recording; `models.roles.triage` and `writer` named and priced; brain `facts`, `objections`, `competitors`, `voice` and `stack` uploaded.
-- **Before moving on:** triage intents match what people actually wrote, drafts read well, and `/replies` lists what is owed. No reply is ever sent without your approval in this version. [REPLIES.md](REPLIES.md) covers each intent and the freshness checks.
+- **Before moving on:** triage intents match what people actually wrote, drafts read well, and `/replies` lists what is owed. By default no reply is sent without your approval; automatic replies are narrow and opt-in ([stage 11](#stage-11-earned-autonomy), [AUTONOMY.md](AUTONOMY.md)). [REPLIES.md](REPLIES.md) covers each intent and the freshness checks.
 
 ### Stage 7: follow-ups
 
@@ -650,7 +665,7 @@ Stripe: set `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` and point a Stripe w
 
 ### Self-improvement
 
-Each loop has its own `learning:*` flag and spend cap and only proposes; approve from the chat or the dashboard. The model-calling loops (retrospective, agent review, benchmark, evolution) need the `strategist`, `judge` and `writer` roles priced ([LEARNING.md](LEARNING.md)).
+Each loop has its own `learning:*` flag and spend cap and only proposes; approve from the chat or the dashboard. The model-calling loops (retrospective, agent review, benchmark, evolution) need the `strategist`, `judge`, `writer`, `worker` and `triage` roles named and priced ([LEARNING.md](LEARNING.md)).
 
 ### The ship loop (optional)
 
@@ -775,7 +790,7 @@ Erasing `jane@` also erases `jane+news@`; an address that does not parse erases 
 |---|---|---|---|
 | Worker invocations and CPU | 1,440 cron invocations a day, plus webhooks, chat and routed mail | Mostly fixed; jobs wait on the network, which is not CPU time | [Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/) |
 | KV reads and writes | Every due job reads the halt flag, its own flag and its budget cap; flags, counters and cursors write | Roughly proportional to job runs | [KV pricing](https://developers.cloudflare.com/kv/platform/pricing/) |
-| D1 rows and storage | About 2,400 run rows a day with everything off (`inbox_poll` alone writes about 1,440), plus contacts, drafts and ledgers | Run-row retention | [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/) |
+| D1 rows and storage | About 3,100 run rows a day with everything off (`inbox_poll` alone writes about 1,440), plus contacts, drafts and ledgers | Run-row retention | [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/) |
 | Workers Logs | The template turns observability on with full sampling | Lower `head_sampling_rate` in `wrangler.jsonc` | Workers pricing |
 | R2, Queues | Inbound bodies; chat turns | Small at this scale | Cloudflare's R2 and Queues pricing pages |
 | Model calls | Chat turns, fit scoring, reviewer calls, reply triage and drafting | Per-turn and per-job caps, global limits | Your model provider's pricing page; set `models.pricing` to match |
@@ -783,11 +798,11 @@ Erasing `jane@` also erases `jane+news@`; an address that does not parse erases 
 | Emails | The ramp level and follow-ups | The ramp, `delivery:domain_daily_cap`, `delivery:account_weekly_cap` | Resend's pricing page; set `usdPerEmail` |
 | Gmail and Pub/Sub | Inbox activity | Gmail API quotas | Google Cloud's Pub/Sub pricing page |
 
-No model is ever called from a job that runs every minute; per-minute work is deterministic. With the default caps, scheduled model and data spend is bounded at about 575 cents a day (discovery 300, fit scoring 100, triage and drafting 100, the cold batch reviewer 50, the follow-up reviewer 25), plus chat turns and emails. Each call is recorded in `cost_events` and shown by `/report cost` and the scorecard.
+No model is ever called from a job that runs every minute; per-minute work is deterministic. With the default caps, the scheduled model and data spend of stages 2 to 7 is bounded at about 575 cents a day (discovery 300, fit scoring 100, triage and drafting 100, the cold batch reviewer 50, the follow-up reviewer 25). Turning on the rest adds up to 400 for the signal sources (websets 200, coverage fill 100, news 50, lookalikes 50), 50 for lifecycle follow-ups and 375 for the learning loops (evolution 200, benchmark 100, agent review 50, retrospective 25), about 1,400 cents a day in all, plus chat turns and emails. Each call is recorded in `cost_events` and shown by `/report cost` and the scorecard.
 
 ### Run-row retention
 
-Run rows are bookkeeping: they accumulate at about 2,400 a day, and old ones are only useful for history. Plan their retention: `ops:retention_enabled` gates a run-row retention job (`createRetentionJob()` from `@gtm-agents/core/runtime`), which deletes old rows and archives nothing. The template registers it (if your `src/index.ts` predates that, add `createRetentionJob<Env>()` to `jobs`, or the flag does nothing). Each day at 03:40 UTC, `run_retention` deletes skipped rows older than 7 days, completed rows older than 30 days and failed rows older than 90 days, from `execution_runs` only. It always keeps the newest row of each job and status and never touches running rows. It deletes in batches, at most 20,000 rows and 2 minutes a run, so a large backlog drains over days. Change it with `createRetentionJob({ schedule, maxRows })`. Recent rows matter: the cron health check, failure escalation and the follow-up intake check read them.
+Run rows are bookkeeping: they accumulate at about 3,100 a day, and old ones are only useful for history. Plan their retention: `ops:retention_enabled` gates a run-row retention job (`createRetentionJob()` from `@gtm-agents/core/runtime`), which deletes old rows and archives nothing. The template registers it (if your `src/index.ts` does not, add `createRetentionJob<Env>()` to `jobs`, or the flag does nothing). Each day at 03:40 UTC, `run_retention` deletes skipped rows older than 7 days, completed rows older than 30 days and failed rows older than 90 days, from `execution_runs` only. It always keeps the newest row of each job and status and never touches running rows. It deletes in batches, at most 20,000 rows and 2 minutes a run, so a large backlog drains over days. Change it with `createRetentionJob({ schedule, maxRows })`. Recent rows matter: the cron health check, failure escalation and the follow-up intake check read them.
 
 ## 11. Troubleshooting by symptom
 
@@ -910,7 +925,7 @@ Tick every item before you turn on `delivery:enabled` in production.
 
 ## 13. Reference: scheduled jobs
 
-Every job the template registers, its schedule (UTC), the flag that gates it and its ceilings. Critical jobs are watched by the cron health check. Schedules change through each `create*Jobs` factory's `options`; a job that calls a model refuses a schedule more often than every 15 minutes.
+Every job the template registers, its schedule (UTC), the flag that gates it and its ceilings. Critical jobs are watched by the cron health check. Schedules change through each `create*Jobs` factory's `options`; a job that calls a model refuses a schedule more often than every 15 minutes. The optional ship module registers jobs of its own ([SHIP.md](SHIP.md)).
 
 | Job | Schedule (UTC) | Flag | Critical | Ceilings | Spends on |
 |---|---|---|---|---|---|
@@ -942,15 +957,26 @@ Every job the template registers, its schedule (UTC), the flag that gates it and
 | `lifecycle_reconcile` | 03:15 daily | `lifecycle:reconcile_enabled` | | 10 min, 1,800 rows | Nothing |
 | `mrr_snapshot` | 23:55 daily | `lifecycle:enabled` | | 30 s, 1 row | Nothing |
 | `event_retention` | 03:50 daily | `lifecycle:enabled` | | 2 min, 500 rows | Nothing |
-| `autonomy_review` | 06:00, Mondays | `autonomy_review:enabled` | | Proposals only | Nothing |
-| `autonomy_watch` | 15 past each hour | none (demotion always runs) | | Incidents, rate checks, notices | Nothing |
-| `signal_news` | 07:00, Monday to Friday | `signals:news_enabled` | | 4 searches, 50 cents a day | Search |
-| `signal_hiring_boards` | 06:00, Monday to Friday | `signals:hiring_boards_enabled` | | 20 accounts | Nothing |
-| `signal_websets` | 10:00, Monday to Friday | `signals:websets_enabled` | | 200 rows, 200 cents a day | Websets |
-| `signal_monitor_drain` | Every 30 minutes | `signals:monitors_enabled` | | 500 hits | Nothing |
-| `signal_lookalikes` | 11:00, Tuesdays and Thursdays | `signals:lookalikes_enabled` | | 30 inserts, 50 cents a day | Search |
-| `signal_coverage_fill` | 12:00, Monday to Friday | `signals:coverage_fill_enabled` | | 5 accounts, 2 people each, 100 cents a day | People lookups |
-| `intent_scoring` | 02:30 daily | `scoring:intent_enabled` | | 5,000 contacts | Nothing |
+| `lifecycle_followups` | 7, 22, 37 and 52 past each hour | `lifecycle:followups_enabled` (and `lifecycle:enabled`) | | 2 min, 25 rows, 50 cents a day | `classifier` model, emails |
+| `autonomy_review` | 06:00, Mondays | `autonomy_review:enabled` | | 1 min, 20 classes; proposals only | Nothing |
+| `autonomy_watch` | 15 past each hour | none (demotion always runs) | Yes | 2 min, 200 rows | Nothing |
+| `experiments_cycle` | 09:00 and 21:00 daily | `experiments:enabled` | | 2 min, 20 experiments and subject tests | Nothing |
+| `experiments_self_review` | 14:00, Sundays | `experiments:self_review_enabled` | | 2 min, 3 proposals | Nothing |
+| `signal_news` | 07:00, Monday to Friday | `signals:news_enabled` | | 2 min, 4 searches, 50 cents a day | Search |
+| `signal_hiring_boards` | 06:00, Monday to Friday | `signals:hiring_boards_enabled` | | 3 min, 20 accounts | Nothing |
+| `signal_websets` | 10:00, Monday to Friday | `signals:websets_enabled` | | 5 min, 200 rows, 200 cents a day | Websets |
+| `signal_monitor_drain` | Every 30 minutes | `signals:monitors_enabled` | | 2 min, 500 hits | Nothing |
+| `signal_lookalikes` | 11:00, Tuesdays and Thursdays | `signals:lookalikes_enabled` | | 3 min, 30 inserts, 50 cents a day | Search |
+| `signal_coverage_fill` | 12:00, Monday to Friday | `signals:coverage_fill_enabled` | | 3 min, 5 accounts, 2 people each, 100 cents a day | People lookups |
+| `intent_scoring` | 02:30 daily | `scoring:intent_enabled` | | 2 min, 5,000 contacts | Nothing |
+| `learning_fitness` | 04:15 daily | `learning:fitness_enabled` | | 1 min, 1 row | Nothing |
+| `learning_objections` | 04:45 daily | `learning:objections_enabled` | | 2 min, 200 rows | Nothing |
+| `learning_retrospective` | 05:00 daily | `learning:retrospective_enabled` | | 3 min, 1 proposal, 25 cents a day | `strategist` model |
+| `learning_agent_review` | 06:30, Monday to Friday | `learning:agent_review_enabled` | | 3 min, 40 rows, 50 cents a day | `judge` model |
+| `learning_edit_mining` | 07:00, Mondays | `learning:edit_mining_enabled` | | 2 min, 500 rows | Nothing |
+| `learning_voice_drift` | 07:30, Mondays | `learning:voice_enabled` | | 1 min, 1 row | Nothing |
+| `learning_benchmark` | 03:00, Sundays | `learning:benchmark_enabled` | | 10 min, 15 rows, 100 cents a day | `judge`, `writer`, `worker` and `triage` models |
+| `learning_evolution` | 05:00, Sundays | `learning:evolution_enabled` | | 14 min, 3 candidates, 200 cents a day | `strategist` model and the benchmark's |
 | `run_retention` | 03:40 daily | `ops:retention_enabled` | | 2 min, 20,000 rows | Nothing |
 | `cron_health` | 10:30 and 15:30 daily (`cronHealth.schedule`) | none | | 2 min | Nothing |
 

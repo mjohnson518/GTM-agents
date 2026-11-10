@@ -150,7 +150,7 @@ Tools with `egress: "url"` or `"query"` also refuse any input string that carrie
 
 ## Delegation
 
-A delegation runs another agent on a curated tool subset. Without care, a tainted agent could act through a clean one (a confused deputy), or a clean agent could have a worker read a page on its behalf and receive the result untainted. Two rules close both:
+A delegation runs another agent on a curated tool subset. Core classifies the delegation tools (`delegate_to_executor`, `delegate_to_ops`, `delegate_to_sender`, `delegate_to_coder`, `re_delegate`) and the dispatcher enforces the rules below, though no worker agents ship yet. Without care, a tainted agent could act through a clean one (a confused deputy), or a clean agent could have a worker read a page on its behalf and receive the result untainted. Two rules close both:
 
 - **Down:** the worker starts at its caller's taint (`childStartTaint`), so it is refused whatever its caller would be refused.
 - **Up:** the caller ends at the higher of its own taint and the worker's final taint (`returnTaint`). The delegation handler reports the worker's taint to the dispatcher. When a result has to travel as plain text, the taint travels with it as a marker.
@@ -163,7 +163,7 @@ Markers are read escalate-only, so text that forges or strips a marker can only 
 
 - `approveDraft` refuses when the draft changed after it was shown.
 - `applyEdit` takes only the recipient, subject and body from an edit, and returns an approved draft to `pending_approval`, clearing its approval, whenever the edit changes the digest.
-- `verifyApproval` is what a send path checks before relying on an approval.
+- `verifyApproval` is what the send function checks before relying on an approval.
 
 **Shown records.** A one-tap approval sends the draft as it stands when the tap arrives, so the tap must refer to the text the operator read. The notification calls `markShown` with what it displayed, and the approval proceeds only while `wasShown` still matches. Recording is bookkeeping and fails open; checking is a gate and fails closed.
 
@@ -205,7 +205,7 @@ The operator dashboard talks to the Worker over `/ws`, admitted only with a vali
 
 Automation may add a critical pause when none stands (the bounce monitor does, on a critical bounce rate), but it never overwrites, lowers or lifts one, so a stale or racing KV read in an automated path cannot weaken a critical pause. A record that cannot be read, a KV error or a missing binding counts as a critical pause.
 
-**`checkSendGates`** must be called inside every send function, so no caller can skip it. In order: the halt (every path), the kill switch (the `cold` and `sequence` paths; an unknown path counts as cold), then suppression for every recipient. A refusal is a message starting with `[SEND BLOCKED:<reason>]`. On success it returns the normalized recipient addresses, and the send function sends to exactly those, never to the raw strings it was given. The rest of the send path (content lint, verification policy, send window, per-domain and per-account caps, the provider circuit breaker) runs after these ([ARCHITECTURE.md](ARCHITECTURE.md#the-send-path)).
+**`checkSendGates`** runs inside the send function (`createOutreachSender`), so no caller can skip it. In order: the halt (every send path), the kill switch (the `cold` and `sequence` paths; an unknown path counts as cold), then suppression for every recipient. A refusal is a message starting with `[SEND BLOCKED:<reason>]`. On success it returns the normalized recipient addresses, and the send function sends to exactly those, never to the raw strings it was given. The send function's other checks (content lint, verification policy, the approval digest, send window, per-domain and per-account caps, the provider circuit breaker) run after these ([ARCHITECTURE.md](ARCHITECTURE.md#the-send-path)).
 
 ## Signal sources
 
@@ -259,7 +259,7 @@ Rate limits are best-effort. KV is eventually consistent and the count is not at
 
 `createJobRunner`, the default runner of `createWorker`, wraps every scheduled job:
 
-1. **Gates.** It checks the halt, the job's flag and, for a job with a spend cap (`ceilings.maxSpendCents` or `budget:job:<job>:daily_cents`), the budget. Each fails closed. A held job is not run and leaves a `skipped` run row that says why. A hold caused by state that could not be read says "unreadable".
+1. **Gates.** It checks the halt, the job's flag and, for a job with a spend cap (`ceilings.maxSpendCents` or `budget:job:<job>:daily_cents`), the budget. Each fails closed. A held job is not run and leaves a `skipped` run row that says why. A hold caused by state that could not be read says "unreadable". It also skips a job whose previous run is still going (a `running` row younger than the job's ceiling); that check is bookkeeping, so if the rows cannot be read the job runs.
 2. **Run row.** It writes a `running` row to `execution_runs`, runs the job within its duration ceiling, and finishes the row as `completed` or `failed`. If the first write failed, the finishing write inserts the row, so a run that happened is never unrecorded. A failed row stores the error after `sanitizeErrorMessage`, with a class: `config`, `transient` or `unknown`.
 3. **Pages.** A failure pages the operator at most once per job per UTC day. It escalates at most once per job per day when the error looks like configuration, the job has failed three times that day, or it has failed on each of the last three calendar days.
    - Each page is claimed in the effects ledger. It is released if sending fails or takes longer than 10 seconds, so a later failure can retry; a late delivery can then mean a second page, which is preferred to none.

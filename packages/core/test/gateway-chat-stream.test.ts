@@ -4,7 +4,7 @@
 // gateway that does not stream keeps the single delta. The model is scripted and all data is synthetic.
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { scriptedModel, toolStep, type ScriptStep, type ScriptedStreamOptions } from "../src/agents/testing.ts";
+import { recordingOperator, scriptedModel, toolStep, type ScriptStep, type ScriptedStreamOptions } from "../src/agents/testing.ts";
 import { defineConfig } from "../src/config/define-config.ts";
 import type { Env } from "../src/env.ts";
 import { ChatStream, STREAM_MAX_CHARS, chunkText } from "../src/gateway/chat-stream.ts";
@@ -13,6 +13,7 @@ import { MAX_FRAME_BYTES, handleFrame } from "../src/gateway/dispatch.ts";
 import type { ServerEvent } from "../src/gateway/protocol.ts";
 import { createJobRegistry } from "../src/jobs/registry.ts";
 import type { ModelGateway } from "../src/ports/model.ts";
+import type { OperatorChannel } from "../src/ports/operator.ts";
 import { acmeConfig } from "./fixtures.ts";
 
 const EMAIL = "ops@acme.example";
@@ -127,15 +128,19 @@ class Kv {
   delete = async (k: string) => void this.map.delete(k);
 }
 
-function harness(model: ModelGateway, email = `ops+${crypto.randomUUID().slice(0, 8)}@acme.example`) {
+function harness(model: ModelGateway, email = `ops+${crypto.randomUUID().slice(0, 8)}@acme.example`, options: { operator?: OperatorChannel; chatIds?: string[] } = {}) {
   const kv = new Kv();
   const events: ServerEvent[] = [];
   const deferred: Array<Promise<unknown>> = [];
-  const admin = { ...config, admin: { accessTeamDomain: "acme.cloudflareaccess.com", accessAud: "a".repeat(64), allowedEmails: [email], allowedOrigins: [] } };
+  const admin = {
+    ...config,
+    admin: { accessTeamDomain: "acme.cloudflareaccess.com", accessAud: "a".repeat(64), allowedEmails: [email], allowedOrigins: [] },
+    ...(options.chatIds ? { operator: { ...config.operator, allowedChatIds: options.chatIds, allowedUserIds: options.chatIds } } : {}),
+  };
   const state: ConnectionState = { email, sub: "u", expiresAt: Date.now() + 3_600_000, connected: true, subscribed: false, rl: { start: Date.now(), requests: 0, mutations: 0, chats: 0 } };
   const ctx: GatewayContext = {
     env: { DB: env.DB, KV: kv } as unknown as Env,
-    wiring: { config: admin, registry: () => createJobRegistry([]), lifecycle: false, model: () => model, agent: {}, extensions: {} },
+    wiring: { config: admin, registry: () => createJobRegistry([]), lifecycle: false, model: () => model, agent: {}, extensions: {}, ...(options.operator ? { operator: () => options.operator } : {}) },
     state,
     now: () => new Date(),
     actor: `operator:${email}`,
@@ -158,6 +163,30 @@ function harness(model: ModelGateway, email = `ops+${crypto.randomUUID().slice(0
 }
 
 const spaced = (ms: number, extra: ScriptedStreamOptions = {}): ScriptedStreamOptions => ({ chunkChars: 4, between: () => sleep(ms), ...extra });
+
+describe("drafts a dashboard turn saves", () => {
+  const drafting = () =>
+    scriptedModel([toolStep({ name: "drafts_create", input: { recipient_email: "jane@globex.example", subject: "Flaky builds", body: "Hi Jane,\n\nA short note.\n\nAvery" } }), { text: "Saved a draft for Jane." }]);
+
+  it("go to the operator chat for approval, bound to their digest, and nothing is sent", async () => {
+    const operator = recordingOperator();
+    const h = harness(drafting(), undefined, { operator: operator.channel, chatIds: ["1001"] });
+    const sent = await h.call<{ turnId: string }>("chat.send", { text: "Draft a note to Jane at Globex." });
+    await h.settle();
+    const shown = shownText(h.events, sent.result?.turnId ?? "");
+    expect(shown).toContain("waiting for your approval in the operator chat");
+    expect(operator.approvals).toHaveLength(1);
+    expect(operator.approvals[0]).toMatchObject({ chatId: "1001", kind: "send" });
+    expect(operator.approvals[0]?.digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("stay pending, and the dashboard says so, when no operator chat is configured", async () => {
+    const h = harness(drafting());
+    const sent = await h.call<{ turnId: string }>("chat.send", { text: "Draft a note to Jane at Globex." });
+    await h.settle();
+    expect(shownText(h.events, sent.result?.turnId ?? "")).toContain("No operator chat is configured to approve them in, so they stay pending");
+  });
+});
 
 describe("chat.send with a streaming model", () => {
   it("streams the reply in several batched deltas and keeps only the final reply in chat.history", async () => {

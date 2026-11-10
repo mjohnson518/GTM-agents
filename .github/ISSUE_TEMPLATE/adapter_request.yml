@@ -29,6 +29,8 @@ body:
         - label: BillingProvider
         - label: ModelGateway
         - label: CrmSink
+        - label: CodeHost (ship module)
+        - label: CodingSandbox (ship module)
   - type: textarea
     id: auth
     attributes:

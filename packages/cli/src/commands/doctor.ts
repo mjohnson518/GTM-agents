@@ -1,7 +1,8 @@
 // GTM-agents: `gtm doctor`, a health report for a deployment: bindings, the per-minute cron trigger,
 // the jobs queue, configuration, adapter manifests, required secrets, webhook registration, the email footer and
 // unsubscribe secret, the halt flag and kill switch, and every feature flag. Offline by default;
-// --remote also asks Cloudflare (through Wrangler) for the deployed secrets and flag values.
+// --remote also asks Cloudflare (through Wrangler) for the deployed secrets and the stop flags'
+// values (the halt and both kill-switch keys).
 import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { REQUIRED_BINDINGS, type GtmConfig } from "@gtm-agents/core/config";

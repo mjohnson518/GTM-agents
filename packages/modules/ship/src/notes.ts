@@ -370,7 +370,8 @@ export async function draftShipNotes<E extends Env>(deps: NoteDeps<E>, theme: { 
       }
       await recordAutonomyEvidenceOnce(db, `ship_notification:${id}`, { actionClass: "ship_notification", outcome: "auto_sent", subjectId: draftId, detail: "sent automatically at an earned level", now });
       result[settled] += 1;
-      if (settled === "sent" && level === 2) await tell(deps, `Sent the "you asked, it is live" note to ${who(r)} [note ${id}]: ship_notification is at level 2 (act and notify).`);
+      // Level 3 is announced like level 2: the digest-only mode does not exist yet.
+      if (settled === "sent" && level >= 2) await tell(deps, `Sent the "you asked, it is live" note to ${who(r)} [note ${id}]: ship_notification is at level ${level} (act and notify).`);
     } catch (error) {
       result.failed += 1;
       log.warn("a ship note could not be drafted", { themeId: theme.id, error: sanitizeErrorMessage(error) });

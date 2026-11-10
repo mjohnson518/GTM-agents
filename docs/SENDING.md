@@ -6,13 +6,13 @@ Nothing here sends anything until you turn it on. Every switch below defaults to
 
 ## How a send works
 
-Everything that sends email through the provider (the cold batch, sequence follow-ups, the deferred queue) calls one send function, `createOutreachSender`. It runs every check itself, so no caller can skip one, and returns one outcome per message:
+Everything that sends email (the cold batch, sequence follow-ups, lifecycle follow-ups, approved replies and the deferred queue) calls one send function, `createOutreachSender`. It runs every check itself, so no caller can skip one, and returns one outcome per message:
 
 ```
 items -> delivery:enabled?            off or unreadable: held, nothing sent
       -> provider, signing key, base URL configured?   missing: held
       -> already sent under this idempotency key?      reported as a duplicate
-      -> 1. system halt / cold kill switch             deferred
+      -> 1. halt flag / cold kill switch               deferred
       -> 2. suppression (fails closed)                 refused
       -> 3. content lint                               a block is refused, a warning goes on
       -> 4. verification policy                        cold needs a deliverable address
@@ -53,7 +53,7 @@ Verify the domain in the provider's dashboard before turning anything on. Warm t
 
 ## 2. The provider, its secrets and its webhook
 
-The `email-resend` adapter sends through Resend's batch API (up to 100 messages a request) and verifies Resend's signed webhooks. Set the secrets with Wrangler, from `apps/worker` (or your copy of it), or in `.dev.vars` for local development:
+The `email-resend` adapter sends through Resend's batch API (up to 100 messages a request) and verifies Resend's signed webhooks. Set the secrets with Wrangler, from your deployment directory, or in `.dev.vars` for local development:
 
 ```bash
 npx wrangler secret put RESEND_API_KEY            # an API key with sending access
@@ -82,7 +82,10 @@ The webhook verifies the signature (an HMAC over the message id, timestamp and b
 | Hard bounce (or a bounce with no type) | The address is suppressed (`bounce`) and marked `undeliverable` on the contact and in the verification cache, and its sequences stop. Warmth is left alone, because a bad address is not an opt-out; the ledger's `bounced_at`, the domain's hard bounce count, the outreach log; a page (at most five a day) |
 | Soft bounce | A funnel event only |
 | Complaint | The address is suppressed (`complaint`) even when no send matches, the contact opts out; the ledger's `complained_at`, the domain's complaint count; a page |
+| Unsubscribed (a provider that reports one) | The same opt-out as the unsubscribe link, and a notice |
 | Failed | Logged |
+
+Resend's `email.suppressed` event counts as a hard bounce. Opened and clicked events are ignored.
 
 If the suppression cannot be written, the webhook answers 500 so the provider delivers the event again.
 
@@ -116,21 +119,21 @@ const send = createOutreachSender(senderDepsFromEnv(env, { config, provider: ema
 const outcomes = await send(items);   // one OutreachItem per message; see packages/core/src/sending/types.ts
 ```
 
-Each item carries an idempotency key that is stable for that message (the cold batch uses `<date>:<contact>`). The send function claims it in the effects ledger right before sending, so the same message never goes out twice, whoever retries.
+Each item carries an idempotency key that is stable for that message (the cold batch uses `cold:<date>:<contact id>`). The send function claims it in the effects ledger right before sending, so the same message never goes out twice, whoever retries.
 
 ## The message
 
 - **Plain text only.** No HTML part, no tracking pixel, no rewritten links. Replies are the metric.
-- **The footer** is appended by the send function, never by a caller: your `sending.postalAddress`, and a line saying the reader can reply "unsubscribe" or open their unsubscribe link.
+- **The footer** is appended by the send function, never by a caller: your `sending.postalAddress`, and a line saying the reader can reply "unsubscribe" or open their unsubscribe link. Cold, sequence and lifecycle mail always carry it. A reply to someone who wrote in carries no visible footer, so it reads like a normal reply, but keeps the unsubscribe headers.
 - **Headers:** `List-Unsubscribe` with the one-click link and a `mailto:` to your reply-to mailbox, `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), and `In-Reply-To` and `References` when a follow-up threads under an earlier message.
-- **Tags** carry the send, contact, campaign, draft, template, experiment and variant ids, so delivery events match their send.
+- **Tags** carry the send id, the contact id and the send path, plus the campaign, draft, template, experiment and variant ids when set, so delivery events match their send.
 
 ## Unsubscribe
 
 Every message links to `https://<AGENT_BASE_URL>/u/<token>`. The token names the recipient's address and is signed with `UNSUBSCRIBE_SIGNING_KEY`, so it cannot be forged or pointed at someone else. It never expires.
 
 - **GET** shows a confirmation page with one button. It never acts and never touches the database, because mail security scanners and link previews open links on their own.
-- **POST** (the button, or a mail client's one-click unsubscribe) opts the address out: it is suppressed (`opt_out`), every contact under that mailbox moves to warmth `opted_out`, their sequences stop, queued deferred sends to them are cancelled, and you get one notice in the operator channel. Repeating it changes nothing.
+- **POST** (the button, or a mail client's one-click unsubscribe) opts the address out: it is suppressed (`opt_out`), every contact under that mailbox moves to warmth `opted_out`, their sequences stop, queued deferred sends to them are cancelled, and you get one notice in the operator chat. Repeating it changes nothing.
 
 Rotating the signing key invalidates links already sent; people can still reply "unsubscribe".
 
@@ -138,7 +141,7 @@ Rotating the signing key invalidates links already sent; people can still reply 
 
 Cold and sequence mail goes out only inside `sending.windowDays` and `sending.windowHours` (by default Monday to Thursday, 08:00 to 15:00), in the recipient's own time zone. Lifecycle mail uses the same hours Monday to Friday. Replies are not windowed.
 
-The recipient's zone is the contact's `timezone` when it is a valid IANA name. Otherwise it is read from the free-text `location`: a named country first (with regional rules for the United States, Canada and Australia), then well-known cities, then the default, `America/New_York`. Pass `options: { defaultTimezone }` to the sender to change the default. A message outside the window is deferred to the next opening.
+The recipient's zone is the contact's `timezone` when it is a valid IANA name. Otherwise it is read from the free-text `location`: a named country first (with regional rules for the United States, Canada and Australia), then well-known cities, then the default, `America/New_York`. Pass `options: { defaultTimezone }` to the sender to change the default. A message outside the window is deferred to the next opening. With `outreach:send_time_experiment` on, a cold first touch's window narrows to the slot its account was assigned ([EXPERIMENTS.md](EXPERIMENTS.md)).
 
 ## Caps
 
@@ -146,10 +149,10 @@ Both are counted from the send ledger, inside the send function, for every calle
 
 | Cap | Flag | Default | Overflow |
 |---|---|---|---|
-| Messages per UTC day through the provider (the sending domain's volume) | `delivery:domain_daily_cap` | 500 | Deferred to midnight UTC |
-| Cold and sequence messages per recipient account in any 7 days | `delivery:account_weekly_cap` | 3 | Deferred until the oldest send leaves the window |
+| Messages per UTC day through the provider (the sending domain's volume) | `delivery:domain_daily_cap` | 500 (at most 10,000) | Deferred to midnight UTC |
+| Cold and sequence messages per recipient account in any 7 days | `delivery:account_weekly_cap` | 3 (at most 50) | Deferred until the oldest send leaves the window |
 
-A cap that cannot be read allows nothing.
+A cap that cannot be read allows nothing. Replies and lifecycle mail count toward the daily cap when they go through the provider, but not toward the account cap; a reply sent from the warm mailbox counts toward neither.
 
 ## The deferred queue
 
@@ -180,14 +183,14 @@ Every bounce figure comes from one place, `packages/core/src/metrics/delivery-ra
 
 - **Critical pauses cold outreach.** A spike only in the 1-day window, with the 7-day window still healthy, looks like one bad batch and gives a **warning** pause. Anything the 7-day window confirms gives a **critical** pause, and so does a second spike within 14 days of the monitor lifting a warning pause.
 - **A warning pause lifts itself** once it is at least 3 days old and the last 3 days were clean, with one ramp step down. You are told when it lifts.
-- **A critical pause is lifted only by a person.** You are reminded once a day while it stands. There is no chat command for it; lift it from the command line:
+- **A critical pause is lifted only by a person.** You are reminded once a day while it stands. There is no chat command for it; lift it with the dashboard's resume ([DASHBOARD.md](DASHBOARD.md)) or from the command line:
 
 ```bash
 npx gtm flags unset outreach:cold-pause:critical
 npx gtm flags unset outreach:cold-pause
 ```
 
-The monitor adds a critical pause only when none stands, and never overwrites, lowers or lifts one. A pause stops cold and sequence mail; replies and lifecycle mail keep flowing. The system halt (`system:halt`) stops everything. Both fail closed: state that cannot be read counts as halted or paused.
+The monitor adds a critical pause only when none stands, and never overwrites, lowers or lifts one. A pause stops cold and sequence mail; replies and lifecycle mail keep flowing. The halt flag (`system:halt`) stops everything. Both fail closed: state that cannot be read counts as halted or paused.
 
 ## The circuit breaker
 
@@ -210,6 +213,7 @@ Set a flag with `npx gtm flags set <key> <value>` (checked against the flag regi
 | `outreach:ramp_auto` | off | Let the ramp job move the level |
 | `cold_batch:daily_limit` | unset | An operator limit that can only lower the ramp level |
 | `cold_batch:enabled` | off | The cold batch's master switch; also turns on the liveness check |
+| `outreach:send_time_experiment` | off | The send-time test: narrows a cold first touch's window to its account's slot |
 
 The jobs also keep state in KV, shown by `gtm doctor`: `outreach:ramp_changed_at`, `delivery:breaker:<day>` and `delivery:last_auto_resume`.
 
@@ -224,7 +228,7 @@ To start sending: verify the domain, set the secrets and `AGENT_BASE_URL`, regis
 | `delivery_ramp` | 09:30, Monday to Friday | `outreach:ramp_auto` | 30 seconds |
 | `delivery_liveness` | 21:00, Monday to Friday | `cold_batch:enabled` | 30 seconds |
 
-None of them calls a model. Pass `options` to `createDeliveryJobs` to change a schedule or the replay's row ceiling. Pages go through the operator channel ([OPERATOR.md](OPERATOR.md)), each claimed once per day (or per replay run) in the effects ledger.
+None of them calls a model. Pass `options` to `createDeliveryJobs` to change a schedule or the replay's row ceiling. Pages go to the operator chat ([OPERATOR.md](OPERATOR.md)), each claimed once per day (or per replay run) in the effects ledger.
 
 ## Limits
 

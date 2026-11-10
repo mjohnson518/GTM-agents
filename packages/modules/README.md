@@ -1,6 +1,6 @@
 # @gtm-agents/modules
 
-Optional features. Each module sits behind a flag that defaults to off, and a deployment that never enables one carries no cost from it.
+Optional features, for deployers deciding whether to add one and contributors building one. Each module sits behind a flag that defaults to off, and a deployment that never enables one carries no cost from it.
 
 | Module | What it does |
 |---|---|
@@ -11,4 +11,4 @@ Optional features. Each module sits behind a flag that defaults to off, and a de
 
 ## Status
 
-This package is a scaffold. Modules arrive after the core loop they extend.
+`ship` is built and published as the `@gtm-agents/modules/ship` subpath, behind the `ship:*` flags. [docs/SHIP.md](../../docs/SHIP.md) covers wiring it, and [examples/ship](../../examples/ship/) is a complete Worker with it wired in. `link-intake`, `classifier-tier` and `code-mode` are specified in [docs/BLUEPRINT.md](../../docs/BLUEPRINT.md) and not built in this release, so leave their `modules.*` switches in `gtm.config.ts` off. Their flags arrive with them.

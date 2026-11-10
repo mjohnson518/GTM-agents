@@ -53,7 +53,7 @@ The arm rides on the contact's campaign row to the send function, which records 
 | Template experiment | Control template against treatment template, on a pre-registered metric: `positive_reply` (the default), `conversation_started`, or the product metrics `signed_up`, `activated` and `paid`. At most 2 run at once. |
 | Subject test | Competing subject lines on one template's body (subject and template are factorial cells). At most one runs per template, and never on a running experiment's template (nor can an experiment start on a template with one running). New units split evenly until every variant has 50 matured sends, then by Thompson sampling with floors. Each draft is composed and gated with its variant, and the variant is recorded against the draft. Contacts enrolled in an experiment always get the template's own subject. |
 | Send-time test | Recipient-local early (08:00 to 10:00) against afternoon (13:00 to 15:00), behind `outreach:send_time_experiment`. Each account gets a slot, balanced within its time zone. The send function narrows the recipient's window to the slot and defers until it opens; it never widens the configured window. When `sending.windowHours` does not overlap both slots, the test plans nothing and the batch message says so. |
-| Segment routing | Templates targeted by segment, persona or team size, as before. |
+| Segment routing | Templates targeted by segment, persona or team size in their frontmatter, matched in the cold batch ([OUTREACH.md](OUTREACH.md)). |
 | Holdout | The no-send control group ([MEASUREMENT.md](MEASUREMENT.md)). |
 
 A product metric credits the last arm the person received within 60 days, once per experiment, contact and metric: the lifecycle module records the arm on the outcome's funnel row ([LIFECYCLE.md](LIFECYCLE.md)).
@@ -153,8 +153,8 @@ treatment_template: cold-intro-question
 ## Turning it on
 
 1. Make sure measurement health is clear on the scorecard ([MEASUREMENT.md](MEASUREMENT.md)); nothing concludes while it blocks.
-2. Register the jobs in your Worker: `createExperimentJobs({ operator, volume, options: { signalSources: [...] } })`. If your Worker bundles its templates for the cold batch, pass the same files as `templates` to the jobs and to the chat agent, so every check reads the copy the batch sends.
-3. Turn on `experiments:enabled`, then create and start an experiment. Enrollment begins with the next cold batch.
+2. Check that your Worker registers the jobs. The worker template's `src/index.ts` does: `createExperimentJobs({ operator, volume, options: { signalSources: [] } })`; list the signal sources the self-review may propose in `signalSources`. If your Worker bundles its templates for the cold batch, pass the same files as `templates` to the jobs and to the chat agent, so every check reads the copy the batch sends.
+3. Turn on `experiments:enabled` (`npx gtm flags set experiments:enabled true`), then create and start an experiment from the operator chat. Enrollment begins with the next cold batch.
 4. Optionally set `outreach:allocation_mode` to `thompson`, name the protected control in `experiments:control_template`, and turn on `experiments:self_review_enabled`.
 
 ## Flags

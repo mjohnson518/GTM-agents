@@ -96,8 +96,7 @@ Each step runs once per meeting and contact, claimed in the effects ledger, and 
 - **The deal.** The contact's open deal, or else the account's newest, steps to `demo_scheduled`; with none, one is created and stepped there. A contact or account with a won deal gets no new one.
 - **Measurement.** The meeting is credited to the contact's latest first touch sent in the 60 days before it was first seen, as the meeting half of the positive-reply definition ([MEASUREMENT.md](MEASUREMENT.md)). Nothing else counts it: there is no per-template meeting counter (the `templates.times_meeting` column is not written). Meetings per template are the credited sends joined to their template, read through the one definition below.
 - **The prep brief** is stored with the deal and sent to you with the booking notice.
-
-The customer lifecycle state is not moved: it has one writer, the lifecycle module.
+- **The lifecycle state.** The contact and every other attributed contact on the invite who has not signed up yet move to `engaged`, through the lifecycle module, the state's only writer ([LIFECYCLE.md](LIFECYCLE.md)). Like warmth, it never moves back.
 
 ### The one definition of a meeting booked
 
@@ -174,6 +173,6 @@ None calls a model or spends. `calendar_sync` is critical, so the cron health ch
 ## Limits
 
 - **Nothing is sent automatically.** The post-meeting follow-up and rebook action classes stay at "draft and ask" here, whatever their level.
-- **Proof of value is not available yet.** Requesting the product's analysis for a prospect needs the product bridge ([ROADMAP.md](ROADMAP.md)), and sending its result is permanently human.
+- **Proof of value is not built.** The event contract defines an optional proof-of-value hook ([EVENT-CONTRACT.md](EVENT-CONTRACT.md)), but nothing calls it yet, and `convert:pov_enabled` has no effect. Sending its result is permanently human ([ROADMAP.md](ROADMAP.md)).
 - **Google Calendar only**, primary calendar only, read-only. The `CalendarProvider` port ([INTERFACES.md](INTERFACES.md)) and its shared contract test are ready for another adapter.
 - **When a meeting was booked** is when calendar sync first saw it: the creation time is not read. On the first run after you turn sync on, every meeting in the window is first seen then; those that had already started are not counted as bookings (the baseline above), and those still ahead count as booked that day.

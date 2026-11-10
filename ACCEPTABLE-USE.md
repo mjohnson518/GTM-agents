@@ -1,6 +1,6 @@
 # Acceptable use
 
-GTM-agents automates business development: finding companies that might need a product, writing to the right people there, and following up. Done carelessly, that is spam. This policy describes what the system is for and what it must not be used for. Its defaults are built to make the right thing the easy thing. The operator remains responsible for how a deployment is used.
+This page is for anyone deciding whether to deploy GTM-agents, operating a deployment, or contributing to it. GTM-agents automates business development: finding companies that might need a product, writing to the right people there, and following up. Done carelessly, that is spam. This policy describes what the system is for and what it must not be used for. Its defaults are built to make the right thing the easy thing. The operator remains responsible for how a deployment is used.
 
 ## What it is for
 
@@ -38,7 +38,7 @@ The person or company that runs a deployment is responsible for it. In particula
 - **Email and privacy law in every market you send to.** For example CAN-SPAM in the United States, GDPR and PECR in the UK and EU, and CASL in Canada. Record the legal basis you rely on for each market. The system's defaults help, but they are not legal advice and do not make any particular use lawful.
 - **Your providers' terms:** the email provider, the data providers, the model providers and Cloudflare. The agent never accepts provider terms on your behalf.
 - **The content you approve.** Templates, copy lines, facts and offers are yours.
-- **Data requests.** Respond to access and erasure requests. The erasure flow in [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) removes a person from the agent.
+- **Data requests.** Respond to access and erasure requests. [docs/DEPLOYING.md](docs/DEPLOYING.md#data-erasure-requests) shows how to erase a person from a deployment, and [docs/EVENT-CONTRACT.md](docs/EVENT-CONTRACT.md) how your product's own deletions reach it.
 
 ## Reporting misuse
 

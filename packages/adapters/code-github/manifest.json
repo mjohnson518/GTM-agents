@@ -2,9 +2,9 @@
   "name": "code-github",
   "version": "0.1.0",
   "ports": ["CodeHost"],
-  "capabilities": ["git_data_commit", "pull_requests", "checks", "webhooks"],
+  "capabilities": ["git_data_commit", "fork_pull_requests", "pull_requests", "checks", "compare", "webhooks"],
   "requiredSecrets": ["GITHUB_TOKEN", "GITHUB_WEBHOOK_SECRET"],
-  "optionalSecrets": [],
+  "optionalSecrets": ["GITHUB_FORK_TOKEN"],
   "flags": ["ship:enabled", "ship:builds_enabled"],
   "tools": {
     "code_host_file_read": { "taint": "full", "gate": "never" },

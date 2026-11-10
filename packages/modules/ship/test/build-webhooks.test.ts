@@ -1,18 +1,19 @@
 // GTM-agents: POST /api/webhooks/code, the ship build's code host webhook, through a fake code
 // host: the signature is checked before any flag or database read; the task is re-resolved from the
 // repository and the pull request number, the head commit or the merge commit, never from an id in
-// the body; a merge, a close, a failed check and a production deploy each do exactly one thing; and
-// a redelivery does nothing. Every repository, commit and task is invented.
+// the body; a merge, a close, a failed check and a production deploy each do exactly one thing; a
+// deploy counts for every merge it contains, never on a failed comparison; and a redelivery does
+// nothing. Every repository, commit and task is invented.
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createWorker, type Env } from "@gtm-agents/core";
-import type { CodeHostEvent } from "@gtm-agents/core/ports";
+import { AdapterError, type CodeHostEvent } from "@gtm-agents/core/ports";
 import { createShipBuild } from "../src/build.ts";
 import { fakeCodeWebhook } from "../src/code-host-testing.ts";
 import { resetShipTables, shipTestConfig, SHIP_TEST_REPO } from "../src/planning-testing.ts";
 import { BUILD_ON, BUILD_WEBHOOK_SECRET, buildRig, seedShipTask, taskState, type BuildRig, type BuildRigOptions } from "../src/sandbox-testing.ts";
-import { handleCodeWebhook, SHIP_WEBHOOK_PATH } from "../src/webhooks.ts";
+import { handleCodeWebhook, MAX_DEPLOY_CANDIDATES, SHIP_WEBHOOK_PATH } from "../src/webhooks.ts";
 
 const base = env as unknown as Env;
 const db = base.DB;
@@ -47,6 +48,14 @@ async function openTask(number: number, headSha = HEAD): Promise<{ taskId: strin
   const task = await seedShipTask(db, { taskStatus: "pr_open", themeStatus: "pr_open" });
   await db.prepare("UPDATE ship_tasks SET pr_number = ?2, pr_url = ?3, head_sha = ?4, checks_state = 'pending' WHERE id = ?1").bind(task.taskId, number, `https://code.example/${repo}/pull/${number}`, headSha).run();
   return task;
+}
+
+/** A task whose pull request merged as `mergeSha`, through the webhook, merged at `mergedAt`. */
+async function mergedTask(rig: BuildRig, number: number, mergeSha: string, mergedAt?: string): Promise<string> {
+  const { taskId } = await openTask(number);
+  await post(rig, merged(number, mergeSha));
+  if (mergedAt) await db.prepare("UPDATE ship_tasks SET merged_at = ?2 WHERE id = ?1").bind(taskId, mergedAt).run();
+  return taskId;
 }
 
 /** A database that fails the test the moment anything touches it. */
@@ -224,6 +233,106 @@ describe("what a code host event does", () => {
     expect(named.announced).toEqual([]);
     await post(named, deployment({ sha: "9".repeat(40), environment: "prod" }));
     expect(named.announced).toEqual([second.taskId]);
+  });
+
+  it("marks deployed every merged task whose merge commit a later production deploy contains, and announces each once", async () => {
+    const rig = buildRig(base);
+    const first = await mergedTask(rig, 41, "1".repeat(40));
+    const second = await mergedTask(rig, 42, "2".repeat(40));
+    const later = await mergedTask(rig, 43, "3".repeat(40));
+    const RELEASE = "e".repeat(40);
+    rig.host.history.set(RELEASE, new Set(["1".repeat(40), "2".repeat(40)]));
+    expect(await (await post(rig, deployment({ sha: RELEASE }))).json()).toEqual({ ok: true, matched: 2, changed: 2 });
+    expect(await taskState(db, first)).toMatchObject({ status: "deployed", deployed_at: NOW.toISOString() });
+    expect(await taskState(db, second)).toMatchObject({ status: "deployed" });
+    // A merge the deploy does not carry stays merged, and nothing is said about it.
+    expect(await taskState(db, later)).toMatchObject({ status: "merged", deployed_at: null });
+    expect([...rig.announced].sort()).toEqual([first, second].sort());
+    expect(rig.host.compared.every(([, descendant]) => descendant === RELEASE)).toBe(true);
+
+    // The next deploy carries all three: only the one still merged is marked and announced.
+    const NEXT = "f".repeat(40);
+    rig.host.history.set(NEXT, new Set(["1".repeat(40), "2".repeat(40), "3".repeat(40)]));
+    expect(await (await post(rig, deployment({ sha: NEXT }))).json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect([...rig.announced].sort()).toEqual([first, second, later].sort());
+  });
+
+  it("takes a deploy of exactly the merge commit without asking the code host, and a deploy that does not contain it as no deploy", async () => {
+    const rig = buildRig(base);
+    const exact = await mergedTask(rig, 41, MERGE);
+    expect(await (await post(rig, deployment({ sha: MERGE }))).json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect(rig.host.compared).toEqual([]);
+    expect(rig.announced).toEqual([exact]);
+
+    const other = await mergedTask(rig, 42, "4".repeat(40));
+    // An older deploy, or one from another line of history: the code host says it does not contain the merge.
+    expect(await (await post(rig, deployment({ sha: "5".repeat(40) }))).json()).toEqual({ ok: true, matched: 0, changed: 0 });
+    expect(rig.host.compared).toEqual([["4".repeat(40), "5".repeat(40)]]);
+    expect(await taskState(db, other)).toMatchObject({ status: "merged", deployed_at: null });
+    expect(rig.announced).toEqual([exact]);
+  });
+
+  it("keeps a task merged and releases the delivery when the comparison fails, so a redelivery marks it", async () => {
+    const rig = buildRig(base);
+    const taskId = await mergedTask(rig, 41, "1".repeat(40));
+    const RELEASE = "e".repeat(40);
+    rig.host.history.set(RELEASE, new Set(["1".repeat(40)]));
+    rig.host.failContains = new AdapterError("the code host answered HTTP 502", "unavailable", true);
+    const event = deployment({ sha: RELEASE });
+    const failed = await post(rig, event);
+    expect(failed.status).toBe(500);
+    expect(await taskState(db, taskId)).toMatchObject({ status: "merged", deployed_at: null });
+    expect(rig.announced).toEqual([]);
+
+    rig.host.failContains = null;
+    expect(await (await post(rig, event)).json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect(await taskState(db, taskId)).toMatchObject({ status: "deployed" });
+    expect(rig.announced).toEqual([taskId]);
+  });
+
+  it("keeps the tasks a failed comparison reached, and announces none of the others twice on the redelivery", async () => {
+    const rig = buildRig(base);
+    const older = await mergedTask(rig, 41, "1".repeat(40), "2026-11-10T10:00:00.000Z");
+    const newer = await mergedTask(rig, 42, "2".repeat(40), "2026-11-10T11:00:00.000Z");
+    const RELEASE = "e".repeat(40);
+    rig.host.history.set(RELEASE, new Set(["1".repeat(40), "2".repeat(40)]));
+    const answer = rig.host.contains.bind(rig.host);
+    let failOlder = true;
+    rig.host.contains = (repoName, ancestor, descendant) => (failOlder && ancestor === "1".repeat(40) ? Promise.reject(new AdapterError("the code host did not answer", "timeout", true)) : answer(repoName, ancestor, descendant));
+    const event = deployment({ sha: RELEASE });
+    expect((await post(rig, event)).status).toBe(500);
+    expect(await taskState(db, newer)).toMatchObject({ status: "deployed" });
+    expect(await taskState(db, older)).toMatchObject({ status: "merged" });
+    expect(rig.announced).toEqual([newer]);
+
+    failOlder = false;
+    expect(await (await post(rig, event)).json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect(rig.announced).toEqual([newer, older]);
+  });
+
+  it(`checks at most the ${MAX_DEPLOY_CANDIDATES} newest merged tasks per deploy, a task merged as exactly that commit among them`, async () => {
+    const rig = buildRig(base);
+    const merge = (n: number) => n.toString(16).padStart(40, "0");
+    const at = (n: number) => new Date(Date.parse("2026-11-01T00:00:00.000Z") + n * 60_000).toISOString();
+    const tasks: string[] = [];
+    for (let n = 1; n <= MAX_DEPLOY_CANDIDATES + 2; n++) tasks.push(await mergedTask(rig, 100 + n, merge(n), at(n)));
+    const RELEASE = "e".repeat(40);
+    rig.host.history.set(RELEASE, new Set(tasks.map((_, i) => merge(i + 1))));
+    expect(await (await post(rig, deployment({ sha: RELEASE }))).json()).toEqual({ ok: true, matched: MAX_DEPLOY_CANDIDATES, changed: MAX_DEPLOY_CANDIDATES });
+    expect(rig.host.compared).toHaveLength(MAX_DEPLOY_CANDIDATES);
+    // The two oldest wait for the next deploy.
+    expect(await taskState(db, tasks[0] ?? "")).toMatchObject({ status: "merged" });
+    expect(await taskState(db, tasks[1] ?? "")).toMatchObject({ status: "merged" });
+    expect(await taskState(db, tasks[2] ?? "")).toMatchObject({ status: "deployed" });
+
+    // A task merged as exactly the deployed commit is checked first, however old it is.
+    await resetShipTables(db);
+    const fresh = buildRig(base);
+    const exact = await mergedTask(fresh, 200, RELEASE, at(0));
+    for (let n = 1; n <= MAX_DEPLOY_CANDIDATES + 1; n++) await mergedTask(fresh, 200 + n, merge(n), at(n));
+    expect(await (await post(fresh, deployment({ sha: RELEASE }))).json()).toEqual({ ok: true, matched: 1, changed: 1 });
+    expect(fresh.host.compared).toHaveLength(MAX_DEPLOY_CANDIDATES - 1);
+    expect(fresh.announced).toEqual([exact]);
   });
 
   it("still answers 200 and keeps the task deployed when AnnounceShipped throws", async () => {

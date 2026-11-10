@@ -1,6 +1,6 @@
 # Security policy
 
-GTM-agents sends email on someone's behalf, reads untrusted text from the web and from inboxes, holds people's contact data, and spends money on model and data providers. Its security model exists to make sure none of that can be turned against the operator or the people it contacts. Reports that help keep it that way are very welcome.
+This page is for security researchers reporting a vulnerability, and for deployers judging what counts as one. GTM-agents sends email on someone's behalf, reads untrusted text from the web and from inboxes, holds people's contact data, and spends money on model and data providers. Its security model exists to make sure none of that can be turned against the operator or the people it contacts. Reports that help keep it that way are very welcome.
 
 ## Reporting a vulnerability
 
@@ -27,7 +27,7 @@ Anything that defeats one of the system's safety controls, including:
 - **A gate that fails open:** the halt flag, kill switch, suppression check, budget gate or verification policy allowing an action when its state cannot be read.
 - **Suppression bypass:** emailing an opted-out, bounced, complained or erased address by any path.
 - **Webhook signature bypass,** replay outside the allowed window, or a webhook that acts before verifying.
-- **Unauthenticated access** to the dashboard RPC, the run status API or operator commands, or a way around the operator chat allowlist.
+- **Unauthenticated access** to the dashboard RPC, a bearer-protected `/api/*` route or operator commands, or a way around the operator chat allowlist or the dashboard's operator allowlist.
 - **SSRF or data exfiltration** through URL-fetching or search tools, including data carried out in URLs or queries.
 - **Secret exposure** in logs, errors, stored memory, prompts or responses.
 - **Erasure that does not hold:** an erased person re-added by sourcing, the product bridge, billing or referrals.
@@ -43,7 +43,7 @@ Anything that defeats one of the system's safety controls, including:
 
 ## Supported versions
 
-The project is pre-1.0. Security fixes land on the default branch. Deployments should track it.
+The project is pre-1.0, and only the latest release is supported. Security fixes land on the default branch and ship in the next release; [CHANGELOG.md](CHANGELOG.md) lists them. Deployments pin one version, so upgrade deliberately ([docs/DEPLOYING.md](docs/DEPLOYING.md#upgrading-to-a-new-version-of-the-toolkit)).
 
 ## Testing safely
 

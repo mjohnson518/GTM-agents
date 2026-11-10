@@ -18,14 +18,14 @@ What to look for never comes from code. Queries come from the brain's `keyword-p
 
 ## Turning it on
 
-1. Add the adapters and their secrets. With the two adapters that ship today:
+1. Enable `data-exa` and `data-hunter` in `gtm.config.ts` (`adapters`), and set their secrets:
 
    ```bash
    npx wrangler secret put EXA_API_KEY
    npx wrangler secret put HUNTER_API_KEY
    ```
 
-2. Register the jobs in `apps/worker/src/index.ts`. Adapters are built inside each run, so secrets are read when a job runs, not at import time:
+2. The template's `src/index.ts` already registers the jobs. In a Worker of your own, the wiring is below. Adapters are built inside each run, so secrets are read when a job runs, not at import time:
 
    ```ts
    import { createWorker, type Env } from "@gtm-agents/core";
@@ -50,7 +50,7 @@ What to look for never comes from code. Queries come from the brain's `keyword-p
 
 3. Upload an approved, locked brain with at least `personas`, `icp` and `keyword-portfolio` (`gtm brain validate --write-lock`, then upload it). With no approved personas, nothing can pass person fit, so the cycle searches but skips enrichment rather than pay for lookups it would reject.
 
-4. Turn the cycle on: set `discovery:enabled` to `true` in KV. Leave the other flags at their defaults to start.
+4. Turn the cycle on: `npx gtm flags set discovery:enabled true` (add `--env staging` for staging). Leave the other flags at their defaults to start.
 
 ## The discovery cycle
 
@@ -70,7 +70,7 @@ The `discovery_cycle` job runs weekdays at 09:00 UTC. Its four stages run in ord
 Up to `discovery:enrich_per_cycle` raw candidates per run, oldest first.
 
 1. **Identity and the fit gate, before any paid call.** The candidate needs a company account key, must not be on the never list, and its account must not have a model fit score below 5.
-2. **The person.** An account candidate (a company with no person yet) asks the people provider for people at the account's domain. They are ranked by the title classifier: persona matches first, then decision makers, then seniority. The best one fills the candidate; further matches, up to `peoplePerAccount` in total (default 2), become new raw candidates for the next run. Without a people provider, account candidates are rejected.
+2. **The person.** An account candidate (a company with no person yet) asks the people provider for people at the account's domain. They are ranked by the title classifier: persona matches first, then decision makers, then seniority. The best one fills the candidate; further matches, up to `peoplePerAccount` in total (1 to 5, default 2), become new raw candidates for the next run. Without a people provider, account candidates are rejected.
 3. **Person fit.** A title the classifier drops is rejected. A title it cannot place (maybe) is enriched without any paid email lookup, so it ends borderline. A maybe is a no until proven.
 4. **The email waterfall.** An address the people provider already returned is tried first; then the first finder; then each further finder, only while `discovery:email_waterfall_enabled` is on. Each step's address is kept only when it screens clean: exactly one address, at the candidate's own account domain, not a personal mailbox, a shared host or a role mailbox (`info@`, `sales@` and the like). Steps are recorded in `email_steps_tried` and never repeated. A provider that errors is skipped for the rest of the run.
 5. **Suppression, then duplicates, then verification.** A found address that is suppressed, tombstoned or opted out is rejected and not kept. One that already belongs to a contact marks the candidate `duplicate`. Otherwise the address is verified (a fresh cached result is reused).
@@ -139,7 +139,7 @@ Only keep is ever promoted. To accept a title variant, add it to the persona's `
 
 ## Account prescore and fit score
 
-**Prescore** (`account_prescore`, daily at 04:00 UTC, `fit:prescore_enabled`) is free: it writes a 0 to 100 score to `account_fit` from data already held. Team size from contact count (up to 20), a decision maker (25) or senior people (15), persona roles covered (5 each, up to 15), a recent signal (20, or 10 when weak), a deliverable contact (10) and firmographic facts on file (10). An account on the never list scores 0.
+**Prescore** (`account_prescore`, daily at 04:00 UTC, `fit:prescore_enabled`) is free: it writes a 0 to 100 score to `account_fit` from data already held. Team size from contact count (up to 20), a decision maker (25) or senior people (15), persona roles covered (5 each, up to 15), a signal in the last 90 days (20 at severity 0.5 or more, otherwise 10), a deliverable contact (10) and firmographic facts on file (10). An account on the never list scores 0.
 
 **Fit score** (`account_fit_scoring`, every 15 minutes, `fit:scoring_enabled`) is optional. It scores the top `fit:score_top_n` accounts by prescore, `fit:score_per_run` per run, with the model role `classifier` (set `fitRole: "judge"` to use the judge role). The system prompt is fixed rubric text plus the brain's `fit` slice (the approved icp); provider text about the account (firmographic values, search snippets, contact titles) goes only in the user turn, inside the quarantine fence. The output is schema-bound: a 1 to 10 score, a segment, a team size, a confidence, up to three reasons and a disqualifier, which caps the score at 4. Accounts scored below 5 are not enriched further and join the search exclusion list. Scores refresh after 180 days; an account that fails three times is marked unreachable and keeps its prescore. A role with no model, or a model with no price in `models.pricing`, fails the run before any call.
 
@@ -160,7 +160,7 @@ Change the schedules and caps with `createSourcingJobs({ adapters, options: { di
 | `discovery:enabled` | `false` | The discovery cycle |
 | `discovery:searches_per_cycle` | `5` (max 25) | Paid searches per run |
 | `discovery:results_per_search` | `10` (max 100) | Results requested per search |
-| `discovery:raw_backlog_max` | `300` | No new searches while more raw candidates wait |
+| `discovery:raw_backlog_max` | `300` (max 10,000) | No new searches while more raw candidates wait |
 | `discovery:enrich_per_cycle` | `40` (max 50) | Candidates enriched per run |
 | `discovery:qualify_per_cycle` | `20` (max 100) | Candidates qualified per run |
 | `discovery:promote_per_cycle` | `50` (max 100) | Candidates considered for promotion per run |
@@ -168,14 +168,14 @@ Change the schedules and caps with `createSourcingJobs({ adapters, options: { di
 | `verification:promotion_policy` | `strict` | `strict` or `allow_risky` |
 | `fit:prescore_enabled` | `false` | The nightly prescore |
 | `fit:scoring_enabled` | `false` | The model fit score |
-| `fit:score_top_n` | `1000` | Accounts in scope for the fit score |
+| `fit:score_top_n` | `1000` (max 10,000) | Accounts in scope for the fit score |
 | `fit:score_per_run` | `20` (max 100) | Accounts scored per run |
 
 Reads fail closed: a boolean flag that cannot be read is off; a ceiling that cannot be read or does not parse as a whole number is 0, so that stage does nothing that run.
 
 ## Costs and budgets
 
-Every paid call (a search, a people lookup, an email find, a verification, a model call) goes through one spend gate. Before the call it asks the budget gate whether new spend may start, with the job's daily cap: its `ceilings.maxSpendCents`, and `budget:job:<job>:daily_cents` if you set it (the lower applies, whatever `budget:enforcement` says). A refusal, or a budget that cannot be read, stops every later paid call in the run. After the call, the cost is written to `cost_events` in micro-cents with the job and run ids. Adapters report each call's cost in dollars; model calls are priced from `models.pricing` ([SECURITY-MODEL.md](SECURITY-MODEL.md#budgets-and-the-cost-ledger)).
+Every paid call (a search, a people lookup, an email find, a verification, a model call) goes through one spend gate. Before the call it asks the budget gate whether new spend may start, with the job's daily cap: its `ceilings.maxSpendCents`, and `budget:job:<job>:daily_cents` if you set it (the lower applies, whatever `budget:enforcement` says), plus the run's own ceiling, `budget:run_ceiling_cents`. A refusal, or a budget that cannot be read, stops every later paid call in the run. After the call, the cost is written to `cost_events` in micro-cents with the job and run ids. Adapters report each call's cost in dollars; model calls are priced from `models.pricing` ([SECURITY-MODEL.md](SECURITY-MODEL.md#budgets-and-the-cost-ledger)).
 
 A rough day at the defaults, with the two shipped adapters: 5 searches, then for up to 40 candidates a people lookup, an email find and a verification. At the list prices below that is a little under $3, which is why the discovery cap defaults to 300 cents. Set the cap and `usdPerCredit` to match your plans.
 
@@ -183,13 +183,13 @@ A rough day at the defaults, with the two shipped adapters: 5 searches, then for
 
 | Adapter | Ports | Secret | Options (`adapters.<name>.options` in `gtm.config.ts`) |
 |---|---|---|---|
-| `data-exa` | DiscoverySource (`search`) | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400) |
+| `data-exa` | DiscoverySource (`search` here; websets, news, find-similar and monitors for [SIGNALS.md](SIGNALS.md)) | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400); for websets, `websetEmail` (`true`) and `creditUsd` (0.006) |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | `HUNTER_API_KEY` | `baseUrl`, `usdPerCredit` (0.025) |
 
-- **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.005 a request of up to 25 results, $0.025 above that, $0.001 per result for highlights).
+- **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.005 a request of up to 25 results, $0.025 for 26 to 100, $0.001 per result for highlights).
 - **data-hunter** finds addresses (`/email-finder`), verifies them (`/email-verifier`) and lists named people at a domain (`/domain-search`, personal addresses only). Its statuses map as: `valid` to deliverable; `invalid` and `disposable` to undeliverable; `accept_all` and `webmail` to risky; `unknown`, and anything unrecognized, to unknown. A verification still in progress is a retryable error; a person who asked the vendor not to process their data comes back as unknown from the verifier and as no address from the finder. Costs are in credits (1 per address found, 0.5 per verification, 1 per ten addresses listed) times `usdPerCredit`.
 
-Neither adapter contributes agent tools; they are used only by these jobs.
+Neither adapter is offered to an agent as a tool; they are used only by these jobs and the signal jobs. `data-hunter` declares no tools, and `data-exa`'s manifest classifies its calls as full-taint egress tools so the security contract covers them ([INTERFACES.md](INTERFACES.md#how-adapters-become-tools)).
 
 ## Writing another adapter
 

@@ -28,9 +28,16 @@ export default defineConfig({
     "operator-telegram": { options: {} },
     "llm-gateway": { options: {} },
     "email-resend": { options: {} },
-    // ship: the repositories the loop may touch. The token can reach only these. Set
-    // shipBranchCiIsolated to true only once workflow runs for ship/ branches get no secret and no
-    // write token (docs/SHIP.md, CI and the ship branch); until then no branch is pushed.
+    // ship: the repositories the loop may touch. The tokens can reach only these and their forks.
+    // Two ways to push the ship branches (docs/SHIP.md, CI and the ship branch):
+    //   - to the repository itself (no `forks`): set shipBranchCiIsolated to true only once
+    //     workflow runs for ship/ branches get no secret and no write token;
+    //   - to a fork you created under another owner, with the pull request opened in the
+    //     repository from it: add `forks: { "acme-example/quarantine": "acme-ship-bot/quarantine" }`
+    //     and the GITHUB_FORK_TOKEN secret, and set shipBranchCiIsolated to true only once no
+    //     pull_request_target or workflow_run workflow runs a pull request's code and fork pull
+    //     request workflows get no secrets.
+    // Until shipBranchCiIsolated is true, no branch is pushed and every build stops before it starts.
     "code-github": { options: { repos: ["acme-example/quarantine"], author: { name: "Acme ship loop", email: "ship@acme.example" }, shipBranchCiIsolated: false } },
     // ship: the coding agent's sandbox. "claude-code" is the default profile; "opencode" is the
     // other. Each profile has its own image in wrangler.jsonc.

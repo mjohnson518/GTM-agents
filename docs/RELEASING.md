@@ -1,6 +1,6 @@
 # Releasing
 
-This page is for anyone publishing the GTM-agents packages to npm, including a fork publishing under its own scope: what the release build produces and why, how to prove a release works without publishing anything, the tag-triggered workflow and the secret and scope it needs, lockstep versioning, and how to check a release once it is out. Deployers installing the packages should read [DEPLOYING.md](DEPLOYING.md); contributors changing the CLI should read [packages/cli/README.md](../packages/cli/README.md).
+This page is for anyone publishing the GTM-agents packages to npm, including a fork publishing under its own scope: what the release build produces and why, how to prove a release works without publishing anything, the tag-triggered workflow, how it signs in to npm (a token for the first release, trusted publishing after) and the scope it needs, lockstep versioning, and how to check a release once it is out. Deployers installing the packages should read [DEPLOYING.md](DEPLOYING.md); contributors changing the CLI should read [packages/cli/README.md](../packages/cli/README.md).
 
 ## Why there is a build
 
@@ -79,8 +79,19 @@ The bump rewrites only the `version` fields and the internal dependency ranges, 
 ### One-time setup
 
 1. **Own the npm scope.** The packages publish as `@gtm-agents/*`, so whoever publishes must own the `gtm-agents` organization on npm, or be a member of it with permission to publish. A fork that does not own it publishes under its own scope ([below](#publishing-from-a-fork)).
-2. **Create a token and store it as `NPM_TOKEN`.** On npmjs.com, create a granular access token with read and write permission on the scope's packages (for a first release, grant it to the whole organization, since the packages do not exist yet), with "bypass two-factor authentication" enabled so CI can use it, and note its expiry: granular write tokens have a limited lifetime, so renew it before it lapses. Store it as a secret named `NPM_TOKEN` of the `npm` environment (Settings, Environments, npm; the first workflow run creates the environment, or create it yourself). In the same place, limit the environment to `v*` tags and add required reviewers: then no workflow on another branch can read the token, and a person approves every publish. A repository secret also works, but any workflow on any branch can read one. It is only ever referenced as `${{ secrets.NPM_TOKEN }}`; never put a token in a file.
+2. **Create the `npm` environment** (Settings, Environments; the first workflow run creates it, or create it yourself). Limit it to `v*` tags and add required reviewers, so no workflow on another branch can publish and a person approves every publish. The `publish` job runs in it, whichever way it signs in.
 3. **Keep the repository public.** npm provenance links each version to the public repository, commit and workflow run that built it.
+
+### How the workflow signs in to npm
+
+The `publish` job uses the `NPM_TOKEN` secret of the `npm` environment when one is set, and otherwise npm's trusted publishing: an OIDC exchange between GitHub Actions and npm, so there is no stored token to leak or renew. Trusted publishing needs the job's `id-token: write` permission, which it has, and npm 11.5.1 or later, which `publish.mjs` checks before anything is published. Provenance is attached either way.
+
+npm can only attach a trusted publisher to a package that already exists, so the first release publishes with a token and every later one without:
+
+1. **First release, with a short-lived token.** On npmjs.com, create a granular access token with read and write permission on the `gtm-agents` organization's packages (the packages do not exist yet, so grant it on the organization), with "bypass two-factor authentication" enabled so CI can use it, and the shortest expiry that covers the release. Store it as the secret `NPM_TOKEN` of the `npm` environment, never in a file or as a repository secret. Then release as below.
+2. **Remove the token** once the release is out: delete the `NPM_TOKEN` secret, and revoke the token on npmjs.com.
+3. **Configure trusted publishing on each package** when you prepare the next release. For each of `@gtm-agents/core`, `adapters`, `cli`, `modules` and `sdk`, open the package's settings on npmjs.com, add a trusted publisher for GitHub Actions, and enter the repository's owner and name, the workflow file name `release.yml`, and the environment `npm`. A trusted publisher that has not published within two days of being added expires and must be added again, which is why this step waits for the next release.
+4. **Disallow tokens.** In each package's Publishing access settings, choose "Require two-factor authentication and disallow tokens". Trusted publishing keeps working, and a leaked token can no longer publish.
 
 ### Each release
 
@@ -94,7 +105,7 @@ The bump rewrites only the `version` fields and the internal dependency ranges, 
    - `preflight` decides whether the run publishes and checks that the tag is `v<version>` for every package;
    - `pack` runs `npm ci --ignore-scripts` and the pack, uploads the tarballs and `release.json` as a workflow artifact, and reports the SHA-256 of `release.json` as a job output;
    - `verify` runs a normal `npm ci` (Wrangler's runtime needs its install scripts) and `npm run check`, then downloads the artifact and runs the smoke test and `npm publish --dry-run` against it, after checking every hash against the pack job's output;
-   - `publish` runs in the `npm` environment, fails at once if `NPM_TOKEN` is missing, downloads the same artifact, checks every hash against the pack job's output again and each tarball's `package.json` against the tag, and runs `npm publish --provenance --access public` for each, in dependency order (core, then the packages that depend on it).
+   - `publish` runs in the `npm` environment, signs in with `NPM_TOKEN` when it is set and otherwise through trusted publishing ([above](#how-the-workflow-signs-in-to-npm)), refuses at once when neither is possible, downloads the same artifact, checks every hash against the pack job's output again and each tarball's `package.json` against the tag, and runs `npm publish --provenance --access public` for each, in dependency order (core, then the packages that depend on it).
 4. **If a run fails halfway,** fix the cause and re-run the failed jobs. A version already on the registry is skipped when its integrity matches the local tarball, and stops the run when it does not, so nothing publishes twice and a different build never hides behind a skip. The dry run makes the same check, so CI stays green while the default branch is at a released version. A version that is out cannot be replaced; release a new patch version instead.
 
 A manual run (Actions, Release, Run workflow) is a dry run by default: it does everything except publish. To publish from a manual run, choose the tag under "Use workflow from" and turn `dry_run` off; a publishing run started on a branch fails.
@@ -105,12 +116,12 @@ What stops a bad publish:
 |---|---|
 | Publishes only for a pushed `v*` tag, or a manual run on a `v*` tag with `dry_run` off | `on:` triggers, the `preflight` decision and the `publish` job's `if:` |
 | The tag must equal `v<version>` for every package | `version.mjs --check --tag` in `preflight`, then `publish.mjs` against the tarballs |
-| `NPM_TOKEN` must be set | The first step of the `publish` job; `publish.mjs` checks `NODE_AUTH_TOKEN` again |
+| A way to sign in: the `NPM_TOKEN` secret, or trusted publishing with the job's OIDC token and npm 11.5.1 or later | `publish.mjs`, before anything is published |
 | `latest` never moves backwards | A prerelease publishes under `next`; a stable version older than the registry's `latest` (a patch on an older line) publishes under `maintenance` |
 | Only the tarballs that were built without install scripts, and then tested, publish | `pack` builds after `npm ci --ignore-scripts`; `verify` and `publish` use its artifact, never a fresh build, and check every tarball's SHA-256 through `release.json` against the hash `pack` reported as a job output, which no later job can change. A compromised dependency in `verify` can neither touch the tarballs as they are made nor get anything else published |
 | A real publish only from GitHub Actions | `publish.mjs` refuses elsewhere, because provenance needs the Actions identity |
-| Least privilege | Workflow permissions are `contents: read`; only the `publish` job adds `id-token: write`, and only its token check and publish steps see the token. Every third-party action is pinned to a commit SHA, checkouts keep no credentials, and the release build uses no dependency cache |
-| A person in front of the publish | The `publish` job runs in the `npm` environment, which holds the token; give it required reviewers and allow only `v*` tags |
+| Least privilege | Workflow permissions are `contents: read`; only the `publish` job adds `id-token: write`, and only its sign-in and publish steps see the token, when there is one; after the first release there is none. Every third-party action is pinned to a commit SHA, checkouts keep no credentials, and the release build uses no dependency cache |
+| A person in front of the publish | The `publish` job runs in the `npm` environment, which trusted publishing names and which holds the first release's token; give it required reviewers and allow only `v*` tags |
 
 ## Verifying a release
 
@@ -135,7 +146,5 @@ A fork that does not own `@gtm-agents` publishes under a scope it owns:
    npm install && npm run check
    ```
    The release scripts read package names from the workspace manifests; the few places that name the scope (`gtm init`, the smoke test, the docs) are covered by the replacement.
-2. Create the npm organization for the scope, and set `NPM_TOKEN` in the fork's `npm` environment as above.
+2. Create the npm organization for the scope, and follow [How the workflow signs in to npm](#how-the-workflow-signs-in-to-npm) in the fork: a short-lived `NPM_TOKEN` for its first release, then trusted publishing naming the fork's repository.
 3. Run the pack and smoke test locally, then tag. The `repository` field, and therefore provenance, follows the repository that runs the workflow, so nothing else changes.
-
-npm's trusted publishing (an OIDC exchange instead of a long-lived token) is the better steady state once the packages exist, since there is no token to leak or renew. Adopting it means configuring the package on npmjs.com and removing the `NPM_TOKEN` checks from `release.yml` and `publish.mjs`; the `publish` job already has the `id-token: write` permission it needs.

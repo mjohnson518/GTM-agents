@@ -11,7 +11,6 @@ export {
   HOLDOUT_RATE_MAX,
   OUTREACH_FLAGS,
   OUTREACH_LIMITS,
-  readAllocationMode,
   readAutoApprove,
   readConfidenceFloor,
   readDailyLimit,

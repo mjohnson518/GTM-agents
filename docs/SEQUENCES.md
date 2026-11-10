@@ -21,7 +21,7 @@ A sequence is the first email and the steps after it, all in one conversation. E
 
 1. **Templates.** Write one approved template per follow-up step in `templates/` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#templates)), with `kind` and `step` matching your configured steps (by default `follow_up` with `step: 2` and `breakup` with `step: 3`), validate them with `npx gtm brain validate` and upload and lock them as for the cold batch. `examples/brains/acme/templates/` has a complete three-step sequence.
 2. **The cold batch.** Follow-ups start from first touches the cold batch sent ([OUTREACH.md](OUTREACH.md)). Each sent first touch leaves its campaign row at step 1 with the next step due after `sequences.cold.steps[1].delayDays`.
-3. **Register the jobs** in `apps/worker/src/index.ts`, with the same email provider the delivery jobs use:
+3. **Register the jobs** in `src/index.ts` (the template, `apps/worker/src/index.ts`, already does), with the same email provider the delivery jobs use:
 
    ```ts
    import { createWorker, type Env } from "@gtm-agents/core";
@@ -48,7 +48,7 @@ A sequence is the first email and the steps after it, all in one conversation. E
    The release command sends through the `email` provider you give `createWorker`; without it, a sequence release is refused.
 4. **The inbox.** The reply check can only see replies the inbox has recorded, so every step is held until intake is running: set up a mailbox ([INBOX.md](INBOX.md)) and turn `inbox:enabled` on. With Gmail (poll intake, the default) a step goes out only when the latest inbox poll completed in the last 10 minutes, so a broken token, a halt or a stopped poll holds follow-ups instead of letting them go to people whose replies were never recorded. With Cloudflare Email Routing only, where mail is recorded the moment it arrives, set `sequences:reply_intake` to `routed`.
 5. **The operator chat** carries the release, resume and manual-touch commands, so it needs the operator channel set up and `operator:agent_enabled` on ([OPERATOR.md](OPERATOR.md)).
-6. **Turn sequences on:** set `sequences:enabled` to `true` in KV. Delivery must be on (`delivery:enabled`) for anything to leave.
+6. **Turn sequences on:** `npx gtm flags set sequences:enabled true`. Delivery must be on (`delivery:enabled`) for anything to leave.
 
 ## Steps and timing
 
@@ -76,7 +76,7 @@ The templates for a step are your approved, served templates whose `kind` and `s
 
 Variables are the cold batch's ([OUTREACH.md](OUTREACH.md#templates-and-variables)), plus `{{original_subject}}`, the first email's subject. The subject a follow-up goes out with is always `Re: ` and the first email's subject, whatever the template's subject line says, so it threads in clients that group by subject; write `subject: Re: {{original_subject}}` in follow-up templates to say so.
 
-**The fixture check.** Before any contact sees a template, the sweep renders it for an invented contact and runs it through the deterministic quality gate. It must pass with no finding at all: a finding there is the template's, not a contact's. A template that uses a variable follow-ups have no source for (`{{angle_opener}}`, `{{angle_age}}`, `{{proven_insight}}`, `{{company_context}}`) fails it. A step with no template, or with a template that fails, holds every row due for that step: the rows stay due, nothing ends, and you are told once a day which template and why.
+**The fixture check.** Before any contact sees a template, the sweep renders it for an invented contact and runs it through the deterministic quality gate. It must pass with no finding at all: a finding there is the template's, not a contact's. A template that uses a variable follow-ups have no source for (`{{angle_opener}}`, `{{angle_age}}`, `{{angle_headline}}`, `{{proven_insight}}`, `{{company_context}}`) fails it. A step with no template, or with a template that fails, holds every row due for that step: the rows stay due, nothing ends, and you are told once a day which template and why.
 
 **Skip rather than guess.** A contact whose own values leave a variable empty is never greeted with a fallback: that draft fails the gate (`MISSING_VARIABLE`) and the contact's sequence pauses. A contact no template may be offered to stays due, and is named in the daily template notice.
 
@@ -97,7 +97,7 @@ Right before the send function is called, the reply check and the row's state (s
 
 Out-of-office replies, auto-replies, bounces and spam do not stop a sequence. (Reply detection may hold a sequence until someone is back; see `holdSequences`.) Reply detection and triage also stop sequences as mail arrives; the sweep's own check is the gate that holds even if those writes fail.
 
-**Fails closed.** The reply check, the account rules and the suppression list are gates. If any of them cannot be read, nothing is drafted, released or sent for any row, the rows stay due, and you are told once that day. The brain must be readable whole, so its never list always applies.
+**Fails closed.** The sweep runs only while `sequences:enabled` is on and cold outreach is not paused (the kill switch); either unreadable stops it. The reply check, the account rules and the suppression list are gates. If any of them cannot be read, nothing is drafted, released or sent for any row, the rows stay due, and you are told once that day. The brain must be readable whole, so its never list always applies.
 
 Then, per row:
 
@@ -196,7 +196,7 @@ Reads fail in the direction that sends less: an unreadable switch is off, an unr
 | `sequence_sweep` | 08:30, 12:30, 16:30 and 20:30, Monday to Friday | `sequences:enabled` | 4 minutes, 200 rows, 25 cents a day for the reviewer |
 | `sequence_stale_check` | 10:00 on Saturdays | `sequences:enabled` | 30 seconds, 500 rows |
 
-Change them with `createSequenceJobs({ ..., options: { sweepSchedule, staleSchedule, sweepMaxRows, maxDurationMs, reviewMaxSpendCents, reviewTimeoutMs, messageIdLookups, manualTouchesPerDay } })`. A sweep schedule that fires more often than every 15 minutes is refused, because the sweep calls a model (one review per template per sweep, judge role, checked against the budget first and recorded in `cost_events`). The sweep is critical (cron health watches it) and safe to rerun: every step is keyed, so a rerun never sends a step twice. Pass `templates: (env) => files` to serve templates bundled with the Worker instead of from KV.
+Change them with `createSequenceJobs({ ..., options: { sweepSchedule, staleSchedule, sweepMaxRows, maxDurationMs, reviewMaxSpendCents, reviewTimeoutMs, messageIdLookups, manualTouchesPerDay, sender } })` (`sender` takes the send function's options, as for the delivery jobs). A sweep schedule that fires more often than every 15 minutes is refused, because the sweep calls a model (one review per template per sweep, judge role, checked against the budget first and recorded in `cost_events`). The sweep is critical (cron health watches it) and safe to rerun: every step is keyed, so a rerun never sends a step twice. Pass `templates: (env) => files` to serve templates bundled with the Worker instead of from KV.
 
 ## Operator commands
 

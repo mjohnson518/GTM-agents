@@ -52,8 +52,8 @@ export const ShipSandboxEgress = sandboxClasses.Egress;
 
 // The build side: the Workflow that runs the coding agent, the gatekeeper, the risk approval
 // command and the code host webhook. It calls planning.announceShipped once a production deploy
-// carries a merge commit; the arrow function and the two type annotations let the sides refer to
-// each other.
+// carries a task's merge commit (that commit, or a later one with it in its history); the arrow
+// function and the two type annotations let the sides refer to each other.
 const build: ShipBuild<ShipEnv> = createShipBuild<ShipEnv>({
   config,
   repo: REPO,

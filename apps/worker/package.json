@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/worker",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "The deployable GTM-agents Worker and the template that gtm init copies.",
   "license": "Apache-2.0",
@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@gtm-agents/adapters": "0.0.0",
-    "@gtm-agents/core": "0.0.0"
+    "@gtm-agents/adapters": "0.1.0",
+    "@gtm-agents/core": "0.1.0"
   }
 }

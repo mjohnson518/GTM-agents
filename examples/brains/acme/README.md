@@ -1,6 +1,6 @@
 # Acme: a complete example brain
 
-Acme is a fictional developer-tools company. It sells Acme Quarantine, which detects flaky tests in CI and quarantines them automatically. Its buyers are software companies with 30 to 300 engineers. Every company, person, number and price here is invented, and the domains use the reserved `.example` top-level domain.
+This page is for deployers who want a complete brain to read or copy before writing their own. Acme is a fictional developer-tools company. It sells Acme Quarantine, which detects flaky tests in CI and quarantines them automatically. Its buyers are software companies with 30 to 300 engineers. Every company, person, number and price here is invented, and the domains use the reserved `.example` top-level domain.
 
 The folder is a complete brain written to [docs/BRAIN-SCHEMA.md](../../../docs/BRAIN-SCHEMA.md):
 

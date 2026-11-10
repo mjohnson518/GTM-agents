@@ -11,8 +11,9 @@
 //     large to read counts every byte as a line, which only raises the risk;
 //   - gatekeep re-runs the path policy on the normalized files, refuses unless it allows them,
 //     refuses a change that needs a person's review unless the approval names this exact digest,
-//     then makes one commit on ship/<task> and opens (or finds) the pull request. It never merges:
-//     merging code is permanently human.
+//     then makes one commit on ship/<task> and opens (or finds) the pull request. Whether that
+//     branch is in the target or in a fork is the code host's configuration; the pull request is
+//     in the target either way. It never merges: merging code is permanently human.
 import { canonicalJson } from "@gtm-agents/core/security";
 import type { CodeHost, CommitResult, PathKind, PullRequestRef, RepoFile } from "@gtm-agents/core/ports";
 import type { ChangedFile as PortChangedFile } from "@gtm-agents/core/ports";
@@ -240,7 +241,7 @@ export async function gatekeep(input: GatekeepInput): Promise<GatekeepResult> {
   const judged = await judge(input);
   if (judged.verdict.decision !== "allow" || judged.risk === null) return { ok: false, reason: `the path policy refused the change: ${judged.verdict.reasons.slice(0, 5).join("; ")}`, refused: true };
   if (judged.needsApproval && input.approvedDigest !== digest) return { ok: false, reason: "the change needs a person's approval of these exact files", refused: true };
-  const commit = await input.host.commit({ repo: input.repo, taskId: input.taskId, baseSha: input.baseSha, message: commitMessage(input.spec, input.taskId), files: judged.files });
+  const commit = await input.host.commit({ repo: input.repo, taskId: input.taskId, baseSha: input.baseSha, baseBranch: input.baseBranch, message: commitMessage(input.spec, input.taskId), files: judged.files });
   const text = pullRequestText(input.spec, input.taskId, judged.verdict, judged.risk);
   const pr = await input.host.openPullRequest({ repo: input.repo, taskId: input.taskId, base: input.baseBranch, title: text.title, body: text.body, draft: input.draft });
   return { ok: true, commit, pr, risk: judged.risk, filesChanged: judged.verdict.filesChanged, linesChanged: judged.verdict.linesChanged };

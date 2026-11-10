@@ -61,7 +61,7 @@ export class GtmCockpit extends GtmView {
       title: "Drain pending monitor hits",
       body: "Every pending monitor hit is cancelled and will not produce outreach.",
       fields: [{ name: "reason", label: "Reason", required: true, multiline: true }],
-      confirmLabel: "Drain monitor hits",
+      confirmLabel: "Drain deferred sends",
       danger: true,
     });
     if (!answer.confirmed) return;
@@ -105,7 +105,7 @@ export class GtmCockpit extends GtmView {
               ${pause.paused
                 ? html`<button class="primary" @click=${() => void this.#resume()} ?disabled=${this.busy}>Resume</button>`
                 : html`<button class="danger" @click=${() => void this.#pause()} ?disabled=${this.busy}>Pause with reason</button>`}
-              <button @click=${() => void this.#drain()} ?disabled=${this.busy}>Drain monitor hits</button>
+              <button @click=${() => void this.#drain()} ?disabled=${this.busy}>Drain deferred sends</button>
               <button @click=${() => void this.#replay()} ?disabled=${this.busy}>Replay deferred</button>
             </div>`;
         })}

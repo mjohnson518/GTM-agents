@@ -385,7 +385,7 @@ export async function openPullRequest<E extends Env>(deps: ShipBuildDeps<E>, env
   if (!result.ok) return result;
   await moveTask(env.DB, task.taskId, ["running", "proposed"], "pr_open", now, { pr_number: result.pr.number, pr_url: result.pr.url, head_sha: result.pr.headSha, checks_state: "pending" });
   await moveTheme(env.DB, task.themeId, ["approved", "building"], "pr_open", now);
-  await writeAudit(env.DB, { agentId: "ship", action: "ship_pr_opened", details: { taskId: task.taskId, pr: result.pr.number, commit: result.commit.commitSha, created: result.pr.created }, now });
+  await writeAudit(env.DB, { agentId: "ship", action: "ship_pr_opened", details: { taskId: task.taskId, pr: result.pr.number, commit: result.commit.commitSha, branchRepo: result.commit.repo, created: result.pr.created }, now });
   return { ok: true, number: result.pr.number, url: result.pr.url, risk: result.risk, files: result.filesChanged, lines: result.linesChanged };
 }
 

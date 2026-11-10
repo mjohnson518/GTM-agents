@@ -7,7 +7,7 @@ This package is for developers of the host application (the product being sold) 
 - **Pull.** `createReadHandler` serves the three read endpoints the deployment calls nightly: it verifies the signature first, then cuts every row down to the contract's field whitelist.
 - **Attribution.** Helpers for the `gtm_ref` cookie that carries the token from an outreach link to sign-up.
 
-It uses WebCrypto and fetch only, with no Cloudflare dependency, so it runs in Node 20 and later, Bun, Deno, Workers and other edge runtimes.
+It uses WebCrypto and fetch only, with no Cloudflare dependency, so it suits Node, Bun, Deno, Workers and other edge runtimes. Like every package in the toolkit, the published package declares Node 24 or later in `engines`, and its tests run on Node 24.
 
 ## Configuration
 
@@ -70,7 +70,7 @@ const reads = createReadHandler({
 export const GET = (request: Request) => reads(request);
 ```
 
-The handler refuses an unsigned read, a signature that does not match, and a timestamp more than 5 minutes from your clock (401) before calling any loader. It answers 503 while the secret is unset, 405 to anything but GET, 404 for an endpoint you did not provide, and 400 for a malformed query. Every row is cut down to the contract's whitelist (`toUserItem`, `toFeedbackItem`, `toDeletionItem`), so a loader that returns extra columns leaks nothing. The response's `cursor` is the last item's id, present only when `hasMore` is true (or, without `hasMore`, when the page is full).
+The handler refuses an unsigned read, a signature that does not match, and a timestamp more than 5 minutes from your clock (401) before calling any loader. It answers 503 while the secret is unset, 405 to anything but GET, 404 for an endpoint you did not provide, 400 for a malformed query, and 500 when a loader throws. Every row is cut down to the contract's whitelist (`toUserItem`, `toFeedbackItem`, `toDeletionItem`), so a loader that returns extra columns leaks nothing. The response's `cursor` is the last item's id, present only when `hasMore` is true (or, without `hasMore`, when the page is full).
 
 These endpoints are the one cross-tenant read path in your product. Serve them from a dedicated query or view, and never let end-user credentials reach them. Keep deletions readable for at least 90 days.
 

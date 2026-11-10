@@ -227,7 +227,8 @@ export async function runShipSpecs<E extends Env>(deps: SpecJobDeps<E>): Promise
       );
       if (outcome.status === "started" || outcome.status === "queued") {
         result.autoApproved += 1;
-        if (reading.level === 2) await tell(deps, outcome.message);
+        // Level 3 is announced like level 2: the digest-only mode does not exist yet.
+        if (reading.level >= 2) await tell(deps, outcome.message);
       }
     } catch (error) {
       result.failed += 1;
