@@ -260,6 +260,93 @@ describe("a monitor of articles", () => {
   });
 });
 
+describe("article monitor hits as signals", () => {
+  const monitors: MonitorConfig[] = [
+    { key: "news", provider: "data-exa", secretName: "MONITOR_SECRET_NEWS", description: "articles", results: "articles" },
+    { key: "news-two", provider: "data-exa", secretName: "MONITOR_SECRET_NEWS_TWO", description: "more articles", results: "articles" },
+  ];
+  const item = (id: string, monitor: string, url: string, payload: Record<string, unknown>) =>
+    db.prepare("INSERT INTO monitor_items (id, provider, monitor_id, url, result_id, payload, created_at) VALUES (?1, 'data-exa', ?2, ?3, ?1, ?4, ?5)").bind(id, monitor, url, JSON.stringify(payload), NOW.toISOString()).run();
+
+  it("records one funding signal for an article naming one known account, and none for a publisher's story, two accounts, an old or an undated article, or a redelivery", async () => {
+    const brain = await loadSourcingBrain(env.KV);
+    await seedAccount(db, "brightloop.example", "Brightloop Labs", { score: 8 });
+    await seedAccount(db, "quillstack.example", "Quillstack", { score: 7 });
+    await item("a1", "news", "https://news.example/brightloop-series-b", { title: "Brightloop Labs raises $20 million Series B", published_at: daysAgo(2) });
+    await item("a2", "news-two", "https://news.example/brightloop-series-b", { title: "Brightloop Labs raises $20 million Series B", published_at: daysAgo(2) });
+    await item("a3", "news", "https://news.example/newsletter", { title: "News Example launches a weekly newsletter", published_at: daysAgo(1) });
+    await item("a4", "news", "https://news.example/two", { title: "Brightloop Labs and Quillstack raise a joint funding round", published_at: daysAgo(1) });
+    await item("a5", "news", "https://news.example/old", { title: "Quillstack raises seed funding", published_at: daysAgo(60) });
+    await item("a6", "news", "https://news.example/undated", { title: "Quillstack raises seed funding" });
+    await item("a7", "news", "https://news.example/quillstack-cto", { title: "Quillstack appoints a new chief technology officer", published_at: daysAgo(3) });
+
+    const drained = await drainMonitorItems({ db, monitors, brain, now: NOW, limit: 50, log: silentLog, articleSignals: true });
+    expect(drained).toEqual({ processed: 7, signals: 2, inserted: 0, duplicate: 1, skipped: 4 });
+
+    const { results: signals } = await db.prepare("SELECT type, source, account_key, source_url, evidence FROM signal_events ORDER BY source_url").all<Record<string, unknown>>();
+    expect(signals).toEqual([
+      expect.objectContaining({ type: "funding", source: "search_monitor", account_key: "brightloop.example", source_url: "https://news.example/brightloop-series-b" }),
+      expect.objectContaining({ type: "news", source: "search_monitor", account_key: "quillstack.example", source_url: "https://news.example/quillstack-cto" }),
+    ]);
+    expect(JSON.parse(String(signals[1]?.evidence))).toMatchObject({ category: "leadership", monitor: "news" });
+
+    const { results: items } = await db.prepare("SELECT id, outcome, signal_id FROM monitor_items ORDER BY id").all<{ id: string; outcome: string | null; signal_id: string | null }>();
+    const linked = items.filter((r) => r.signal_id !== null).map((r) => r.id);
+    expect(linked).toEqual(["a1", "a2", "a7"]);
+    expect(items.filter((r) => r.signal_id === null).every((r) => r.outcome === "skipped")).toBe(true);
+    expect(items.find((r) => r.id === "a2")?.outcome).toBe("duplicate");
+    expect((await drainMonitorItems({ db, monitors, brain, now: NOW, limit: 50, log: silentLog, articleSignals: true })).processed).toBe(0);
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM candidates").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("records nothing while the article flag is off", async () => {
+    const brain = await loadSourcingBrain(env.KV);
+    await seedAccount(db, "brightloop.example", "Brightloop Labs", { score: 8 });
+    await item("a1", "news", "https://news.example/brightloop-series-b", { title: "Brightloop Labs raises $20 million Series B", published_at: daysAgo(2) });
+    const drained = await drainMonitorItems({ db, monitors, brain, now: NOW, limit: 50, log: silentLog });
+    expect(drained).toMatchObject({ processed: 1, skipped: 1, signals: 0 });
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM signal_events").first<{ n: number }>())?.n).toBe(0);
+  });
+
+  it("does not record an article the news search already recorded for the same account", async () => {
+    const brain = await loadSourcingBrain(env.KV);
+    await seedAccount(db, "brightloop.example", "Brightloop Labs", { score: 8 });
+    await recordSignal(db, newSignal("brightloop.example", { url: "https://news.example/brightloop-series-b", eventKey: "news-1" }), NOW);
+    await item("a1", "news", "https://news.example/brightloop-series-b", { title: "Brightloop Labs raises $20 million Series B", published_at: daysAgo(2) });
+    const drained = await drainMonitorItems({ db, monitors, brain, now: NOW, limit: 50, log: silentLog, articleSignals: true });
+    expect(drained).toMatchObject({ processed: 1, signals: 0, skipped: 1 });
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM signal_events").first<{ n: number }>())?.n).toBe(1);
+  });
+});
+
+describe("article signals beside the news search and company sites", () => {
+  it("lets the news search skip a story a monitor already recorded under the same URL", async () => {
+    await seedAccount(db, "brightloop.example", "Brightloop Labs", { score: 8 });
+    await recordSignal(db, newSignal("brightloop.example", { source: "search_monitor", url: "https://news.example/brightloop-series-b", eventKey: "https://news.example/brightloop-series-b" }), NOW);
+    const news = fakeNews([{ title: "Brightloop Labs raises Series B funding", url: "https://news.example/brightloop-series-b", providerRef: "n1", publishedAt: daysAgo(2) }]);
+    const stats = await runNewsSignals({ db, source: news, gate: gate(), now: NOW, queries: [{ category: "funding", text: "funding" }], log: silentLog });
+    expect(stats).toMatchObject({ recorded: 0, skipped: 1 });
+    expect((await db.prepare("SELECT COUNT(*) AS n FROM signal_events").first<{ n: number }>())?.n).toBe(1);
+  });
+
+  it("still turns company-site hits into candidates while article signals are on", async () => {
+    const brain = await loadSourcingBrain(env.KV);
+    await seedAccount(db, "brightloop.example", "Brightloop Labs", { score: 8 });
+    const monitors: MonitorConfig[] = [
+      { key: "sites", provider: "data-exa", secretName: "MONITOR_SECRET_SITES", description: "company sites", results: "company_sites" },
+      { key: "news", provider: "data-exa", secretName: "MONITOR_SECRET_NEWS", description: "articles", results: "articles" },
+    ];
+    await db.prepare("INSERT INTO monitor_items (id, provider, monitor_id, url, result_id, payload, created_at) VALUES ('s1', 'data-exa', 'sites', 'https://quillstack.example/', 's1', '{}', ?1)").bind(NOW.toISOString()).run();
+    await db
+      .prepare("INSERT INTO monitor_items (id, provider, monitor_id, url, result_id, payload, created_at) VALUES ('a1', 'data-exa', 'news', 'https://news.example/brightloop-series-b', 'a1', ?1, ?2)")
+      .bind(JSON.stringify({ title: "Brightloop Labs raises $20 million Series B", published_at: daysAgo(2) }), NOW.toISOString())
+      .run();
+    const drained = await drainMonitorItems({ db, monitors, brain, now: NOW, limit: 50, log: silentLog, articleSignals: true });
+    expect(drained).toEqual({ processed: 2, inserted: 1, duplicate: 0, skipped: 0, signals: 1 });
+    expect((await db.prepare("SELECT account_key FROM candidates").first<{ account_key: string }>())?.account_key).toBe("quillstack.example");
+  });
+});
+
 describe("responder lookalikes", () => {
   it("seeds from accounts that responded and skips labelled, known, recent and low-fit accounts", async () => {
     const brain = await loadSourcingBrain(env.KV);

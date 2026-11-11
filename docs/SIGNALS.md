@@ -19,7 +19,7 @@ Every source is its own job behind its own flag, and every flag is off until you
 ## Turning it on
 
 1. Check that `src/index.ts` wires the adapters and the jobs. The worker template does; a deployment created from an older template adds them (see [Wiring](#wiring)).
-2. Apply the migrations with `gtm migrate` (`0025_signals.sql` adds two columns to `monitor_items` and one to `discovery_queries`, plus indexes).
+2. Apply the migrations with `gtm migrate` (`0025_signals.sql` adds two columns to `monitor_items` and one to `discovery_queries`, plus indexes; `0030_monitor_signals.sql` adds `monitor_items.signal_id` for article signals).
 3. Turn on the sources you want, one at a time, and watch their run rows:
 
 ```bash
@@ -35,7 +35,7 @@ npx gtm flags set scoring:intent_enabled true --env staging
 | Source | Job and schedule (UTC) | Flag | What it writes | Per-run ceiling | Cost |
 |---|---|---|---|---|---|
 | Websets | `signal_websets`, weekdays 10:00 | `signals:websets_enabled` | person candidates | 3 websets created, 200 items | 10 credits per matching item, 5 per email found; the worst case is reserved at creation |
-| Search monitors | webhook, then `signal_monitor_drain` every 30 minutes | `signals:monitors_enabled` | account candidates | 500 hits per delivery and per drain | billed by the provider per monitor run |
+| Search monitors | webhook, then `signal_monitor_drain` every 30 minutes | `signals:monitors_enabled` | account candidates; with `signals:article_monitors_enabled`, signals from article hits | 500 hits per delivery and per drain | billed by the provider per monitor run |
 | Funding and leadership news | `signal_news`, weekdays 07:00 | `signals:news_enabled` | signals | 4 searches of 25 results | about $0.022 per search ($0.007 including 10 results, $0.001 for each further result) |
 | Hiring boards | `signal_hiring_boards`, weekdays 06:00 | `signals:hiring_boards_enabled` | signals, role counts | 20 accounts | free (public boards) |
 | Responder lookalikes | `signal_lookalikes`, Tuesday and Thursday 11:00 | `signals:lookalikes_enabled` | account candidates | 5 seeds, 30 inserts | $0.007 per find-similar of up to 10 results, $0.001 for each further result |
@@ -60,7 +60,9 @@ monitors: [{ key: "ci-pain", provider: "data-exa", secretName: "MONITOR_CI_PAIN"
 npx wrangler secret put MONITOR_CI_PAIN
 ```
 
-The route resolves the key against your config only, refuses bodies over 1 MB, and verifies the signature (`Exa-Signature: t=<unix>,v1=<hex>`, HMAC-SHA256 of `<t>.<raw body>`, within five minutes) before it touches the database. With the flag off it answers 503 and records nothing. Hits are cleaned and stored in `monitor_items` in batches, deduplicated on the provider's result id and on the URL per monitor. The drain job turns up to 500 a run into raw account candidates, reading the account from the result's host, so only a monitor whose results are companies' own sites (`results: "company_sites"`, a search in the provider's company category) produces candidates. Hits from a monitor of articles (`results: "articles"`) are skipped, so a publisher never becomes an account.
+The route resolves the key against your config only, refuses bodies over 1 MB, and verifies the signature (`Exa-Signature: t=<unix>,v1=<hex>`, HMAC-SHA256 of `<t>.<raw body>`, within five minutes) before it touches the database. With the flag off it answers 503 and records nothing. Hits are cleaned and stored in `monitor_items` in batches, deduplicated on the provider's result id and on the URL per monitor. The drain job turns up to 500 a run into raw account candidates, reading the account from the result's host, so only a monitor whose results are companies' own sites (`results: "company_sites"`, a search in the provider's company category) produces candidates. Hits from a monitor of articles (`results: "articles"`) never become candidates, so a publisher never becomes an account.
+
+**Articles as signals.** With `signals:article_monitors_enabled` on as well, the drain reads each article hit the way the funding and leadership news job reads a news result ([below](#funding-and-leadership-news)): the hit needs a published date inside the last 30 days and a URL, its title must name exactly one known account by its distinctive name, and the rest of the title must read as a round raised or a leader appointed. Such a hit records a signal at that account with source type `search_monitor`, the monitor's key in its evidence, and the article's URL as its event key, so the same story delivered by two monitors is recorded once (the second hit is counted as a duplicate). A story the news job already recorded for the account under the same URL is not recorded again, in either direction; this is best effort, since it matches the URL exactly and the two jobs can run at the same moment. The hit's `monitor_items.signal_id` names one of the signal's rows; every other article is skipped. The drain writes `signal_id` only for article hits, so apply migration `0030` before turning the flag on (`gtm deploy` migrates first). Point an article monitor at news about the accounts you care about (for example, a search in the provider's news category for your segment) and it supplies dated reasons to write without a paid news search.
 
 ### Funding and leadership news
 
@@ -100,7 +102,7 @@ A signal is a dated, sourced reason to write to an account. Every row in `signal
 
 | Field | Column |
 |---|---|
-| source type | `source` (`exa_news`, `hiring_board`, ...) |
+| source type | `source` (`exa_news`, `search_monitor`, `hiring_board`, ...) |
 | category | `type` (`funding`, `hiring`, `launch`, `news`, `job_change`, `post`, `filing`, `product_usage`, `custom`) |
 | severity, 0 to 1 | `severity` |
 | source URL | `source_url` |

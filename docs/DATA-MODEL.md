@@ -160,9 +160,9 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `experiments.control_template_sha256` and `treatment_template_sha256` (0024): both templates' copy hashes, recorded at start, so edited copy puts an experiment on hold rather than mixing versions. Experiments otherwise use the 0009 tables (`experiments`, `experiment_assignments` pinned per account, subject tests and variants, proposals).
 - `calendar_sync_state` (0026): one row holding when calendar sync first ran (`baseline_at`, which never moves) and when it last finished listing the calendar (`last_synced_at`). `calendar_meetings.before_baseline` marks meetings that had already started at the first sync: they still stop outreach, but they are never counted as new bookings. A meeting whose event dropped out of the latest listing has a stale time, so its reminders wait ([CONVERT.md](CONVERT.md)).
 
-### Signals (0025)
+### Signals (0025, 0030)
 
-- `discovery_queries.provider_ref` (the provider's id for a webset or monitor), `monitor_items.result_id` and `monitor_items.payload` (a hit, as data), with unique indexes on a monitor's result id and URL so a redelivered hit is stored once. Signals stay in `signal_events` (0010), each with a source type, category, severity, source URL, event date, evidence (data only), expiry, and a contact or account; the intent score lives in `contacts.attributes.intent`.
+- `discovery_queries.provider_ref` (the provider's id for a webset or monitor), `monitor_items.result_id` and `monitor_items.payload` (a hit, as data), with unique indexes on a monitor's result id and URL so a redelivered hit is stored once; `monitor_items.signal_id` (0030) names the signal an article hit recorded. Signals stay in `signal_events` (0010), each with a source type, category, severity, source URL, event date, evidence (data only), expiry, and a contact or account; the intent score lives in `contacts.attributes.intent`.
 
 ### Learning and lifecycle follow-ups (0027, 0028)
 

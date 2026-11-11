@@ -12,8 +12,13 @@
 //   - the monitor processor (drainMonitorItems) takes up to 500 unprocessed hits a run, oldest first,
 //     and, for a monitor whose results are company sites, writes each as a raw account candidate
 //     (the account is the result's host) for the discovery cycle to enrich, qualify and promote.
-//     Hits from a monitor of articles are skipped, so a publisher never becomes an account. A hit with no company account (a personal or shared host) or on the never list is
-//     skipped; one already a candidate is a duplicate. The fit gate applies downstream. Each monitor has an inactive discovery_queries row, so its candidates earn credit.
+//     Hits from a monitor of articles never become candidates, so a publisher never becomes an
+//     account. While signals:article_monitors_enabled is on, an article whose title names exactly one
+//     known account and reads as funding or leadership news becomes a signal at that account, by the
+//     news job's own rules (recordNewsHit); every other article is skipped. A hit with no company
+//     account (a personal or shared host) or on the never list is skipped; one already a candidate is
+//     a duplicate. The fit gate applies downstream. Each monitor has an inactive discovery_queries
+//     row, so its candidates earn credit.
 // Hits are third-party text and stay data.
 import { accountKey } from "../data/keys.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
@@ -25,6 +30,7 @@ import { matchNeverList } from "../sourcing/identity.ts";
 import { PROVIDER_TEXT_CAPS, cleanProviderText, cleanProviderUrl } from "../sourcing/text.ts";
 import { creditResults, ensureSourceQuery } from "./attribution.ts";
 import { SIGNAL_FLAGS, SIGNAL_LIMITS } from "./flags.ts";
+import { knownAccounts, recordNewsHit, type KnownAccount } from "./news.ts";
 import type { MonitorHit } from "./ports.ts";
 
 export const MONITOR_BODY_MAX_BYTES = 1_000_000;
@@ -43,7 +49,8 @@ export interface MonitorConfig {
    * What the monitor's results are. Only "company_sites" (a search in the provider's company
    * category, whose results are companies' own pages) becomes candidates, because the account is
    * read from the result's host. A monitor of articles would turn publishers into accounts, so its
-   * hits are skipped.
+   * hits never become candidates; with signals:article_monitors_enabled on, they can become
+   * funding and leadership signals at known accounts instead.
    */
   results: "company_sites" | "articles";
   segment?: string;
@@ -134,7 +141,12 @@ export interface MonitorDrainStats {
   inserted: number;
   duplicate: number;
   skipped: number;
+  /** Article hits that recorded a new signal. */
+  signals: number;
 }
+
+/** The signal source type of an article hit recorded from a monitor. */
+export const MONITOR_SIGNAL_SOURCE = "search_monitor";
 
 interface ItemRow {
   id: string;
@@ -145,7 +157,7 @@ interface ItemRow {
   payload: string | null;
 }
 
-function parsePayload(text: string | null): { title?: unknown } {
+function parsePayload(text: string | null): { title?: unknown; published_at?: unknown } {
   try {
     const value: unknown = text ? JSON.parse(text) : {};
     return value && typeof value === "object" ? value : {};
@@ -154,9 +166,12 @@ function parsePayload(text: string | null): { title?: unknown } {
   }
 }
 
-/** Turn up to `limit` unprocessed monitor hits into raw account candidates. */
-export async function drainMonitorItems(args: { db: D1Database; monitors: readonly MonitorConfig[]; brain: SourcingBrain; now: Date; limit: number; log: JobLogger; signal?: AbortSignal }): Promise<MonitorDrainStats> {
-  const stats: MonitorDrainStats = { processed: 0, inserted: 0, duplicate: 0, skipped: 0 };
+/**
+ * Turn up to `limit` unprocessed monitor hits into raw account candidates and, when `articleSignals`
+ * is true (the job passes signals:article_monitors_enabled), article hits into signals.
+ */
+export async function drainMonitorItems(args: { db: D1Database; monitors: readonly MonitorConfig[]; brain: SourcingBrain; now: Date; limit: number; log: JobLogger; signal?: AbortSignal; articleSignals?: boolean }): Promise<MonitorDrainStats> {
+  const stats: MonitorDrainStats = { processed: 0, inserted: 0, duplicate: 0, skipped: 0, signals: 0 };
   const limit = Math.max(0, Math.min(SIGNAL_LIMITS.monitorDrainPerRun, args.limit));
   if (limit === 0) return stats;
   const { db, now } = args;
@@ -164,14 +179,43 @@ export async function drainMonitorItems(args: { db: D1Database; monitors: readon
   const { results } = await db.prepare("SELECT id, provider, monitor_id, url, result_id, payload FROM monitor_items WHERE processed_at IS NULL ORDER BY created_at, id LIMIT ?1").bind(limit).all<ItemRow>();
   const queryIds = new Map<string, string>();
   const credit = new Map<string, number>();
+  let accounts: KnownAccount[] | null = null;
   for (const item of results) {
     if (args.signal?.aborted) break;
     stats.processed += 1;
     const finish = (outcome: "duplicate" | "skipped" | null, candidateId: string | null = null) =>
       db.prepare("UPDATE monitor_items SET processed_at = ?2, outcome = ?3, candidate_id = ?4 WHERE id = ?1 AND processed_at IS NULL").bind(item.id, stamp, outcome, candidateId).run();
+    // signal_id (migration 0030) is written only on the article path, so the company-site path and
+    // flag-off runs do not depend on that column.
+    const finishSignal = (outcome: "duplicate" | null, signalId: string | null) =>
+      db.prepare("UPDATE monitor_items SET processed_at = ?2, outcome = ?3, signal_id = ?4 WHERE id = ?1 AND processed_at IS NULL").bind(item.id, stamp, outcome, signalId).run();
     const url = cleanProviderUrl(item.url);
     const domain = accountKey(url);
     const monitor = args.monitors.find((m) => m.key === item.monitor_id && m.provider === item.provider);
+    if (url && monitor?.results === "articles" && args.articleSignals === true) {
+      const payload = parsePayload(item.payload);
+      accounts ??= await knownAccounts(db, SIGNAL_LIMITS.newsAccountsScanned);
+      const outcome = await recordNewsHit(
+        db,
+        { title: typeof payload.title === "string" ? payload.title : "", url, ...(typeof payload.published_at === "string" ? { publishedAt: payload.published_at } : {}) },
+        ["funding", "leadership"],
+        accounts,
+        now,
+        { source: MONITOR_SIGNAL_SOURCE, provider: monitor.provider, eventKey: url, evidence: { monitor: monitor.key } },
+      );
+      if (outcome.recorded && outcome.inserted) {
+        stats.signals += 1;
+        await finishSignal(null, outcome.signalId);
+      } else if (outcome.recorded) {
+        // The same story was already recorded (another monitor delivered the same URL).
+        stats.duplicate += 1;
+        await finishSignal("duplicate", outcome.signalId);
+      } else {
+        stats.skipped += 1;
+        await finish("skipped");
+      }
+      continue;
+    }
     if (!url || !domain || !monitor || monitor.results !== "company_sites" || matchNeverList(args.brain.never, { domain, accountName: null, title: null })) {
       stats.skipped += 1;
       await finish("skipped");

@@ -10,6 +10,10 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 - A cliché check in the quality gate, behind `quality:cliche_lint_enabled`: worn openers, empty nudges and buzzwords hold a draft with `LINT_CLICHE`, and phrases quoted in the brain's voice `dont` and `avoid` items hold it with `VOICE_AVOIDED` ([docs/OUTREACH.md](docs/OUTREACH.md#the-quality-gate)).
 
+### Signals
+
+- Article hits from search monitors can become funding and leadership signals at known accounts, by the news job's rules, behind `signals:article_monitors_enabled`; the same URL is recorded once across monitors and, on a best-effort basis, across monitors and the news search. The flag needs migration `0030` ([docs/SIGNALS.md](docs/SIGNALS.md#search-monitors)).
+
 ### Sourcing
 
 - Every candidate that ends rejected, borderline or duplicate records a reason code in `attributes.reject_reason`, and the weekly funnel digest counts rejections by reason, source and query ([docs/SOURCING.md](docs/SOURCING.md)).

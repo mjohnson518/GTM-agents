@@ -5,7 +5,8 @@
 // returns one job per source, each behind its own flag (all default off), each bounded by ceilings
 // (rows, spend, time) and leaving a run row through the job runner. None of them calls a model.
 //   signal_websets        weekdays 10:00 UTC  signals:websets_enabled        create weekly, poll daily
-//   signal_monitor_drain  every 30 minutes    signals:monitors_enabled       up to 500 hits a run
+//   signal_monitor_drain  every 30 minutes    signals:monitors_enabled       up to 500 hits a run (articles
+//                                             become signals with signals:article_monitors_enabled)
 //   signal_news           weekdays 07:00 UTC  signals:news_enabled           funding and leadership
 //   signal_hiring_boards  weekdays 06:00 UTC  signals:hiring_boards_enabled  20 accounts a run
 //   signal_lookalikes     Tue and Thu 11:00   signals:lookalikes_enabled     30 inserts a run
@@ -140,8 +141,9 @@ export function createSignalJobs<E extends SourcingEnv>(deps: SignalDeps<E>): Re
       if (!(await readFlagOn(ctx.flags, SIGNAL_FLAGS.monitors))) return { summary: "flag off" };
       const brain = await brainFor(ctx);
       if (!brain) return { summary: "skipped: the brain could not be read whole" };
-      const r = await drainMonitorItems({ db: ctx.env.DB, monitors: options.monitors, brain, now: ctx.now, limit: ctx.ceilings.maxRows ?? SIGNAL_LIMITS.monitorDrainPerRun, log: ctx.log, signal: ctx.signal });
-      return { summary: `processed ${r.processed}: ${r.inserted} new, ${r.duplicate} duplicate, ${r.skipped} skipped`, rows: r.processed };
+      const articleSignals = await readFlagOn(ctx.flags, SIGNAL_FLAGS.articleMonitors);
+      const r = await drainMonitorItems({ db: ctx.env.DB, monitors: options.monitors, brain, now: ctx.now, limit: ctx.ceilings.maxRows ?? SIGNAL_LIMITS.monitorDrainPerRun, log: ctx.log, signal: ctx.signal, articleSignals });
+      return { summary: `processed ${r.processed}: ${r.inserted} new, ${r.duplicate} duplicate, ${r.skipped} skipped, ${r.signals} signals`, rows: r.processed };
     },
   });
 

@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "The GTM-agents runtime: createWorker, the job registry, pipeline stages, the safety spine, experiments, the brain loader, the data layer and the port interfaces.",
   "license": "Apache-2.0",

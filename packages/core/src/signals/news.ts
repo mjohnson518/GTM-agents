@@ -18,7 +18,7 @@ import { AdapterError } from "../ports/types.ts";
 import { LOW_FIT_SCORE } from "../scoring/fit.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import type { SpendGate } from "../sourcing/spend.ts";
-import { cleanProviderText } from "../sourcing/text.ts";
+import { cleanProviderText, cleanProviderUrl } from "../sourcing/text.ts";
 import { SIGNAL_LIMITS } from "./flags.ts";
 import type { NewsHit, NewsSource } from "./ports.ts";
 import { expiryAfter, recordSignal, validEventDate } from "./record.ts";
@@ -128,30 +128,68 @@ export async function knownAccounts(db: D1Database, limit: number): Promise<Know
   return results.map((r) => ({ accountKey: r.account_key, name: r.name }));
 }
 
-async function recordHit(db: D1Database, hit: NewsHit, category: NewsCategory, accounts: readonly KnownAccount[], now: Date, sourceName: string): Promise<boolean> {
-  const published = validEventDate(hit.publishedAt, now);
-  if (!published || now.getTime() - Date.parse(published) > SIGNAL_LIMITS.newsWindowDays * DAY_MS) return false;
-  const title = cleanProviderText(hit.title, 300);
-  if (!title) return false;
+/** A dated article to read as news: its title, URL and published date, from any source. */
+export interface NewsArticle {
+  title: string;
+  url: string;
+  publishedAt?: string;
+}
+
+export interface NewsHitOptions {
+  /** The signal's source type (signal_events.source), such as exa_news or search_monitor. */
+  source: string;
+  /** The provider that returned the article, for the evidence. */
+  provider: string;
+  /** The event key the signal is deduplicated on, per source and account. */
+  eventKey: string;
+  /** Extra evidence fields, stored as data. */
+  evidence?: Readonly<Record<string, string>>;
+}
+
+export type NewsHitOutcome = { recorded: true; inserted: boolean; signalId: string | null } | { recorded: false };
+
+/**
+ * Record an article as a funding or leadership signal at the one known account its title names, when
+ * its published date is inside the news window and the rest of the title reads as one of `categories`
+ * (tried in order). An article already recorded for the account under another source with the same
+ * URL is not recorded again. That check is best effort: it matches the cleaned URL exactly and is
+ * not a claim, so the same story under a different URL, or two jobs racing, can still record it
+ * under both sources. `signalId` is one of the event's signal_events rows (the lowest id): an
+ * event routed to two contacts has a row each.
+ */
+export async function recordNewsHit(db: D1Database, article: NewsArticle, categories: readonly NewsCategory[], accounts: readonly KnownAccount[], now: Date, options: NewsHitOptions): Promise<NewsHitOutcome> {
+  const published = validEventDate(article.publishedAt, now);
+  if (!published || now.getTime() - Date.parse(published) > SIGNAL_LIMITS.newsWindowDays * DAY_MS) return { recorded: false };
+  const title = cleanProviderText(article.title, 300);
+  const url = cleanProviderUrl(article.url);
+  if (!title || !url) return { recorded: false };
   const matched = matchAccount(title, accounts);
-  if (!matched || !readsAs(category, matched.rest)) return false;
+  if (!matched) return { recorded: false };
+  const category = categories.find((c) => readsAs(c, matched.rest));
+  if (!category) return { recorded: false };
+  const elsewhere = await db
+    .prepare("SELECT 1 AS hit FROM signal_events WHERE account_key = ?1 AND source_url = ?2 AND source <> ?3 LIMIT 1")
+    .bind(matched.account.accountKey, url, options.source)
+    .first<{ hit: number }>();
+  if (elsewhere) return { recorded: false };
   const outcome = await recordSignal(
     db,
     {
       type: category === "funding" ? "funding" : "news",
-      source: "exa_news",
+      source: options.source,
       accountKey: matched.account.accountKey,
       headline: title,
-      url: hit.url,
+      url,
       eventDate: published,
       severity: category === "funding" ? fundingSeverity(title) : SIGNAL_LIMITS.sourcedSeverity,
       expiresAt: expiryAfter(now, SIGNAL_LIMITS.newsExpiryDays),
-      evidence: { category, provider: sourceName, published_at: published, source_url: hit.url },
-      eventKey: hit.providerRef || hit.url,
+      evidence: { ...options.evidence, category, provider: options.provider, published_at: published, source_url: url },
+      eventKey: options.eventKey,
     },
     now,
   );
-  return outcome.status === "recorded";
+  if (outcome.status !== "recorded") return { recorded: false };
+  return { recorded: true, inserted: outcome.inserted > 0, signalId: [...outcome.ids].sort()[0] ?? null };
 }
 
 export async function runNewsSignals(input: NewsRunInput): Promise<NewsStats> {
@@ -179,7 +217,8 @@ export async function runNewsSignals(input: NewsRunInput): Promise<NewsStats> {
     stats.searches += 1;
     for (const hit of hits) {
       stats.hits += 1;
-      if (await recordHit(input.db, hit, query.category, accounts, input.now, input.source.name)) stats.recorded += 1;
+      const outcome = await recordNewsHit(input.db, hit, [query.category], accounts, input.now, { source: "exa_news", provider: input.source.name, eventKey: hit.providerRef || hit.url });
+      if (outcome.recorded) stats.recorded += 1;
       else stats.skipped += 1;
     }
   }

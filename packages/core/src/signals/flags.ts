@@ -7,6 +7,8 @@
 export const SIGNAL_FLAGS = Object.freeze({
   websets: "signals:websets_enabled",
   monitors: "signals:monitors_enabled",
+  /** Article hits from monitors become funding and leadership signals (read by the monitor drain). */
+  articleMonitors: "signals:article_monitors_enabled",
   news: "signals:news_enabled",
   hiringBoards: "signals:hiring_boards_enabled",
   lookalikes: "signals:lookalikes_enabled",

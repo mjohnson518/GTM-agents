@@ -1,6 +1,6 @@
 {
   "name": "@gtm-agents/admin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "The GTM-agents operator dashboard (Lit and Vite), served at /admin.",
   "license": "Apache-2.0",
