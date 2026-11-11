@@ -14,7 +14,7 @@ The examples use the fictional company Acme (`acme.example`), a deployment direc
 
 ## 2. Create the deployment
 
-From a published release, where `<version>` is a release listed in the [changelog](../CHANGELOG.md), for example `0.1.0`:
+From a published release, where `<version>` is a release listed in the [changelog](../CHANGELOG.md), for example `0.2.0`:
 
 ```bash
 npx @gtm-agents/cli@<version> init acme-agent   # every @gtm-agents package pinned to that version

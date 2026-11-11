@@ -7,7 +7,7 @@ An open-source, multi-agent go-to-market system that runs as a single Cloudflare
 
 A person approves every send until the system has earned autonomy for that kind of action, from evidence.
 
-> **Status: early (0.1.0).** Every capability listed below is built and covered by hermetic tests, and each ships behind a flag that defaults to off. None has yet been run against live providers. [CHANGELOG.md](CHANGELOG.md) lists what this release contains, [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists and what comes next, and [docs/DEPLOYING.md](docs/DEPLOYING.md) is the full path to your own deployment.
+> **Status: early (0.2.0).** Every capability listed below is built and covered by hermetic tests, and each ships behind a flag that defaults to off. None has yet been run against live providers. [CHANGELOG.md](CHANGELOG.md) lists what this release contains, [docs/ROADMAP.md](docs/ROADMAP.md) shows what exists and what comes next, and [docs/DEPLOYING.md](docs/DEPLOYING.md) is the full path to your own deployment.
 
 ## Who it is for
 
@@ -79,6 +79,7 @@ cd ../my-agent
 npm install
 npx gtm brain validate               # check your brain and templates against the schema
 npx gtm doctor                       # bindings, config, adapters, secrets, webhooks, kill switch, flags
+npx gtm doctor --remote              # also checks SPF, DKIM and DMARC on your sending domain
 npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 ```
 

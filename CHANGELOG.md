@@ -6,6 +6,10 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+## 0.2.0 (2026-11-11)
+
+Sharper copy checks, cleaner sourcing reports, two new signal and research sources and a DNS check for the sending domain. As in 0.1.0, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off. Upgrading applies migration `0030` (`gtm migrate`, or `gtm deploy`, which migrates first).
+
 ### Outreach
 
 - A cliché check in the quality gate, behind `quality:cliche_lint_enabled`: worn openers, empty nudges and buzzwords hold a draft with `LINT_CLICHE`, and phrases quoted in the brain's voice `dont` and `avoid` items hold it with `VOICE_AVOIDED` ([docs/OUTREACH.md](docs/OUTREACH.md#the-quality-gate)).
