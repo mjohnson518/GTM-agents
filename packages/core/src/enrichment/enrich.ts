@@ -35,6 +35,7 @@ import {
 import type { SourcingAdapters, StageContext } from "../sourcing/context.ts";
 import { SOURCING_FLAGS, readFlagOn } from "../sourcing/flags.ts";
 import { matchNeverList, screenAddress } from "../sourcing/identity.ts";
+import type { RejectReason } from "../sourcing/reasons.ts";
 import { recordEvidence } from "./evidence.ts";
 import { findPeopleAtAccount } from "./people.ts";
 import { verifyAddress } from "./verification.ts";
@@ -96,19 +97,21 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
   const { db, brain, now } = ctx;
   const attrs: CandidateAttributes = parseAttributes(row.attributes);
   const save = (fields: CandidateUpdate) => updateCandidate(db, row.id, "raw", { attributes: JSON.stringify(attrs), ...fields }, now);
-  const reject = async (notes: string, fields: CandidateUpdate = {}): Promise<Outcome> => {
+  // The reason code is merged into the attributes beside everything already there.
+  const reject = async (reason: RejectReason, notes: string, fields: CandidateUpdate = {}): Promise<Outcome> => {
+    attrs.reject_reason = reason;
     await save({ status: "rejected", qualification_notes: notes, ...fields });
     return "rejected";
   };
 
   // 1. Identity and the fit gate.
   const account = accountKey(row.account_key);
-  if (!account) return reject("no company domain: a personal mailbox, a shared host or no domain at all");
+  if (!account) return reject("no_domain", "no company domain: a personal mailbox, a shared host or no domain at all");
   const never = matchNeverList(brain.never, { domain: account, accountName: row.account_name, title: row.job_title });
-  if (never) return reject(never);
+  if (never) return reject("never_list", never);
   const fitRow = await db.prepare("SELECT status, fit_score FROM account_fit WHERE account_key = ?1").bind(account).first<{ status: string; fit_score: number | null }>();
   if (fitRow?.status === "scored" && fitRow.fit_score !== null && fitRow.fit_score < LOW_FIT_SCORE) {
-    return reject(`the account's fit score is ${fitRow.fit_score}, below ${LOW_FIT_SCORE}`);
+    return reject("low_fit", `the account's fit score is ${fitRow.fit_score}, below ${LOW_FIT_SCORE}`);
   }
 
   // 2. The person.
@@ -123,7 +126,7 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
   // Only an account candidate (no person named yet) asks the people provider. A named person
   // without a title is never swapped for someone else: person fit leaves them undecided below.
   if (!first) {
-    if (!adapters.people) return reject("the candidate names an account, and no people provider is configured to find a person there");
+    if (!adapters.people) return reject("no_people_provider", "the candidate names an account, and no people provider is configured to find a person there");
     const lookup = await findPeopleAtAccount(account, {
       people: adapters.people,
       gate: ctx.gate,
@@ -135,12 +138,12 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
     if (!lookup.ok) {
       if (lookup.reason === "budget") return "budget";
       attrs.enrich_attempts = (attrs.enrich_attempts ?? 0) + 1;
-      if (attrs.enrich_attempts >= MAX_ENRICH_ATTEMPTS) return reject("the people lookup failed on three runs");
+      if (attrs.enrich_attempts >= MAX_ENRICH_ATTEMPTS) return reject("people_lookup_failed", "the people lookup failed on three runs");
       await save({ qualification_notes: "people lookup failed; retried next run" });
       return "held";
     }
     const [best, ...rest] = lookup.people;
-    if (!best) return reject("no one at the account matches a persona");
+    if (!best) return reject("no_persona_match", "no one at the account matches a persona");
     for (const extra of rest.slice(0, Math.max(0, deps.options.peoplePerAccount - 1))) {
       let screened = extra.email ? screenAddress(extra.email, account) : null;
       // A suppressed, tombstoned or opted-out address is never stored, and neither is one whose
@@ -181,7 +184,7 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
   const fit = classifyTitle(title, brain.personas, { never: brain.never, reviews: deps.reviews });
   attrs.person_fit = fitAttribute(fit);
   const person: CandidateUpdate = { first_name: first, last_name: last, job_title: title };
-  if (fit.decision === "drop") return reject(`person fit: ${fit.reason}`, { ...person, email: null });
+  if (fit.decision === "drop") return reject("person_fit_drop", `person fit: ${fit.reason}`, { ...person, email: null });
   if (fit.decision !== "keep") {
     await save({ ...person, email: null, email_source: null, status: "enriched", qualification_notes: `person fit is undecided (${fit.reason}); no email lookup` });
     return "enriched";
@@ -216,7 +219,7 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
       // Nothing is saved: the candidate stays as it was, and the stage stops.
       return "stop";
     }
-    return reject("the address is suppressed", { ...person, email: null, email_source: null, email_steps_tried: steps });
+    return reject("suppressed", "the address is suppressed", { ...person, email: null, email_source: null, email_steps_tried: steps });
   }
 
   const duplicate = await db
@@ -226,6 +229,7 @@ async function enrichOne(row: CandidateRow, deps: EnrichDeps): Promise<Outcome> 
   if (duplicate) {
     // Recorded against the existing contact too, so a disagreement with what is on file is held.
     await recordEvidence(db, { candidateId: row.id, contactId: duplicate.id, field: "job_title", value: title ?? "", provider: personSource, sourceUrl: personUrl, now });
+    attrs.reject_reason = "duplicate_contact";
     await save({ ...person, email: found.email, email_source: found.provider, email_steps_tried: steps, status: "duplicate", promoted_contact_id: duplicate.id, qualification_notes: "already a contact" });
     return "duplicate";
   }

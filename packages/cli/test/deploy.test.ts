@@ -2,7 +2,7 @@
 // wrangler deploy, each stop is honoured, and --dry-run changes nothing.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deployCommand } from "../src/commands/deploy.ts";
 import { ADAPTERS_DIR, makeDeployment, setUpDeployment } from "./deployment.ts";
 import { FakeAccount } from "./fake-wrangler.ts";
@@ -13,6 +13,16 @@ async function deploy(dir: string, account: FakeAccount, args: string[] = []) {
   const code = await deployCommand(args, io, { runner: account.runner, adaptersDir: ADAPTERS_DIR });
   return { code, text: io.text() };
 }
+
+// gtm deploy runs doctor offline, so it never resolves DNS; the global fetch fails the test if it tries.
+beforeEach(() => {
+  vi.stubGlobal("fetch", () => {
+    throw new Error("gtm deploy tests must not reach the network");
+  });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const steps = (account: FakeAccount) => account.calls.map((c) => c.args.slice(0, 3).join(" "));
 

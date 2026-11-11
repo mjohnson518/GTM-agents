@@ -136,6 +136,8 @@ Fields marked * are required.
 - `kind`*: one of `do`, `dont`, `phrase`, `avoid`, `signoff`
 - `text`*
 
+While `quality:cliche_lint_enabled` is on, every phrase of two to six words in double quotes inside a `dont` or `avoid` item's `text` (for example `Avoid follow-ups such as "just checking in".`) is enforced: copy that contains it is held with `VOICE_AVOIDED` ([OUTREACH.md](OUTREACH.md#the-quality-gate)). Text outside quotes is read only by the models, never turned into a rule.
+
 **`signals`**
 - `type`*: one of `job_change`, `hiring`, `funding`, `launch`, `post`, `news`, `filing`, `product_usage`, `custom`
 - `weight`*: a number from 0 to 1

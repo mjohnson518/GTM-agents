@@ -46,7 +46,7 @@ import { returnAutomaticApprovals } from "../autonomy/incidents.ts";
 import type { EmailProvider } from "../ports/email.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
-import { approvedClaimLines } from "../quality/claims.ts";
+import { approvedClaimLines, voiceAvoidPhrases } from "../quality/claims.ts";
 import { hostFromConfig, summarizeQuality, type LinkPolicy, type QualityResult } from "../quality/gate.ts";
 import { recordQualityChecks, type QualityRecord } from "../quality/record.ts";
 import { planReviewSamples, reviewOutbound, templateReviews, type ReviewVerdict } from "../quality/reviewer.ts";
@@ -452,7 +452,15 @@ export async function runFollowUpSweep(deps: SweepDeps): Promise<SweepResult> {
   if (open.length > 0) {
     const judgeSlice = await loadBrain({ KV: kv }, "judge");
     const copy = await loadCopy(db);
-    ctx = { config, ...copy, links: linkPolicy(config, deps.appUrl), approvedClaims: approvedClaimLines(judgeSlice.text) };
+    // The cliche lint and the voice's avoid phrases hold steps only while the flag is on.
+    const clicheLint = await readOn(deps.flags, OUTREACH_FLAGS.clicheLint);
+    ctx = {
+      config,
+      ...copy,
+      links: linkPolicy(config, deps.appUrl),
+      approvedClaims: approvedClaimLines(judgeSlice.text),
+      ...(clicheLint ? { clicheLint, avoidPhrases: voiceAvoidPhrases(judgeSlice.text) } : {}),
+    };
     const load = deps.templates ? await serveTemplateFiles(deps.templates, { companyDomain: config.company.domain }) : await loadTemplates(kv, { companyDomain: config.company.domain });
     const plans: Map<number, StepPlan> = planSteps(load.templates, steps, ctx);
     const skipped = load.skipped.map((x) => `${x.file}: ${x.reason}`).join("; ");

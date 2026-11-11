@@ -74,6 +74,10 @@ describe("searchStage", () => {
     const rows = await candidates();
     expect(rows.every((r) => r.status === "rejected")).toBe(true);
     expect(rows.find((r) => r.source_ref === "r-never")?.qualification_notes).toMatch(/never list/);
+    // The reason code sits beside the note, merged with the query's attributes.
+    const reasons = new Map(rows.map((r) => [r.source_ref, JSON.parse(String(r.attributes)) as Record<string, unknown>]));
+    expect(reasons.get("r-never")).toMatchObject({ reject_reason: "never_list" });
+    for (const ref of ["r-personal", "r-shared", "r-none"]) expect(reasons.get(ref)?.reject_reason).toBe("no_domain");
   });
 
   it("sends the never list and low-fit accounts as exclusions, with the query's segment", async () => {

@@ -8,7 +8,9 @@ import { ACTION_CLASSES, isPermanentHuman } from "../autonomy/levels.ts";
 import { MODEL_ROLES } from "../ports/model.ts";
 
 const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
-const ADAPTER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** One or more DNS labels (letters, digits, hyphens), as a DKIM selector is (RFC 6376, section 3.1). */
+const DKIM_SELECTOR = /^(?=.{1,128}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+const ADAPTER_NAME =/^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const WEEKDAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"] as const;
 
 const domain = z.string().regex(DOMAIN, "use a lowercase domain such as acme.example, with no scheme or path");
@@ -64,6 +66,11 @@ export const configSchema = z
       postalAddress: z.string().min(10).max(300),
       /** The isolated subdomain cold mail is sent from, for example outreach.acme.example. */
       domain,
+      /**
+       * The DKIM selector your email provider signs with (the label before ._domainkey), so
+       * `gtm doctor --remote` can check the key. Optional; without it the DKIM check is skipped.
+       */
+      dkimSelector: z.string().regex(DKIM_SELECTOR, "use the selector alone, for example resend or s1, without ._domainkey or the domain").optional(),
       windowDays: z.array(z.enum(WEEKDAYS)).min(1).default(["MON", "TUE", "WED", "THU"]),
       /** Recipient-local send window, in whole hours (start inclusive, end exclusive). */
       windowHours: z

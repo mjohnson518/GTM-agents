@@ -65,6 +65,7 @@ The composer (the cold batch, the follow-up sweep) works out the template versio
 | Waiting on you | `operatorQueue` | Drafts pending approval by kind, cold batch and follow-up manifests that can still be released, owed replies, open manual touches |
 | Measurement health | `measurementHealth` | Below |
 | Holdout lift | `holdoutLift`, `liftVerdict` | Below |
+| Rejections | `rejectionsByReason` | Candidates whose status is rejected, borderline or duplicate and whose last change falls in the window, counted by reason code ([SOURCING.md](SOURCING.md#reject-reasons)) and by reason within each source and discovery query. A row without a known code counts as `unrecorded`, so the total always matches the table |
 
 A rate is always a count over its own denominator. When the denominator is zero the rate is "n/a", not 0%.
 
@@ -111,7 +112,7 @@ It is sent at most once per UTC day: the day is claimed in the effects ledger be
 
 ## The other reports
 
-**The funnel digest** (Mondays at 09:00 UTC, `ops:funnel_digest`). Over the seven full days before today (the scorecard's 7-day window): sends, replies received and delivery health. The reply rate is the matured one: first touches sent 10 to 17 days ago, not bounced, and sent from each template's current copy, exactly the rows matured samples count, because a rate on yesterday's sends would read low for no reason. It flags a matured reply rate under 3% (at 50 or more matured first touches) and hard bounces over 2% (at 50 or more sends). One line of holdout lift.
+**The funnel digest** (Mondays at 09:00 UTC, `ops:funnel_digest`). Over the seven full days before today (the scorecard's 7-day window): sends, replies received and delivery health. The reply rate is the matured one: first touches sent 10 to 17 days ago, not bounced, and sent from each template's current copy, exactly the rows matured samples count, because a rate on yesterday's sends would read low for no reason. It flags a matured reply rate under 3% (at 50 or more matured first touches) and hard bounces over 2% (at 50 or more sends). One line of holdout lift. The filter funnel: how many candidates were rejected, left borderline or found to be duplicates over the same week, by reason code, then the five source and query lines that lost the most (`rejectionsByReason`). Source and query text pass through the same label filter as every other record value. A week with none says so, and a read that fails prints "could not be read" and is listed under needs attention.
 
 **The daily cost digest** (weekdays at 14:00 UTC, `ops:cost_digest`). Spend per job for the same span as the scorecard's day. While the scorecard is on it carries spend, so the cost digest stands down.
 

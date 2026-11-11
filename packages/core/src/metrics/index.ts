@@ -103,3 +103,6 @@ export type { FitnessInputs } from "./fitness.ts";
 // The outcome of a sent reply, for scoring the objection answer it used.
 export { answerOutcome } from "./answer-outcome.ts";
 export type { AnswerOutcome } from "./answer-outcome.ts";
+// The filter funnel: candidates that stopped short of promotion, by reason code and by source and query.
+export { REJECTION_STATUSES, UNRECORDED_REASON, rejectionsByReason } from "./rejections.ts";
+export type { ReasonCount, RejectionCounts, RejectionReason, SourceReasonCount } from "./rejections.ts";

@@ -39,6 +39,16 @@ describe("defineConfig", () => {
     expect(() => defineConfig({ ...acmeConfig, company: { ...acmeConfig.company, domain: "Acme.example" } })).toThrow(ConfigError);
   });
 
+  it("accepts an optional DKIM selector made of DNS labels, and rejects one written as a full record name", () => {
+    expect(defineConfig(acmeConfig).sending.dkimSelector).toBeUndefined();
+    for (const dkimSelector of ["resend", "s1", "selector-2024", "k1.mail"]) {
+      expect(defineConfig({ ...acmeConfig, sending: { ...acmeConfig.sending, dkimSelector } }).sending.dkimSelector).toBe(dkimSelector);
+    }
+    for (const dkimSelector of ["", "s1._domainkey", "s1._domainkey.outreach.acme.example", "-s1", "s1-", "two words", "s1."]) {
+      expect(() => defineConfig({ ...acmeConfig, sending: { ...acmeConfig.sending, dkimSelector } })).toThrow(/dkimSelector/);
+    }
+  });
+
   it("produces a readable error that names the field", () => {
     try {
       defineConfig({ ...acmeConfig, sending: { ...acmeConfig.sending, replyTo: "not-an-address" } });

@@ -49,6 +49,8 @@ At your DNS host, for the sending subdomain:
 - **DKIM:** the CNAME or TXT records your provider gives you, so receivers can verify the signature.
 - **DMARC:** a TXT record at `_dmarc.<subdomain>`. Start with `p=none` and a reporting address, and move to `p=quarantine` once reports look clean.
 
+Set `sending.dkimSelector` to the selector your provider signs with (the label before `._domainkey`). `gtm doctor --remote` then resolves all three over DNS over HTTPS: SPF fails when there is no `v=spf1` record, more than one, or `+all`, and warns on `?all`; DKIM fails when `<selector>._domainkey.<subdomain>` has no key or a revoked one, and is an INFO asking for the selector when none is set (a selector is never guessed); DMARC fails when the record is missing and warns while the policy is `p=none`. A lookup that cannot be made is a WARN, never a PASS or a FAIL. The checks only report; they never hold a send ([DEPLOYING.md](DEPLOYING.md#42-the-domain-and-the-sending-subdomain)).
+
 Verify the domain in the provider's dashboard before turning anything on. Warm the domain up slowly: the ramp below does that for you.
 
 ## 2. The provider, its secrets and its webhook

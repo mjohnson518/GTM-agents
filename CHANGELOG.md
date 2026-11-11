@@ -6,6 +6,23 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Outreach
+
+- A cliché check in the quality gate, behind `quality:cliche_lint_enabled`: worn openers, empty nudges and buzzwords hold a draft with `LINT_CLICHE`, and phrases quoted in the brain's voice `dont` and `avoid` items hold it with `VOICE_AVOIDED` ([docs/OUTREACH.md](docs/OUTREACH.md#the-quality-gate)).
+
+### Sourcing
+
+- Every candidate that ends rejected, borderline or duplicate records a reason code in `attributes.reject_reason`, and the weekly funnel digest counts rejections by reason, source and query ([docs/SOURCING.md](docs/SOURCING.md)).
+- The `data-exa` price table follows Exa's current list prices: $0.007 a request including 10 results, and $0.001 for each further result.
+
+### Deploying
+
+- `gtm doctor --remote` checks SPF, DKIM and DMARC on the sending domain and reports them; nothing is blocked. Set `sending.dkimSelector` to include the DKIM check ([docs/DEPLOYING.md](docs/DEPLOYING.md)).
+
+### Decisions
+
+- ADR-011: LinkedIn and X touches stay manual ([docs/DECISIONS.md](docs/DECISIONS.md#adr-011-linkedin-and-x-touches-stay-manual)).
+
 ## 0.1.0 (2026-11-10)
 
 The first release. Everything below is built and covered by hermetic tests (recorded provider responses, no network), but nothing has yet been run against live providers. Every capability ships off, behind a flag that defaults to off, and you turn each one on yourself in the order of the [staged rollout](docs/DEPLOYING.md#9-staged-rollout). [docs/QUICKSTART.md](docs/QUICKSTART.md) is the shortest path to a first staging deployment.

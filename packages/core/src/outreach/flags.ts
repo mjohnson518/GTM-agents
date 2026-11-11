@@ -13,6 +13,7 @@ import { readAutonomyLevel } from "../autonomy/store.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { isFlagOn } from "../jobs/loop.ts";
 import type { FlagReader } from "../jobs/registry.ts";
+import { CLICHE_LINT_FLAG } from "../quality/gate.ts";
 
 export const OUTREACH_FLAGS = Object.freeze({
   /** Master switch for the daily cold batch. */
@@ -28,6 +29,8 @@ export const OUTREACH_FLAGS = Object.freeze({
   allocationMode: "outreach:allocation_mode",
   /** The model reviewer in the quality gate. */
   modelReview: "quality:model_review_enabled",
+  /** The cliche lint and the brain's voice phrases in the quality gate. */
+  clicheLint: CLICHE_LINT_FLAG,
   /** Shared with the send path: messages per UTC day from the sending domain. */
   domainDailyCap: "delivery:domain_daily_cap",
   /** Shared with the send path: cold and sequence messages per account in any 7 days. */

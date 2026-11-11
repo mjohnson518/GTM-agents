@@ -42,6 +42,11 @@ async function candidate(id: string, fields: Partial<Record<string, string | num
 const verified = (email: string, status: VerificationStatus = "deliverable", score = 95) =>
   cacheVerification(env.DB, email, { status, provider: "fake-verifier", score, acceptAll: status === "risky", disposable: false, reason: status, verifiedAt: now.toISOString() });
 
+async function reason(id: string) {
+  const row = await env.DB.prepare("SELECT attributes FROM candidates WHERE id = ?1").bind(id).first<{ attributes: string }>();
+  return (JSON.parse(row?.attributes ?? "{}") as { reject_reason?: string }).reject_reason;
+}
+
 async function status(id: string) {
   return env.DB.prepare("SELECT status, promoted_contact_id, qualification_notes, email FROM candidates WHERE id = ?1").bind(id).first<{ status: string; promoted_contact_id: string | null; qualification_notes: string; email: string | null }>();
 }
@@ -100,6 +105,8 @@ describe("promoteStage", () => {
     expect(stats.duplicate).toBe(2);
     expect(await status("c-sub")).toMatchObject({ status: "duplicate", promoted_contact_id: "existing" });
     expect(await status("c-name")).toMatchObject({ status: "duplicate", promoted_contact_id: "existing" });
+    expect(await reason("c-sub")).toBe("duplicate_contact");
+    expect(await reason("c-name")).toBe("duplicate_person");
   });
 
   it("rejects risky under the strict policy, and promotes it under allow_risky", async () => {
@@ -110,6 +117,7 @@ describe("promoteStage", () => {
     await promoteStage(await stageContext(env.DB, env.KV, { now }), 1, { policy: "strict", verifier: undefined });
     const strict = [await status("c-risky"), await status("c-risky-2")].filter((r) => r?.status === "rejected");
     expect(strict).toHaveLength(1);
+    expect([await reason("c-risky"), await reason("c-risky-2")]).toContain("verification_policy");
     expect((await promote("allow_risky")).promoted).toBe(1);
     const contact = await env.DB.prepare("SELECT email_confidence, verification_status FROM contacts").first();
     expect(contact).toEqual({ email_confidence: "low", verification_status: "risky" });
@@ -125,9 +133,12 @@ describe("promoteStage", () => {
   });
 
   it("rejects an unknown result after three attempts", async () => {
-    await candidate("c-unknown-3", { attributes: JSON.stringify({ verify_attempts: 2 }) });
+    await candidate("c-unknown-3", { attributes: JSON.stringify({ verify_attempts: 2, segment: "platform" }) });
     await promote("strict", fakeVerifier("fake-verifier", {}, "unknown"));
     expect(await status("c-unknown-3")).toMatchObject({ status: "rejected" });
+    // A rejection saves the attributes worked out on the way (the fit verdict, the counter), merged with what was there.
+    const row = await env.DB.prepare("SELECT attributes FROM candidates WHERE id = 'c-unknown-3'").first<{ attributes: string }>();
+    expect(JSON.parse(row?.attributes ?? "{}")).toMatchObject({ segment: "platform", verify_attempts: 3, person_fit: { decision: "keep" }, reject_reason: "verification_unknown" });
   });
 
   it("rejects a role mailbox, a person fit that is no longer keep, and the never list", async () => {
@@ -137,6 +148,9 @@ describe("promoteStage", () => {
     for (const e of ["sales@brightloop.example", "ae@brightloop.example", "owner@brightloop.example"]) await verified(e);
     expect((await promote()).rejected).toBe(3);
     expect((await status("c-role"))?.email).toBeNull();
+    expect(await reason("c-role")).toBe("role_mailbox");
+    expect(await reason("c-fit")).toMatch(/^person_fit_(drop|maybe)$/);
+    expect(await reason("c-never")).toBe("never_list");
   });
 
   it("does not promote the same candidate twice when two runs race", async () => {
@@ -169,5 +183,8 @@ describe("qualification", () => {
     expect((await status("e-good"))?.status).toBe("qualified");
     expect((await status("e-lowfit"))?.status).toBe("rejected");
     expect((await status("e-noemail"))?.status).toBe("borderline");
+    expect(await reason("e-good")).toBeUndefined();
+    expect(await reason("e-lowfit")).toBe("low_fit");
+    expect(await reason("e-noemail")).toBe("borderline_score");
   });
 });

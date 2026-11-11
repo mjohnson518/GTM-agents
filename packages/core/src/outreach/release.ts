@@ -125,6 +125,7 @@ export async function releaseBatch(deps: ReleaseDeps, command: ReleaseCommand): 
   const caps = {
     domainDailyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.domainDailyCap, OUTREACH_LIMITS.domainDailyCap),
     accountWeeklyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.accountWeeklyCap, OUTREACH_LIMITS.accountWeeklyCap),
+    clicheLint: await readOn(deps.flags, OUTREACH_FLAGS.clicheLint),
   };
   const readiness = await readinessWithSalvage(
     deps.db,

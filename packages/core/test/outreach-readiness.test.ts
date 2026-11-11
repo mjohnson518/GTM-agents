@@ -34,6 +34,13 @@ describe("assessReadiness", () => {
     expect((await assessReadiness(env.DB, [item(0, { body: "TODO" })], options)).overall).toBe("red");
   });
 
+  it("counts a cliche as a lint warning only while quality:cliche_lint_enabled is on", async () => {
+    const cliche = item(0, { body: "Hi Pat,\n\nI hope this finds you well. Is flaky-test time something your team tracks?\n\nAvery" });
+    expect((await assessReadiness(env.DB, [cliche], options)).dimensions.contentLint.status).toBe("pass");
+    expect((await assessReadiness(env.DB, [cliche], { ...options, clicheLint: false })).dimensions.contentLint.status).toBe("pass");
+    expect((await assessReadiness(env.DB, [cliche], { ...options, clicheLint: true })).dimensions.contentLint.status).toBe("warn");
+  });
+
   it("salvages RED caused only by suppression overlap or the account cap, once", async () => {
     await addSuppression(env.DB, { email: "p1@acct1.example", reason: "opt_out", source: "test" });
     for (let i = 0; i < 3; i++) {

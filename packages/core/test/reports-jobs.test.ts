@@ -132,6 +132,7 @@ describe("the funnel digest's flags", () => {
     delivery: { sends: delivery.sends, delivered: delivery.sends, hardBounces: 0, complaints: 0, hardBounceRate: delivery.hardBounceRate, complaintRate: 0, deliveredCoverage: 1 },
     matured: { sends: matured.sends, humanReplies: matured.humanReplies, positiveReplies: 0 },
     holdout: null,
+    rejections: null,
   });
 
   it("flag a reply rate under 3% and bounces over 2%, only at 50 or more sends", () => {

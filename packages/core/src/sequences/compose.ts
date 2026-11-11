@@ -20,7 +20,7 @@
 // never greeted with a fallback.
 import type { GtmConfig } from "../config/schema.ts";
 import { eligibleTemplates, type Rotation } from "../outreach/allocate.ts";
-import { claimSources, contactValues, targetFacts, type ComposeContext } from "../outreach/compose.ts";
+import { claimSources, contactValues, qualityExtras, targetFacts, type ComposeContext } from "../outreach/compose.ts";
 import { checkOutboundQuality, heldResult, withFinding, type QualityResult } from "../quality/gate.ts";
 import { renderTemplate, type TemplateValues } from "../templates/render.ts";
 import type { TemplateKind } from "../templates/schema.ts";
@@ -80,6 +80,7 @@ export function fixtureProblem(template: ServedTemplate, ctx: ComposeContext): s
     contact: { email: FIXTURE_CONTACT.email, firstName: FIXTURE_CONTACT.firstName, accountName: FIXTURE_CONTACT.accountName, accountKey: FIXTURE_CONTACT.accountKey },
     links: ctx.links,
     claimSources: [...claimSources(template, values, ctx), FIXTURE_SUBJECT],
+    ...qualityExtras(ctx),
   });
   if (result.findings.length === 0) return null;
   return `template ${template.id} fails the gate for an invented contact: ${result.findings.map((f) => `${f.code} (${f.detail})`).join("; ")}`;
@@ -131,6 +132,7 @@ export function composeStep(row: DueRow, plan: StepPlan, rotation: Rotation, ctx
     contact: { email: row.email, firstName: row.first_name, accountName: row.account_name, accountKey: row.account_key },
     links: ctx.links,
     claimSources: [...claimSources(template, values, ctx), original],
+    ...qualityExtras(ctx),
   });
   if (rendered.perDraftReview || USES_ATTRIBUTES.test(`${template.subject}\n${template.body}`)) {
     result = withFinding(result, "PER_DRAFT_REVIEW", "the template uses per-contact text from outside (site text or attributes), so a person reviews each draft");

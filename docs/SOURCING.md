@@ -104,6 +104,35 @@ Up to `discovery:promote_per_cycle` qualified candidates with an address, best s
 
 A candidate that passes becomes a contact in one D1 batch, all or nothing: the account is upserted, the contact is inserted with its normalized address and both hashes, warmth `cold`, the verification status and confidence, the source and the query; the candidate moves to `promoted`; its evidence is linked to the contact; and the persona seat and the fit verdict are recorded. Both the insert and the status change are guarded on the candidate still being qualified, so two runs can never promote it twice. A missing first name is allowed: drafting holds such a contact later rather than greet a guessed name.
 
+### Reject reasons
+
+Every candidate that stops short of promotion (rejected, borderline or duplicate) carries a reason code in `attributes.reject_reason`, beside the free-text `qualification_notes`. The note explains one row to a person; the code is what the weekly funnel digest counts, by reason and by source and query ([MEASUREMENT.md](MEASUREMENT.md)), so a filter that removes too much shows up as a number. The codes are a closed list in `packages/core/src/sourcing/reasons.ts`, and a new filter adds its code there:
+
+| Code | Where | Meaning |
+|---|---|---|
+| `no_domain` | search, enrich, websets | No company account key: a personal mailbox, a shared host or no domain |
+| `never_list` | search, enrich, qualify, promote, websets | The domain, company name or title is on the brain's never list |
+| `name_unreadable` | search, websets | A person result whose name could not be read |
+| `low_fit` | enrich, qualify, promote, websets | The account's fit score is below 5 |
+| `no_people_provider` | enrich | An account candidate, and no people provider is configured |
+| `people_lookup_failed` | enrich | The people lookup failed on three runs |
+| `no_persona_match` | enrich | No one at the account matches a persona |
+| `person_fit_drop` | enrich, qualify, promote | The title classifier dropped the person |
+| `person_fit_maybe` | promote | The person fit is undecided, and a maybe is never promoted |
+| `suppressed` | enrich, promote | The address is suppressed, tombstoned or opted out |
+| `duplicate_contact` | enrich, promote | The address or its mailbox is already a contact (status `duplicate`) |
+| `duplicate_person` | promote | The same full name at the same account is already a contact (status `duplicate`) |
+| `address_unparseable` | promote | The address does not parse as exactly one address |
+| `not_work_address` | promote | Not a work address at the candidate's own account |
+| `role_mailbox` | promote | A role mailbox, not a person |
+| `verification_failed` | promote | The verifier errored on three runs |
+| `verification_unknown` | promote | Verification stayed unknown after three attempts |
+| `verification_policy` | promote | The result does not pass the promotion policy |
+| `low_score` | qualify | The qualification score is under 0.3 |
+| `borderline_score` | qualify | The score is between 0.3 and 0.5 (status `borderline`) |
+
+The code is merged into the attributes, so the segment, the fit verdict and the retry counters stay on the row. It is bookkeeping and has no flag of its own; no migration is needed, because `attributes` is open JSON.
+
 ## Signals and other sources
 
 Beyond the discovery cycle, signal sources find dated reasons to write and new people: Exa websets and search monitors, dated funding and leadership news, public hiring boards, responder lookalikes and coverage fill at high-fit accounts. Each has its own `signals:*` flag, every candidate it finds still passes promotion (including the account-fit check), and a signal found before an account had contacts is carried to up to two newly promoted contacts. [SIGNALS.md](SIGNALS.md) covers each source.
@@ -186,7 +215,7 @@ A rough day at the defaults, with the two shipped adapters: 5 searches, then for
 | `data-exa` | DiscoverySource (`search` here; websets, news, find-similar and monitors for [SIGNALS.md](SIGNALS.md)) | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400); for websets, `websetEmail` (`true`) and `creditUsd` (0.006) |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | `HUNTER_API_KEY` | `baseUrl`, `usdPerCredit` (0.025) |
 
-- **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.005 a request of up to 25 results, $0.025 for 26 to 100, $0.001 per result for highlights).
+- **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.007 a request including up to 10 results, $0.001 for each result asked for beyond 10, and $0.001 per result for highlights).
 - **data-hunter** finds addresses (`/email-finder`), verifies them (`/email-verifier`) and lists named people at a domain (`/domain-search`, personal addresses only). Its statuses map as: `valid` to deliverable; `invalid` and `disposable` to undeliverable; `accept_all` and `webmail` to risky; `unknown`, and anything unrecognized, to unknown. A verification still in progress is a retryable error; a person who asked the vendor not to process their data comes back as unknown from the verifier and as no address from the finder. Costs are in credits (1 per address found, 0.5 per verification, 1 per ten addresses listed) times `usdPerCredit`.
 
 Neither adapter is offered to an agent as a tool; they are used only by these jobs and the signal jobs. `data-hunter` declares no tools, and `data-exa`'s manifest classifies its calls as full-taint egress tools so the security contract covers them ([INTERFACES.md](INTERFACES.md#how-adapters-become-tools)).

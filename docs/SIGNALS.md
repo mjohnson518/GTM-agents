@@ -36,9 +36,9 @@ npx gtm flags set scoring:intent_enabled true --env staging
 |---|---|---|---|---|---|
 | Websets | `signal_websets`, weekdays 10:00 | `signals:websets_enabled` | person candidates | 3 websets created, 200 items | 10 credits per matching item, 5 per email found; the worst case is reserved at creation |
 | Search monitors | webhook, then `signal_monitor_drain` every 30 minutes | `signals:monitors_enabled` | account candidates | 500 hits per delivery and per drain | billed by the provider per monitor run |
-| Funding and leadership news | `signal_news`, weekdays 07:00 | `signals:news_enabled` | signals | 4 searches of 25 results | $0.005 per search |
+| Funding and leadership news | `signal_news`, weekdays 07:00 | `signals:news_enabled` | signals | 4 searches of 25 results | about $0.022 per search ($0.007 including 10 results, $0.001 for each further result) |
 | Hiring boards | `signal_hiring_boards`, weekdays 06:00 | `signals:hiring_boards_enabled` | signals, role counts | 20 accounts | free (public boards) |
-| Responder lookalikes | `signal_lookalikes`, Tuesday and Thursday 11:00 | `signals:lookalikes_enabled` | account candidates | 5 seeds, 30 inserts | $0.005 per find-similar |
+| Responder lookalikes | `signal_lookalikes`, Tuesday and Thursday 11:00 | `signals:lookalikes_enabled` | account candidates | 5 seeds, 30 inserts | $0.007 per find-similar of up to 10 results, $0.001 for each further result |
 | Coverage fill | `signal_coverage_fill`, weekdays 12:00 | `signals:coverage_fill_enabled` | person candidates | 5 accounts, 2 people each | the people provider's search price |
 | Intent score | `intent_scoring`, daily 02:30 | `scoring:intent_enabled` | `contacts.attributes.intent` | 5,000 contacts | free |
 

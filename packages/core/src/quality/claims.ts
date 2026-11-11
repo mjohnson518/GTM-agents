@@ -10,6 +10,9 @@
 //
 // The check is deliberately narrow and literal: it cannot judge whether a sentence is true, only
 // whether its figures and claim words were approved somewhere. The model reviewer judges the rest.
+//
+// The same file reads the brain slice for the gate: approvedClaimLines (the approved claims) and
+// voiceAvoidPhrases (the phrases the voice quotes as ones never to write).
 
 const URL = /\bhttps?:\/\/[^\s<>()"']+|\bwww\.[^\s<>()"']+/gi;
 
@@ -90,4 +93,45 @@ export function approvedClaimLines(sliceText: string): string[] {
     if (line.trim() !== "") inClaims = false;
   }
   return lines;
+}
+
+const VOICE_ITEM_KIND = /(?:^|; )kind: (dont|avoid)(?:;|$)/;
+const QUOTED = /"([^"\n]+)"|“([^”\n]+)”/g;
+const PHRASE_WORDS = { min: 2, max: 6 };
+
+/**
+ * The phrases the brain's voice says never to write: from the `voice` block of a slice, items of
+ * kind `dont` or `avoid`, only the text inside double quotes, two to six words each. Prose without
+ * quotes yields nothing, so a phrase is never guessed from a sentence. Trailing punctuation inside
+ * the quotes is dropped; duplicates (ignoring case) are listed once. Pure.
+ */
+export function voiceAvoidPhrases(sliceText: string): string[] {
+  const phrases: string[] = [];
+  const seen = new Set<string>();
+  let inVoice = false;
+  for (const line of sliceText.normalize("NFKC").split("\n")) {
+    const heading = /^### ([a-z-]+) \(v\d+\)$/.exec(line);
+    if (heading) {
+      inVoice = heading[1] === "voice";
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      if (!inVoice) continue;
+      const item = line.slice(2);
+      const fields = item.slice(item.indexOf(": ") + 2);
+      if (!VOICE_ITEM_KIND.test(fields)) continue;
+      for (const match of fields.matchAll(QUOTED)) {
+        const phrase = (match[1] ?? match[2] ?? "").replace(/\s+/g, " ").trim().replace(/[.,;:!?]+$/, "").trim();
+        const count = phrase === "" ? 0 : phrase.split(" ").length;
+        if (count < PHRASE_WORDS.min || count > PHRASE_WORDS.max) continue;
+        const key = phrase.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        phrases.push(phrase);
+      }
+      continue;
+    }
+    if (line.trim() !== "") inVoice = false;
+  }
+  return phrases;
 }

@@ -22,6 +22,9 @@ export default defineConfig({
     // Cold mail goes from an isolated subdomain, so the primary domain's reputation stays protected.
     from: { email: "avery@outreach.acme.example", name: "Avery at Acme" },
     domain: "outreach.acme.example",
+    // Optional: the DKIM selector your email provider signs with (the label before ._domainkey),
+    // so `gtm doctor --remote` can check the key. Never guessed when unset.
+    // dkimSelector: "<selector>",
     // Replies land in the real mailbox.
     replyTo: "avery@acme.example",
     supportAddress: "support@acme.example",

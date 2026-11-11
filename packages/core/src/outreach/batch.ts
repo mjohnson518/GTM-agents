@@ -41,7 +41,7 @@ import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import { cohortFor, signalledContacts, templateIsTargeted, type SendCohort } from "../metrics/cohort.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
-import { approvedClaimLines } from "../quality/claims.ts";
+import { approvedClaimLines, voiceAvoidPhrases } from "../quality/claims.ts";
 import { hostFromConfig, summarizeQuality, type LinkPolicy, type QualityFinding, type QualityResult } from "../quality/gate.ts";
 import { recordQualityChecks, type QualityRecord } from "../quality/record.ts";
 import { planReviewSamples, reviewOutbound, templateReviews, withReview, type ReviewVerdict } from "../quality/reviewer.ts";
@@ -71,7 +71,7 @@ import {
 import { holdoutWindow, pickHoldout, recordHoldout, seededRng } from "./holdout.ts";
 import { releaseCommand, renderSamples, writeManifest, type Manifest, type ManifestDraft } from "./manifest.ts";
 import { pickContacts, type PickResult } from "./picker.ts";
-import { readinessLine, readinessWithSalvage, type ReadinessLevel, type ReadinessReport } from "./readiness.ts";
+import { readinessLine, readinessWithSalvage, type ReadinessLevel, type ReadinessOptions, type ReadinessReport } from "./readiness.ts";
 import { RELEASE_MAX_AGE_DAYS, loadAccountState, selectCandidates, type SelectionRow } from "./select.ts";
 import { HANDOFF_EFFECT, claimMany, handOff, handoffLine, loadDrafts, recordAutonomyEvent, revalidateDrafts, type HandoffReport, type RevalidateOptions, type StoredDraft } from "./send.ts";
 
@@ -284,7 +284,7 @@ interface PolicyOutcome {
  * Readiness, then the auto-approve policy over approved drafts that were re-checked: RED holds and
  * pages, YELLOW hands over max(5, half) and defers the rest, GREEN hands over everything.
  */
-async function sendUnderPolicy(deps: ColdBatchDeps, label: string, drafts: readonly StoredDraft[], caps: { domainDailyCap: number; accountWeeklyCap: number }): Promise<PolicyOutcome> {
+async function sendUnderPolicy(deps: ColdBatchDeps, label: string, drafts: readonly StoredDraft[], caps: Omit<ReadinessOptions, "now">): Promise<PolicyOutcome> {
   const items = drafts.map((d) => ({ draftId: d.id, to: d.recipient_email ?? "", accountKey: d.account_key, subject: d.subject ?? "", body: d.body ?? "", draft: d }));
   const decision = await readinessWithSalvage(deps.db, items, { now: deps.now, ...caps });
   if (decision.dropped.length > 0) await setNextSend(deps, decision.dropped.map((i) => i.draft), "", "skipped");
@@ -316,7 +316,7 @@ function settledCampaignSql(column: string, cutoffParam: string): string {
 const ABANDONED_AFTER_MS = 15 * 60_000;
 const abandonedBefore = (now: Date) => new Date(now.getTime() - ABANDONED_AFTER_MS).toISOString();
 
-async function resumeDue(deps: ColdBatchDeps, limit: number, caps: { domainDailyCap: number; accountWeeklyCap: number }, guard: RevalidateOptions): Promise<PolicyOutcome | null> {
+async function resumeDue(deps: ColdBatchDeps, limit: number, caps: Omit<ReadinessOptions, "now">, guard: RevalidateOptions): Promise<PolicyOutcome | null> {
   if (limit <= 0) return null;
   const since = new Date(deps.now.getTime() - RELEASE_MAX_AGE_DAYS * DAY_MS).toISOString();
   const { results } = await deps.db
@@ -375,7 +375,7 @@ async function putUpForRelease(deps: ColdBatchDeps, campaignId: string, drafts: 
 }
 
 /** Manual mode, recovery: today's campaign has passing drafts but no manifest (an interrupted run). */
-async function ensureManifest(deps: ColdBatchDeps, campaignId: string, caps: { domainDailyCap: number; accountWeeklyCap: number }, guard: RevalidateOptions): Promise<Manifest | null> {
+async function ensureManifest(deps: ColdBatchDeps, campaignId: string, caps: Omit<ReadinessOptions, "now">, guard: RevalidateOptions): Promise<Manifest | null> {
   const existing = await deps.db.prepare("SELECT 1 AS hit FROM approval_manifests WHERE id = ?1").bind(campaignId).first();
   if (existing) return null;
   // A batch still being written by another run is never recovered.
@@ -410,6 +410,7 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
   const caps = {
     domainDailyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.domainDailyCap, OUTREACH_LIMITS.domainDailyCap),
     accountWeeklyCap: await readWholeNumber(deps.flags, OUTREACH_FLAGS.accountWeeklyCap, OUTREACH_LIMITS.accountWeeklyCap),
+    clicheLint: await readOn(deps.flags, OUTREACH_FLAGS.clicheLint),
   };
   if (caps.accountWeeklyCap === 0) return empty("skipped", "the account weekly cap is 0 or could not be read");
   const campaignId = campaignIdFor(now);
@@ -512,7 +513,16 @@ export async function runColdBatch(deps: ColdBatchDeps): Promise<ColdBatchResult
   } catch (error) {
     log.warn("signal angles could not be read; templates that need one are held", { error: error instanceof Error ? error.message : String(error) });
   }
-  const ctx: ComposeContext = { config, ...copy, links: linkPolicy(config, deps.appUrl), approvedClaims: approvedClaimLines(judgeSlice.text), angles };
+  // The cliche lint and the voice's avoid phrases hold drafts only while the flag is on.
+  const clicheLint = caps.clicheLint;
+  const ctx: ComposeContext = {
+    config,
+    ...copy,
+    links: linkPolicy(config, deps.appUrl),
+    approvedClaims: approvedClaimLines(judgeSlice.text),
+    angles,
+    ...(clicheLint ? { clicheLint, avoidPhrases: voiceAvoidPhrases(judgeSlice.text) } : {}),
+  };
   // Templates, experiment arms, subject lines and send slots are planned and pinned before any
   // draft is composed (experiments/plan.ts); weighted rotation by volume_weight is the default.
   const plan = await planAllocation({ db, flags: deps.flags, now, seed, campaignId, rows: toWrite, templates, sending: config.sending, log });

@@ -44,6 +44,8 @@ describe("enrichStage", () => {
     expect(stats.rejected).toBe(2);
     expect(people.calls).toHaveLength(0);
     expect((await row("a-low"))?.qualification_notes).toMatch(/below 5/);
+    expect(JSON.parse(String((await row("a-low"))?.attributes))).toMatchObject({ reject_reason: "low_fit" });
+    expect(JSON.parse(String((await row("a-never"))?.attributes))).toMatchObject({ reject_reason: "never_list" });
   });
 
   it("keeps the best person at an account and turns the next match into a new candidate", async () => {
@@ -82,6 +84,8 @@ describe("enrichStage", () => {
     }
     await enrich({ sources: [], people: broken, finders: [] });
     expect((await row("a-retry"))?.status).toBe("rejected");
+    // The attempt counter and the reason are both kept.
+    expect(JSON.parse(String((await row("a-retry"))?.attributes))).toMatchObject({ enrich_attempts: MAX_ENRICH_ATTEMPTS, reject_reason: "people_lookup_failed" });
   });
 
   it("leaves candidates raw, with their progress, when the budget stops paid calls", async () => {

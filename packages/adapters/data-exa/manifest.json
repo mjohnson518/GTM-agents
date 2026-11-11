@@ -13,11 +13,11 @@
     "exa_news_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" }
   },
   "costs": {
-    "search": { "usd": 0.005, "per": "request of up to 25 results" },
-    "search_large": { "usd": 0.025, "per": "request of 26 to 100 results" },
+    "search": { "usd": 0.007, "per": "request of up to 10 results" },
+    "extra_result": { "usd": 0.001, "per": "result asked for beyond the first 10 of a search, find-similar or news request" },
     "highlights": { "usd": 0.001, "per": "result" },
-    "find_similar": { "usd": 0.005, "per": "request of up to 25 results" },
-    "news": { "usd": 0.005, "per": "request of up to 25 results" },
+    "find_similar": { "usd": 0.007, "per": "request of up to 10 results" },
+    "news": { "usd": 0.007, "per": "request of up to 10 results" },
     "webset_item": { "credits": 10, "per": "webset item that matches every criterion (dollars per credit set by the creditUsd option)" },
     "webset_email": { "credits": 5, "per": "email enrichment returned on a webset item" },
     "monitor_run": { "usd": 0.002, "per": "monitor run, billed by the provider on its own schedule" }

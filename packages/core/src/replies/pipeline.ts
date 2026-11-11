@@ -27,6 +27,8 @@ import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import type { InboxProvider } from "../ports/email.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
+import { voiceAvoidPhrases } from "../quality/claims.ts";
+import { CLICHE_LINT_FLAG } from "../quality/gate.ts";
 import type { ShownStore } from "../security/approval-digest.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { loadSourcingBrain, type PersonaRule } from "../sourcing/brain.ts";
@@ -223,7 +225,9 @@ export async function runReplyPipeline(deps: PipelineDeps): Promise<PipelineResu
 
   // 3. Drafting.
   if (!(await replyFlagOn(deps.flags, REPLY_FLAGS.drafting)) || result.stopped !== null) return result;
-  const context: DraftContext = { brain, objections, assets: await loadReplyAssets(db) };
+  // The voice's quoted avoid phrases hold a draft only while the cliche lint flag is on.
+  const avoidPhrases = (await replyFlagOn(deps.flags, CLICHE_LINT_FLAG)) ? voiceAvoidPhrases(brain.text) : [];
+  const context: DraftContext = { brain, objections, assets: await loadReplyAssets(db), ...(avoidPhrases.length > 0 ? { avoidPhrases } : {}) };
   // The auto-send tier, offered only while its flag is on; every rule is checked again per draft.
   const store = deps.store;
   const autoSend =

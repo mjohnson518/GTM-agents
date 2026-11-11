@@ -9,8 +9,9 @@
 //   - account fit: the model fit score / 10 * 0.25 when the account is scored, otherwise the
 //     prescore / 100 * 0.10.
 // Clamped to [0, 1]: 0.5 or more is qualified, under 0.3 rejected, anything between borderline.
-// Borderline and rejected are terminal. Hard stops win over the score: the brain's never list, a
-// person-fit drop, or an account fit score below the floor rejects outright.
+// Borderline and rejected are terminal, and both record a reason code (sourcing/reasons.ts). Hard
+// stops win over the score: the brain's never list, a person-fit drop, or an account fit score below
+// the floor rejects outright.
 import { LOW_FIT_SCORE } from "../scoring/fit.ts";
 import { classifyTitle, type PersonFitDecision } from "../scoring/titles.ts";
 import { freshVerification } from "../enrichment/verification.ts";
@@ -18,6 +19,7 @@ import type { VerificationStatus } from "../ports/contact.ts";
 import { fitAttribute, loadTitleReviews, parseAttributes, updateCandidate, type CandidateRow } from "./candidates.ts";
 import type { StageContext } from "./context.ts";
 import { matchNeverList } from "./identity.ts";
+import type { RejectReason } from "./reasons.ts";
 
 export const QUALIFIED_AT = 0.5;
 export const REJECTED_BELOW = 0.3;
@@ -79,6 +81,7 @@ export async function qualifyStage(ctx: StageContext, limit: number): Promise<Qu
       score = 0;
       status = "rejected";
       notes = never ?? (fit.decision === "drop" ? `person fit: ${fit.reason}` : `the account's fit score is below ${LOW_FIT_SCORE}`);
+      attrs.reject_reason = never ? "never_list" : fit.decision === "drop" ? "person_fit_drop" : "low_fit";
     } else {
       const verification = row.email ? await freshVerification(ctx.db, row.email, ctx.now) : null;
       score = qualificationScore({
@@ -90,6 +93,8 @@ export async function qualifyStage(ctx: StageContext, limit: number): Promise<Qu
         prescore: account ? account.prescore : null,
       });
       status = qualificationStatus(score);
+      const reason: RejectReason | null = status === "rejected" ? "low_score" : status === "borderline" ? "borderline_score" : null;
+      if (reason) attrs.reject_reason = reason;
       notes = `score ${score}; person fit ${fit.decision}; email ${verification?.status ?? (row.email ? "unverified" : "none")}`;
     }
     const changed = await updateCandidate(ctx.db, row.id, "enriched", { status, qualification_score: score, qualification_notes: notes, attributes: JSON.stringify(attrs) }, ctx.now);

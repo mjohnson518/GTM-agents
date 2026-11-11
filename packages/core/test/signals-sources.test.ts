@@ -143,6 +143,11 @@ describe("websets", () => {
     // The address's domain never stands in for the company.
     expect(results.find((r) => r.source_ref === "webset:w3")).toMatchObject({ status: "rejected", email: null, account_key: null });
     expect(results.find((r) => r.source_ref === "webset:w4")).toMatchObject({ status: "rejected" });
+    const reasons = await db.prepare("SELECT source_ref, json_extract(attributes, '$.reject_reason') AS reason FROM candidates WHERE status = 'rejected' ORDER BY source_ref").all();
+    expect(reasons.results).toEqual([
+      { source_ref: "webset:w3", reason: "no_domain" },
+      { source_ref: "webset:w4", reason: "no_domain" },
+    ]);
     const query = await db.prepare("SELECT is_active, search_type, provider_ref, total_results FROM discovery_queries WHERE id = ?1").bind(results[0]?.query_id).first();
     expect(query).toMatchObject({ is_active: 0, search_type: "webset", provider_ref: "ws_1", total_results: 2 });
 
@@ -156,7 +161,7 @@ describe("websets", () => {
     await seedAccount(db, "lowfit.example", "Lowfit Corp", { score: 2 });
     const source = fakeWebsets([{ kind: "person", name: "Sam Lee", title: "VP Engineering", accountName: "Lowfit Corp", email: "sam@lowfit.example", evidence: [], providerRef: "w1" }]);
     await runWebsets({ db, source, specs: [{ query: "q", count: 5 }], brain, gate: gate(), now: NOW, maxRows: 10, itemUsd: 0.09, maxReserveUsd: 10, log: silentLog });
-    expect(await db.prepare("SELECT status FROM candidates").first()).toMatchObject({ status: "rejected" });
+    expect(await db.prepare("SELECT status, json_extract(attributes, '$.reject_reason') AS reason FROM candidates").first()).toMatchObject({ status: "rejected", reason: "low_fit" });
   });
 
   it("reserves the worst case before creating, lowering the count to what the cap allows", async () => {

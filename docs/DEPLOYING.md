@@ -163,11 +163,26 @@ At your DNS host, for the sending subdomain (for example `outreach.acme.example`
 | **Return-path (bounce domain)** | The MX and TXT records your email provider asks for, if it uses a custom return-path, so bounces reach it and SPF aligns |
 | **DMARC** | A TXT record at `_dmarc.outreach.acme.example`, for example `v=DMARC1; p=none; rua=mailto:dmarc@acme.example`. Start with `p=none` and move to `p=quarantine` once the reports look clean |
 
-Copy each record exactly as the provider shows it. If the domain's DNS is on Cloudflare, set these records to DNS only (not proxied). Check them from a terminal before you verify the domain with the provider:
+Copy each record exactly as the provider shows it. If the domain's DNS is on Cloudflare, set these records to DNS only (not proxied). Set `sending.dkimSelector` in `gtm.config.ts` to the selector the provider shows (the label before `._domainkey`, for example `resend`), so the DKIM record can be checked too. Then check the records before you verify the domain with the provider:
+
+```bash
+npx gtm doctor --remote
+```
+
+`gtm doctor --remote` resolves the sending subdomain's TXT records over DNS over HTTPS (Cloudflare's resolver, `cloudflare-dns.com`) and reports:
+
+| Check | PASS | WARN | FAIL |
+|---|---|---|---|
+| **SPF** (`outreach.acme.example`) | One `v=spf1` record ending in `-all` or `~all` | It ends in `?all` | No `v=spf1` record, more than one, or `+all` |
+| **DKIM** (`<selector>._domainkey.outreach.acme.example`) | A published key (`p=` with a value) | | No key, or a revoked one (empty `p=`) |
+| **DMARC** (`_dmarc.outreach.acme.example`) | `p=quarantine` or `p=reject` | `p=none`, which only monitors | No record, more than one, or no valid `p=` |
+
+Without `sending.dkimSelector` the DKIM line is an INFO that asks for it; doctor never guesses a selector. A lookup that cannot be made (no network, a resolver error) is a WARN, "could not resolve", never a PASS or a FAIL. The DMARC WARN is expected while you start at `p=none`. These checks only report: nothing holds a send because of them, and `gtm deploy` runs doctor offline, so it does not resolve DNS. To look at the raw records from a terminal:
 
 ```bash
 dig TXT outreach.acme.example +short
 dig TXT _dmarc.outreach.acme.example +short
+dig TXT resend._domainkey.outreach.acme.example +short
 ```
 
 Warm the domain up slowly: the warm-up ramp ([section 9](#the-warm-up-ramp)) does that for you. [SENDING.md](SENDING.md) covers the domain, the footer and unsubscribe in depth.
@@ -347,6 +362,7 @@ These are vars, not secrets, set in `wrangler.jsonc`:
 | `agent.name` | Yes | The name the agent signs with and introduces itself by (`{{sender_name}}`), 1 to 60 characters | `"Avery"` |
 | `sending.from` | Yes | The cold sender, `{ email, name? }`. The address must be on `sending.domain` | `{ email: "avery@outreach.acme.example", name: "Avery at Acme" }` |
 | `sending.domain` | Yes | The isolated sending subdomain. Must be a subdomain of `company.domain` | `"outreach.acme.example"` |
+| `sending.dkimSelector` | No | The DKIM selector your email provider signs with: the label before `._domainkey`, as the provider shows it. DNS labels only (letters, digits, hyphens, dots). Lets `gtm doctor --remote` check the DKIM key; never guessed when unset | `"resend"` |
 | `sending.replyTo` | Yes | The real mailbox replies go to: the one the inbox watches | `"avery@acme.example"` |
 | `sending.supportAddress` | Yes | Your support address; mail from it counts as your own | `"support@acme.example"` |
 | `sending.postalAddress` | Yes | Appended to every cold and follow-up email with the unsubscribe line (10 to 300 characters) | `"Acme Inc., 100 Example Street, Springfield, EX 00000"` |
@@ -505,7 +521,7 @@ Run each `npx wrangler secret put <NAME> --env staging` line setup printed: the 
 
 | Check | Expect |
 |---|---|
-| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, jobs queue, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered" |
+| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, jobs queue, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, SPF, DKIM (once `sending.dkimSelector` is set), the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered". DMARC is a WARN while it is still `p=none` ([4.2](#42-the-domain-and-the-sending-subdomain)) |
 | `curl -s https://agent-staging.acme.example/health` | `{"ok":true,"service":"gtm-agents"}` |
 | `curl -s -o /dev/null -w "%{http_code}\n" https://agent-staging.acme.example/api/ping` (any `/api/` path; this one does not exist) | `401` without a token (the bearer token is set). `503` means `GATEWAY_TOKEN` is unset |
 | The Worker's Cron Events in the Cloudflare dashboard | An invocation every minute |

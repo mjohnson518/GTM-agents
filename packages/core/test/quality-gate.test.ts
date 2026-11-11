@@ -1,6 +1,7 @@
 // GTM-agents: tests for the deterministic quality gate: every check, its code and its severity.
 import { describe, expect, it } from "vitest";
-import { QUALITY_CODES, approvedClaimLines, checkClaims, checkOutboundQuality, isUsableAccountName, summarizeQuality, usableFirstName, type QualityInput } from "../src/quality/index.ts";
+import { findFlag } from "../src/flags/registry.ts";
+import { CLICHE_LINT_FLAG, QUALITY_CODES, approvedClaimLines, checkClaims, checkOutboundQuality, isUsableAccountName, summarizeQuality, usableFirstName, voiceAvoidPhrases, type QualityInput } from "../src/quality/index.ts";
 
 const BODY = [
   "Hi Jane,",
@@ -154,5 +155,78 @@ describe("name and claim helpers", () => {
     const pass = run({});
     const held = run({ body: BODY.replace("Hi Jane,", "Hi there,") });
     expect(summarizeQuality([pass, held, held])).toBe("1 pass, 2 held, 0 blocked; most common: GREETING_NOT_PERSONAL (2)");
+  });
+});
+
+describe("the cliche lint and the brain's voice phrases (quality:cliche_lint_enabled)", () => {
+  const VOICE_SLICE = [
+    "GTM BRAIN (version 3f9a1c0b7d2e, operator-approved; task: replies)",
+    "",
+    "### voice (v1)",
+    "- plain: kind: do; text: Say \"thanks for the note\" when it fits.",
+    '- avoid-guilt: kind: avoid; text: Avoid guilt-trip follow-ups such as "just checking in" or "did you see my last email?".',
+    "- no-hype: kind: dont; text: Never write \u201cworld class platform\u201d or \"wow\".",
+    "- no-prose: kind: dont; text: Do not pretend to know the reader.",
+    "",
+    "### facts (v2)",
+    '- quoted: text: Customers say "just checking in" is fine here.',
+  ].join("\n");
+  const hopeIntro = BODY.replace("Hi Jane,", "Hi Jane,\n\nI hope this message finds you well.");
+  const reply = {
+    kind: "reply" as const,
+    subject: "Re: Flaky builds at Globex",
+    body: "Thanks Jane, just checking in on the build times you mentioned. Would Thursday work for a short call?\n\nAvery",
+    claimSources: undefined,
+  };
+
+  it("holds a cold intro that hopes the message finds them well, and a reply with a phrase quoted in a voice avoid item, only with the flag on", () => {
+    const on = run({ body: hopeIntro, clicheLint: true });
+    expect(on.verdict).toBe("hold");
+    expect(on.findings.find((f) => f.code === "LINT_CLICHE")?.severity).toBe("hold");
+
+    const avoidPhrases = voiceAvoidPhrases(VOICE_SLICE);
+    const replyOn = run({ ...reply, avoidPhrases });
+    expect(replyOn.verdict).toBe("hold");
+    const avoided = replyOn.findings.find((f) => f.code === "VOICE_AVOIDED");
+    expect(avoided?.severity).toBe("hold");
+    expect(avoided?.detail).toContain("just checking in");
+
+    // The flag off: callers pass neither field, and neither code appears.
+    expect(codes({ body: hopeIntro })).not.toContain("LINT_CLICHE");
+    expect(codes({ body: hopeIntro, clicheLint: false })).not.toContain("LINT_CLICHE");
+    expect(codes({ ...reply })).not.toContain("VOICE_AVOIDED");
+    expect(run({ body: hopeIntro })).toEqual(run({ body: hopeIntro, clicheLint: false }));
+  });
+
+  it("reads only quoted phrases of two to six words from voice items of kind dont or avoid", () => {
+    expect(voiceAvoidPhrases(VOICE_SLICE)).toEqual(["just checking in", "did you see my last email", "world class platform"]);
+    expect(voiceAvoidPhrases("### voice (v1)\n- no-prose: kind: dont; text: Do not pretend to know the reader.")).toEqual([]);
+    expect(voiceAvoidPhrases("")).toEqual([]);
+    expect(voiceAvoidPhrases('### voice (v1)\n- long: kind: avoid; text: Avoid "one two three four five six seven".')).toEqual([]);
+  });
+
+  it("matches an avoided phrase as a whole phrase, case-insensitively, after NFKC", () => {
+    const avoidPhrases = ["just checking in"];
+    expect(codes({ ...reply, body: reply.body.replace("just checking in", "JUST  checking\nin"), avoidPhrases })).toContain("VOICE_AVOIDED");
+    expect(codes({ ...reply, body: reply.body.replace("just checking in", "just checking into"), avoidPhrases })).not.toContain("VOICE_AVOIDED");
+    const fullwidth = String.fromCharCode(0xff4a, 0xff55, 0xff53, 0xff54);
+    expect(codes({ ...reply, body: reply.body.replace("just", fullwidth), avoidPhrases })).toContain("VOICE_AVOIDED");
+  });
+
+  it("holds three or more question marks in a cold intro only with the flag on", () => {
+    const many = BODY.replace("standup?", "standup? Is it daily? Weekly?");
+    expect(codes({ body: many, clicheLint: true })).toContain("LINT_CLICHE");
+    expect(codes({ body: many })).not.toContain("LINT_CLICHE");
+    expect(codes({ kind: "follow_up", body: many, clicheLint: true })).not.toContain("LINT_CLICHE");
+  });
+
+  it("declares a severity for both new codes", () => {
+    expect(QUALITY_CODES.LINT_CLICHE).toBe("hold");
+    expect(QUALITY_CODES.VOICE_AVOIDED).toBe("hold");
+  });
+
+  it("is listed in the flag registry, off by default", () => {
+    expect(CLICHE_LINT_FLAG).toBe("quality:cliche_lint_enabled");
+    expect(findFlag(CLICHE_LINT_FLAG)).toMatchObject({ kind: "boolean", default: "false" });
   });
 });

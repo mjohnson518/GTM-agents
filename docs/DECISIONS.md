@@ -14,6 +14,7 @@ This page is for adopters judging whether the system's structure fits them, and 
 | [ADR-008](#adr-008-agents-stage-humans-commit) | Agents stage, humans commit | Accepted |
 | [ADR-009](#adr-009-source-first-typescript-on-node-24) | Source-first TypeScript on Node 24 | Accepted |
 | [ADR-010](#adr-010-brain-and-template-files-are-strict-markdown) | Brain and template files are strict Markdown | Accepted |
+| [ADR-011](#adr-011-linkedin-and-x-touches-stay-manual) | LinkedIn and X touches stay manual | Accepted |
 
 ---
 
@@ -176,3 +177,18 @@ A build step per package means stale output, source maps and a slower loop for e
 **Consequences.**
 - Files are readable, diffable and validated with precise errors.
 - Values cannot span lines or contain commas inside list fields. That is a deliberate limit for one-or-two-sentence items.
+
+## ADR-011: LinkedIn and X touches stay manual
+
+**Context.** Many outbound tools automate LinkedIn. They log in to the seller's account from a server, using the password, the authenticator secret or a session cookie, often through a proxy placed in the seller's country. They send connection requests and messages on a schedule, and some write each message with a model at send time. LinkedIn's terms forbid automating account activity, and an account flagged for it can be limited or lost. The pattern also conflicts with this system's own rules: approvals bind to the exact text approved, every send runs its checks inside one send function, and no credential for a person's own account is held outside that person's control.
+
+**Decision.**
+- The system never sends on LinkedIn or X. A sequence may include a manual step (`followup:manual_channel_enabled`): the system drafts a short fixed note, the operator sends it by hand and marks it done or skipped, and the step is logged like any other touch ([SEQUENCES.md](SEQUENCES.md)).
+- No adapter stores or uses a LinkedIn or X login, authenticator secret or session cookie.
+- If a social channel is ever added, it comes through a new record that supersedes this one. That channel's adapter may send only the exact approved text, creates anything it schedules paused, holds no account credential in the deployment, and is driven by core's caps, windows, suppression and kill switch, with the action class human-only until a person decides otherwise.
+
+**Consequences.**
+- Email is the only automated channel. Social touches cost the operator a few minutes a day.
+- No account restriction risk comes from this system, and no deployment holds credentials that could take over a person's social account.
+- Tools that automate social outreach can still be used beside the system, outside it; nothing they send is measured here.
+

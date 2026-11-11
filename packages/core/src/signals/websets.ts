@@ -27,6 +27,7 @@ import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import type { SourcingBrain } from "../sourcing/brain.ts";
 import { insertCandidate } from "../sourcing/candidates.ts";
 import { matchNeverList, screenAddress, splitPersonName } from "../sourcing/identity.ts";
+import type { RejectReason } from "../sourcing/reasons.ts";
 import { resolveAccountByName } from "../sourcing/search.ts";
 import type { SpendGate } from "../sourcing/spend.ts";
 import { PROVIDER_TEXT_CAPS, cleanProviderText, cleanProviderUrl } from "../sourcing/text.ts";
@@ -96,17 +97,22 @@ async function storeItem(input: WebsetRunInput, queryId: string, spec: WebsetSpe
   let notes: string | null = status === "qualified" ? `webset: fixed score ${SIGNAL_LIMITS.websetScore}; promotion runs every check` : null;
   const never = matchNeverList(input.brain.never, { domain, accountName, title });
   const fit = domain ? await input.db.prepare("SELECT fit_score FROM account_fit WHERE account_key = ?1 AND status = 'scored'").bind(domain).first<{ fit_score: number | null }>() : null;
+  let reason: RejectReason | null = null;
   if (!domain) {
     status = "rejected";
+    reason = "no_domain";
     notes = "no company domain: a personal mailbox, a shared host or no domain at all";
   } else if (never) {
     status = "rejected";
+    reason = "never_list";
     notes = never;
   } else if (!person?.first) {
     status = "rejected";
+    reason = "name_unreadable";
     notes = "the person's name could not be read";
   } else if (fit?.fit_score !== null && fit?.fit_score !== undefined && fit.fit_score < LOW_FIT_SCORE) {
     status = "rejected";
+    reason = "low_fit";
     notes = `the account's fit score is below ${LOW_FIT_SCORE}`;
   }
   const inserted = await insertCandidate(
@@ -130,7 +136,7 @@ async function storeItem(input: WebsetRunInput, queryId: string, spec: WebsetSpe
       status,
       ...(status === "qualified" ? { qualificationScore: SIGNAL_LIMITS.websetScore } : {}),
       notes,
-      attributes: { ...(spec?.segment ? { segment: spec.segment } : {}), intent: "webset", ...(url ? { profile_url: url } : {}) },
+      attributes: { ...(spec?.segment ? { segment: spec.segment } : {}), intent: "webset", ...(url ? { profile_url: url } : {}), ...(reason ? { reject_reason: reason } : {}) },
     },
     input.now,
   );

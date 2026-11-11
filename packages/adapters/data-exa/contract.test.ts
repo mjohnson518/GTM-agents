@@ -6,7 +6,7 @@ import { json } from "../_contract/fetch.ts";
 import manifest from "./manifest.json";
 import { testContext } from "../_contract/context.ts";
 import { recordedFetch } from "../_contract/fetch.ts";
-import { PRICES, WEBSET_CREDITS, createAdapter, mapSearchResponse, parseMonitorDelivery, signMonitorDelivery, verifyMonitorSignature } from "./index.ts";
+import { INCLUDED_RESULTS, PRICES, WEBSET_CREDITS, createAdapter, mapSearchResponse, parseMonitorDelivery, signMonitorDelivery, verifyMonitorSignature } from "./index.ts";
 
 const SEARCH = "https://api.exa.ai/search";
 const secrets = { EXA_API_KEY: "test-exa-key" };
@@ -102,13 +102,18 @@ runDiscoverySourceContract(createAdapter, {
 describe("the Exa adapter's price table", () => {
   it("matches the manifest", () => {
     expect(manifest.costs.search.usd).toBe(PRICES.search);
-    expect(manifest.costs.search_large.usd).toBe(PRICES.searchLarge);
+    expect(manifest.costs.extra_result.usd).toBe(PRICES.extraResult);
     expect(manifest.costs.highlights.usd).toBe(PRICES.highlightsPerResult);
   });
 
-  it("estimates a large request at the larger price when the response reports none", () => {
+  it("estimates a request for more than the included results at the base price plus each extra result", () => {
     const page = mapSearchResponse({ results: [] }, { kind: "account", text: "q", limit: 50 }, "2026-11-04T12:00:00.000Z", 0);
-    expect(page.cost?.usd).toBe(PRICES.searchLarge);
+    expect(page.cost?.usd).toBeCloseTo(PRICES.search + (50 - INCLUDED_RESULTS) * PRICES.extraResult, 6);
+  });
+
+  it("estimates a request within the included results at the base price", () => {
+    const page = mapSearchResponse({ results: [] }, { kind: "account", text: "q", limit: INCLUDED_RESULTS }, "2026-11-04T12:00:00.000Z", 0);
+    expect(page.cost?.usd).toBeCloseTo(PRICES.search, 6);
   });
 });
 
@@ -196,7 +201,8 @@ describe("dated news search", () => {
       { title: "Brightloop Labs raises Series B", url: "https://news.example/brightloop-series-b", providerRef: "news-1", publishedAt: "2026-10-28T00:00:00.000Z" },
       { title: "An undated story", url: "https://news.example/undated", providerRef: "news-2" },
     ]);
-    expect(page.cost).toMatchObject({ provider: "data-exa", capability: "news", usd: PRICES.news });
+    expect(page.cost?.usd).toBeCloseTo(PRICES.news + (25 - INCLUDED_RESULTS) * PRICES.extraResult, 6);
+    expect(page.cost).toMatchObject({ provider: "data-exa", capability: "news" });
   });
 });
 

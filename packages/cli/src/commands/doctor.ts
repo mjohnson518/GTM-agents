@@ -2,13 +2,15 @@
 // the jobs queue, configuration, adapter manifests, required secrets, webhook registration, the email footer and
 // unsubscribe secret, the halt flag and kill switch, and every feature flag. Offline by default;
 // --remote also asks Cloudflare (through Wrangler) for the deployed secrets and the stop flags'
-// values (the halt and both kill-switch keys).
+// values (the halt and both kill-switch keys), and resolves the sending domain's SPF, DKIM and DMARC
+// records over DNS over HTTPS (lib/dns.ts).
 import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { REQUIRED_BINDINGS, type GtmConfig } from "@gtm-agents/core/config";
 import { FLAGS } from "@gtm-agents/core/flags";
 import { SCHEDULER_CRON, normalizeCron } from "@gtm-agents/core/jobs";
 import type { AdapterManifest } from "@gtm-agents/core/ports";
+import { dnsChecks, type DnsFetch } from "../lib/dns.ts";
 import { EXIT, spawnRunner, type CommandRunner, type Io } from "../lib/io.ts";
 import { loadDeploymentConfig } from "../lib/project.ts";
 import { DEFAULT_ADAPTERS_DIR, deployedSecretNames, devVarNames, loadAdapterManifests, requiredSecretNames } from "../lib/secrets.ts";
@@ -27,6 +29,8 @@ export interface DoctorOptions {
   runner?: CommandRunner;
   /** Where adapter manifests live when they are not installed in the deployment. */
   adaptersDir?: string;
+  /** The fetch the --remote DNS checks use. Default: the global fetch. */
+  fetch?: DnsFetch;
 }
 
 const USAGE = "Usage: gtm doctor [--config <dir>] [--env staging|production] [--remote]";
@@ -49,7 +53,11 @@ export async function doctorCommand(args: string[], io: Io, options: DoctorOptio
   }
   const dir = resolve(io.cwd, parsed.values.config ?? ".");
   const env = wranglerEnv(parsed.values.env);
-  const checks = await runChecks(dir, env, parsed.values.remote === true, { runner: options.runner ?? spawnRunner, adaptersDir: options.adaptersDir ?? DEFAULT_ADAPTERS_DIR });
+  const checks = await runChecks(dir, env, parsed.values.remote === true, {
+    runner: options.runner ?? spawnRunner,
+    adaptersDir: options.adaptersDir ?? DEFAULT_ADAPTERS_DIR,
+    fetch: options.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+  });
 
   io.out(`gtm doctor: ${relative(io.cwd, dir) || "."} (${envLabel(env)})`);
   const width = Math.max(...checks.map((c) => c.name.length));
@@ -193,6 +201,16 @@ async function runChecks(dir: string, env: string | undefined, remote: boolean, 
       name: "footer and unsubscribe",
       detail: `postal footer is set; one-click unsubscribe links are signed with UNSUBSCRIBE_SIGNING_KEY${remote ? "" : " (verify it with --remote)"}`,
     });
+  }
+
+  // Sending-domain DNS: SPF, DKIM and DMARC. Reported only; a lookup that fails is a WARN.
+  const sendingDomain = config?.sending?.domain;
+  if (config && typeof sendingDomain === "string") {
+    if (remote) {
+      checks.push(...(await dnsChecks(sendingDomain, config.company.domain, config.sending.dkimSelector, deps.fetch)));
+    } else {
+      checks.push({ status: "INFO", name: "DNS", detail: `SPF, DKIM and DMARC for ${sendingDomain}; pass --remote to resolve them` });
+    }
   }
 
   // Halt flag and kill switch. Read together; an unreadable store counts as stopped.

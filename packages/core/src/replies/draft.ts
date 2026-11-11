@@ -58,6 +58,12 @@ export interface DraftContext {
   brain: BrainSlice;
   objections: readonly BrainObjection[];
   assets: readonly ReplyAsset[];
+  /**
+   * The brain voice's quoted avoid phrases (voiceAvoidPhrases), filled while
+   * quality:cliche_lint_enabled is on. Replies never get the cliche list: a reply may properly say
+   * "following up".
+   */
+  avoidPhrases?: readonly string[];
 }
 
 /** Active reply assets with an https URL. Empty on a database error, so a draft never invents a link. */
@@ -304,6 +310,7 @@ export async function draftReply(
       contact: { email: contact.email, firstName: contact.first_name, accountName: contact.account_name, accountKey: contact.account_key },
       links: { domains: [], exactUrls: [...plan.allowedUrls, ...assetUrls, ...(config.sending.bookingUrl ? [config.sending.bookingUrl] : [])] },
       claimSources,
+      ...(context.avoidPhrases && context.avoidPhrases.length > 0 ? { avoidPhrases: context.avoidPhrases } : {}),
     }),
     extra,
   );

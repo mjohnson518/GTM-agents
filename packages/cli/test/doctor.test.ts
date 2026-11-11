@@ -1,8 +1,9 @@
 // GTM-agents: tests for `gtm doctor`.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { doctorCommand, jobsQueueCheck, triggerCheck } from "../src/commands/doctor.ts";
+import type { DnsFetch } from "../src/lib/dns.ts";
 import type { CommandRunner } from "../src/lib/io.ts";
 import { ADAPTERS_DIR, makeDeployment, setUpDeployment } from "./deployment.ts";
 import { FakeAccount } from "./fake-wrangler.ts";
@@ -15,6 +16,24 @@ function bulkGet(values: Record<string, string | null>, args: string[]): { code:
 }
 
 const noRemote: CommandRunner = async () => ({ code: 1, stdout: "", stderr: "not expected" });
+
+/** DNS for --remote runs, answered without the network: an SPF record and DMARC p=reject on every name asked. */
+const cleanDns: DnsFetch = async (url) => {
+  const name = new URL(url).searchParams.get("name") ?? "";
+  const data = name.startsWith("_dmarc.") ? '"v=DMARC1; p=reject"' : '"v=spf1 include:_spf.mail.example -all"';
+  return { ok: true, status: 200, json: async () => ({ Status: 0, Answer: [{ name, type: 16, TTL: 300, data }] }) };
+};
+
+// Doctor never reaches the network in these tests: the --remote runs inject `cleanDns`, and the global
+// fetch fails the test if anything falls through to it.
+beforeEach(() => {
+  vi.stubGlobal("fetch", () => {
+    throw new Error("gtm doctor tests must not reach the network");
+  });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("gtm doctor", () => {
   it("passes the worker template offline, warning about unfilled placeholders", async () => {
@@ -62,7 +81,7 @@ describe("gtm doctor", () => {
       return { code: 1, stdout: "", stderr: "authentication error" };
     };
     const io = captureIo();
-    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(1);
+    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner, fetch: cleanDns })).toBe(1);
     const text = io.text();
     expect(text).toMatch(/FAIL\s+secrets\s+missing: UNSUBSCRIBE_SIGNING_KEY/);
     expect(text).toMatch(/WARN\s+halt flag\s+the system is halted/);
@@ -73,7 +92,7 @@ describe("gtm doctor", () => {
     const runner: CommandRunner = async (_cmd, args) =>
       args.includes("secret") ? { code: 0, stdout: "[]", stderr: "" } : { code: 1, stdout: "", stderr: "X [ERROR] Authentication error [code: 10000]" };
     const io = captureIo();
-    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(1);
+    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner, fetch: cleanDns })).toBe(1);
     const text = io.text();
     expect(text).toMatch(/FAIL\s+halt flag\s+could not read system:halt/);
     expect(text).toMatch(/FAIL\s+kill switch \(critical\)\s+could not read/);
@@ -89,7 +108,7 @@ describe("gtm doctor", () => {
       return bulkGet({}, args);
     };
     const io = captureIo();
-    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner })).toBe(0);
+    expect(await doctorCommand(["--config", "apps/worker", "--remote"], io, { runner, fetch: cleanDns })).toBe(0);
     expect(io.text()).toMatch(/PASS\s+secrets\s+all 15 required secrets are set/);
   });
 

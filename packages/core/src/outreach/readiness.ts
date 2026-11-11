@@ -64,6 +64,8 @@ export interface ReadinessOptions {
   now: Date;
   domainDailyCap: number;
   accountWeeklyCap: number;
+  /** quality:cliche_lint_enabled. Off (the default), the lint's CLICHE warnings do not count. */
+  clicheLint?: boolean;
 }
 
 const DAY_MS = 86_400_000;
@@ -145,14 +147,14 @@ export function lintSample<T>(items: readonly T[]): T[] {
   return [...picks].map((i) => items[i]).filter((x): x is T => x !== undefined);
 }
 
-function contentLint(items: readonly ReadinessItem[]): DimensionResult {
+function contentLint(items: readonly ReadinessItem[], clicheLint: boolean): DimensionResult {
   const sample = lintSample(items);
   let blocks = 0;
   let warnings = 0;
   for (const item of sample) {
     const lint = lintOutbound(item);
     if (lint.blocks.length > 0) blocks++;
-    else if (lint.warnings.length > 0) warnings++;
+    else if (lint.warnings.some((w) => clicheLint || w.code !== "CLICHE")) warnings++;
   }
   const detail = `${sample.length} sampled; ${blocks} with a block, ${warnings} with a warning`;
   return { status: blocks > 0 ? "block" : warnings > 0 ? "warn" : "pass", detail };
@@ -213,7 +215,7 @@ export async function assessReadiness(db: D1Database, items: readonly ReadinessI
     bounceRate: bounce,
     suppression,
     verification: verify,
-    contentLint: contentLint(items),
+    contentLint: contentLint(items, options.clicheLint === true),
     accountCap: accounts.result,
   };
   return { overall: overall(dimensions), intended: items.length, dimensions, suppressedDrafts, suppressionUnreadable, overCapAccounts: accounts.over };

@@ -25,7 +25,7 @@
 import type { GtmConfig } from "../config/schema.ts";
 import { renderTemplate, type TemplateValues } from "../templates/render.ts";
 import type { ServedTemplate } from "../templates/store.ts";
-import { checkOutboundQuality, heldResult, isUsableAccountName, usableFirstName, withFinding, type LinkPolicy, type QualityResult } from "../quality/gate.ts";
+import { checkOutboundQuality, heldResult, isUsableAccountName, usableFirstName, withFinding, type LinkPolicy, type QualityExtras, type QualityResult } from "../quality/gate.ts";
 import { eligibleTemplates, type Rotation, type TargetFacts } from "./allocate.ts";
 import type { SelectionRow } from "./select.ts";
 import type { Angle } from "../signals/angles.ts";
@@ -46,6 +46,15 @@ export interface ComposeContext {
   approvedClaims: readonly string[];
   /** Contact id to its angle (signals/angles.ts loadAngles). Absent: no contact has an angle. */
   angles?: ReadonlyMap<string, Angle>;
+  /** quality:cliche_lint_enabled, as read for this run (unreadable is off). */
+  clicheLint?: boolean;
+  /** The brain voice's quoted avoid phrases (voiceAvoidPhrases); filled only while the cliche lint is on. */
+  avoidPhrases?: readonly string[];
+}
+
+/** The gate's optional checks a compose context switches on. */
+export function qualityExtras(ctx: Pick<ComposeContext, "clicheLint" | "avoidPhrases">): QualityExtras {
+  return { ...(ctx.clicheLint ? { clicheLint: true } : {}), ...(ctx.avoidPhrases && ctx.avoidPhrases.length > 0 ? { avoidPhrases: ctx.avoidPhrases } : {}) };
 }
 
 export type ComposeOutcome =
@@ -145,6 +154,7 @@ export function composeColdDraft(row: SelectionRow, templates: readonly ServedTe
     contact: { email: row.email, firstName: row.first_name, accountName: row.account_name, accountKey: row.account_key },
     links: ctx.links,
     claimSources: claimSources(template, values, ctx),
+    ...qualityExtras(ctx),
   });
   // Site text and provider-written attributes differ in every draft, so a sampled review cannot cover them.
   const perDraftReview = rendered.perDraftReview || USES_ATTRIBUTES.test(`${template.subject}\n${template.body}`) || USES_HEADLINE.test(`${template.subject}\n${template.body}`);

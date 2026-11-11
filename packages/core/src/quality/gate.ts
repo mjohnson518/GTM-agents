@@ -8,6 +8,12 @@
 //   - hold: a person decides (the lint's warnings, an impersonal greeting, a fallback such as "your
 //     company" while the name is known, a link that is not allowed, an unapproved claim, a length
 //     out of bounds for the kind, a long subject, a cold intro with no question, exclamations).
+// Two holds run only when the caller asks, which callers do while quality:cliche_lint_enabled is on:
+//   - clicheLint: the lint's CLICHE warnings become LINT_CLICHE, and a cold intro with three or more
+//     question marks is held the same way. Off (the default), CLICHE warnings are dropped, so the
+//     result is exactly what it was without the cliche lint;
+//   - avoidPhrases: each phrase the brain's voice quotes in a dont or avoid item (voiceAvoidPhrases
+//     in claims.ts) found in the copy, as a whole phrase, is VOICE_AVOIDED.
 // The verdict is the worst severity found, and the score (100, minus 40 per block and 15 per hold)
 // is for trend reports only. The model reviewer (reviewer.ts) adds its verdict on top with
 // withReview. The gate never rewrites copy; it reports.
@@ -50,6 +56,8 @@ export const QUALITY_CODES = Object.freeze({
   LINT_SPAM_PHRASE: "hold",
   LINT_SUBJECT_CAPS: "hold",
   LINT_SUBJECT_PUNCTUATION: "hold",
+  LINT_CLICHE: "hold",
+  VOICE_AVOIDED: "hold",
   GREETING_NOT_PERSONAL: "hold",
   ACCOUNT_FALLBACK_USED: "hold",
   LINK_NOT_ALLOWED: "hold",
@@ -66,6 +74,12 @@ export const QUALITY_CODES = Object.freeze({
   REVIEW_FAILED: "hold",
 } satisfies Record<string, FindingSeverity>);
 export type QualityCode = keyof typeof QUALITY_CODES;
+
+/**
+ * The flag callers read to set QualityInput.clicheLint and fill avoidPhrases. The gate itself reads
+ * no flags; an unreadable value counts as off.
+ */
+export const CLICHE_LINT_FLAG = "quality:cliche_lint_enabled";
 
 /** Word bounds for replies, which are not a template kind. */
 export const REPLY_WORD_BOUNDS = Object.freeze({ min: 8, max: 160 });
@@ -96,7 +110,17 @@ export interface QualityInput {
   links: LinkPolicy;
   /** Approved text the copy's figures and claims must come from. Omitted, the claims check does not run. */
   claimSources?: readonly string[];
+  /**
+   * Report the lint's CLICHE warnings as LINT_CLICHE holds. Callers set it from
+   * quality:cliche_lint_enabled (unreadable is off). Omitted or false, they are not reported.
+   */
+  clicheLint?: boolean;
+  /** Phrases the brain's voice says to avoid (voiceAvoidPhrases). Each one found is VOICE_AVOIDED. */
+  avoidPhrases?: readonly string[];
 }
+
+/** The gate's optional checks, which callers switch on from quality:cliche_lint_enabled. */
+export type QualityExtras = Pick<QualityInput, "clicheLint" | "avoidPhrases">;
 
 // Lint warnings the gate checks more precisely itself (exclamations, and length by kind).
 const LINT_COVERED = new Set(["EXCLAMATIONS", "BODY_TOO_LONG"]);
@@ -141,6 +165,13 @@ const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&
 
 function mentions(text: string, phrase: string): boolean {
   return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(phrase)}(?![\\p{L}\\p{N}])`, "iu").test(text);
+}
+
+/** A phrase as a whole phrase: case-insensitive, NFKC, any run of whitespace between its words. */
+function mentionsPhrase(text: string, phrase: string): boolean {
+  const parts = phrase.normalize("NFKC").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${parts.map(escapeRegExp).join("\\s+")}(?![\\p{L}\\p{N}])`, "iu").test(text);
 }
 
 function hostOf(url: string): string | null {
@@ -196,7 +227,17 @@ export function checkOutboundQuality(input: QualityInput): QualityResult {
 
   const lint = lintOutbound({ subject, body });
   for (const f of lint.blocks) findings.push({ code: `LINT_${f.code}`, severity: "block", detail: f.detail });
-  for (const f of lint.warnings) if (!LINT_COVERED.has(f.code)) findings.push({ code: `LINT_${f.code}`, severity: "hold", detail: f.detail });
+  for (const f of lint.warnings) {
+    if (LINT_COVERED.has(f.code) || (f.code === "CLICHE" && input.clicheLint !== true)) continue;
+    findings.push({ code: `LINT_${f.code}`, severity: "hold", detail: f.detail });
+  }
+  if (input.clicheLint === true && input.kind === "cold_intro") {
+    const questions = (body.match(/\?/g) ?? []).length;
+    if (questions >= 3) add("LINT_CLICHE", `${questions} question marks in a cold intro; ask one thing`);
+  }
+  for (const phrase of input.avoidPhrases ?? []) {
+    if (mentionsPhrase(all, phrase)) add("VOICE_AVOIDED", `the copy says "${phrase.slice(0, 60)}", which the brain's voice says to avoid`);
+  }
 
   if (input.contact) {
     const to = plainAddress(input.recipient);

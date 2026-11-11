@@ -34,6 +34,9 @@
 // A sweep never throws for one contact: a failure is logged and the next sweep tries again.
 import { readAutonomyLevel } from "../autonomy/store.ts";
 import type { ReviewSpend } from "../quality/reviewer.ts";
+import { loadBrain, type KVReader } from "../brain/load.ts";
+import { voiceAvoidPhrases } from "../quality/claims.ts";
+import { CLICHE_LINT_FLAG, type QualityExtras } from "../quality/gate.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { Env } from "../env.ts";
 import { defineJob, type FlagReader, type JobLogger, type RegisteredJob } from "../jobs/registry.ts";
@@ -96,6 +99,8 @@ export interface FollowupDeps {
   chatId?: string | undefined;
   /** PRODUCT_APP_URL, whose host follow-ups may link to. */
   appUrl?: string | undefined;
+  /** Where the brain is read, for the voice's avoid phrases. Without it only the cliche lint runs. */
+  kv?: KVReader | undefined;
   maxRows?: number;
   runId?: string;
   signal?: AbortSignal;
@@ -308,7 +313,7 @@ async function stillInStay(db: D1Database, contactId: string, state: string, ent
 }
 
 /** Decide one due follow-up. Throws on a database error; the caller counts it and moves on. */
-async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule, templates: readonly ServedTemplate[]): Promise<Decision> {
+async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule, templates: readonly ServedTemplate[], extras: QualityExtras): Promise<Decision> {
   const { db, now } = deps;
   // 1. The person: erased or suppressed people are never contacted.
   if (await isErased(db, { userId: row.product_user_id, emailSha256: row.email_sha256, mailboxSha256: row.mailbox_sha256 })) {
@@ -357,7 +362,7 @@ async function decide(deps: FollowupDeps, row: CandidateRow, rule: FollowupRule,
   const templateId = deps.templateIds?.[rule.kind] ?? defaultTemplateId(rule.kind);
   const template = templates.find((t) => t.id === templateId && t.meta.kind === "lifecycle" && t.meta.status === "approved");
   if (!template) return { wait: `no approved template ${templateId}` };
-  const composed = composeFollowup(template, row, deps.config, followupLinks(deps.config, deps.appUrl));
+  const composed = composeFollowup(template, row, deps.config, followupLinks(deps.config, deps.appUrl), extras);
   if (composed.status === "held") {
     await record(db, row, rule, "skipped", `no value for ${composed.missing.join(", ")}`, now, level);
     return "skipped";
@@ -529,13 +534,20 @@ export async function runLifecycleFollowups(deps: FollowupDeps): Promise<Followu
   result.candidates = rows.length;
   if (rows.length === 0) return result;
   const templates = await deps.templates();
+  // The cliche lint and the voice's avoid phrases hold follow-ups only while the flag is on.
+  const extras: QualityExtras = {};
+  if (await readSwitch(deps.flags, CLICHE_LINT_FLAG)) {
+    extras.clicheLint = true;
+    const phrases = deps.kv ? voiceAvoidPhrases((await loadBrain({ KV: deps.kv }, "judge")).text) : [];
+    if (phrases.length > 0) extras.avoidPhrases = phrases;
+  }
 
   for (const row of rows) {
     if (deps.signal?.aborted) break;
     if (!isFollowupKind(row.kind)) continue;
     const rule = FOLLOWUP_RULES[row.kind];
     try {
-      const decision = await decide(deps, row, rule, templates);
+      const decision = await decide(deps, row, rule, templates, extras);
       if (typeof decision === "object") {
         result.waiting += 1;
         result.waits[decision.wait] = (result.waits[decision.wait] ?? 0) + 1;
@@ -604,6 +616,7 @@ export function createLifecycleFollowups<E extends Env>(options: LifecycleFollow
             operator: safely(options.operator, ctx.env),
             chatId: ctx.config.operator.allowedChatIds[0],
             appUrl: ctx.env.PRODUCT_APP_URL,
+            kv: ctx.env.KV,
             maxRows: ctx.ceilings.maxRows ?? FOLLOWUP_LIMITS.sweepRows,
             ...(ctx.runId ? { runId: ctx.runId } : {}),
             signal: ctx.signal,

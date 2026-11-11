@@ -7,6 +7,7 @@
 // (the person-fit verdict, a profile URL, retry counters) live in the attributes JSON column.
 import type { CandidateStatus } from "../data/enums.ts";
 import type { TitleClass } from "../scoring/titles.ts";
+import type { RejectReason } from "./reasons.ts";
 
 export interface CandidateRow {
   id: string;
@@ -46,6 +47,8 @@ export interface CandidateAttributes {
   verify_attempts?: number;
   /** Verifications that failed with an error at promotion. */
   verify_errors?: number;
+  /** Why the candidate stopped short of promotion, on every rejected, borderline or duplicate row. */
+  reject_reason?: RejectReason;
   [key: string]: unknown;
 }
 

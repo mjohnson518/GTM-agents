@@ -21,7 +21,9 @@
 // move to promoted, its evidence linked to the contact, the persona seat and the fit verdict. The
 // contact insert and the candidate update are both guarded on the candidate still being qualified,
 // so two runs cannot promote one candidate twice. A missing first name is allowed: drafting holds
-// such a contact later rather than greet a guessed name. After the batch, a signal held at the
+// such a contact later rather than greet a guessed name. Every rejection and duplicate records its
+// reason code (sourcing/reasons.ts) in the attributes, saved with the fit verdict and retry counters
+// worked out on the way. After the batch, a signal held at the
 // account for its first contacts is carried to the new contact (signals/carry.ts).
 import { accountKey } from "../data/keys.ts";
 import { contactEmailFields } from "../data/contacts.ts";
@@ -36,6 +38,7 @@ import { candidateUpdate, fitAttribute, loadTitleReviews, parseAttributes, updat
 import type { StageContext } from "./context.ts";
 import type { PromotionPolicy } from "./flags.ts";
 import { isRoleAddress, matchNeverList } from "./identity.ts";
+import type { RejectReason } from "./reasons.ts";
 import { carrySignals } from "../signals/carry.ts";
 
 export interface PromoteStats {
@@ -79,8 +82,15 @@ export async function promoteStage(ctx: StageContext, limit: number, options: Pr
 async function promoteOne(row: CandidateRow, ctx: StageContext, options: PromoteOptions, reviews: ReadonlyMap<string, "keep" | "drop">): Promise<Outcome> {
   const { db, now } = ctx;
   const attrs = parseAttributes(row.attributes);
-  const reject = async (notes: string, clearEmail = false): Promise<Outcome> => {
-    await updateCandidate(db, row.id, "qualified", { status: "rejected", qualification_notes: notes, ...(clearEmail ? { email: null, email_source: null } : {}) }, now);
+  const reject = async (reason: RejectReason, notes: string, clearEmail = false): Promise<Outcome> => {
+    attrs.reject_reason = reason;
+    await updateCandidate(
+      db,
+      row.id,
+      "qualified",
+      { status: "rejected", qualification_notes: notes, attributes: JSON.stringify(attrs), ...(clearEmail ? { email: null, email_source: null } : {}) },
+      now,
+    );
     return "rejected";
   };
   const hold = async (notes: string): Promise<Outcome> => {
@@ -90,10 +100,10 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
 
   // 1 to 3: the address.
   const fields = await contactEmailFields(row.email);
-  if (!fields) return reject("the address does not parse", true);
+  if (!fields) return reject("address_unparseable", "the address does not parse", true);
   const account = accountKey(row.account_key);
-  if (!account || accountKey(fields.email) !== account) return reject("not a work address at the candidate's account", true);
-  if (isRoleAddress(fields.email)) return reject("a role mailbox, not a person", true);
+  if (!account || accountKey(fields.email) !== account) return reject("not_work_address", "not a work address at the candidate's account", true);
+  if (isRoleAddress(fields.email)) return reject("role_mailbox", "a role mailbox, not a person", true);
 
   // 4: identity.
   const existing = await db
@@ -109,7 +119,19 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
           .first<{ id: string }>()
       : null);
   if (namesake) {
-    await updateCandidate(db, row.id, "qualified", { status: "duplicate", promoted_contact_id: namesake.id, qualification_notes: existing ? "already a contact" : "the same person at the same account is already a contact" }, now);
+    attrs.reject_reason = existing ? "duplicate_contact" : "duplicate_person";
+    await updateCandidate(
+      db,
+      row.id,
+      "qualified",
+      {
+        status: "duplicate",
+        promoted_contact_id: namesake.id,
+        qualification_notes: existing ? "already a contact" : "the same person at the same account is already a contact",
+        attributes: JSON.stringify(attrs),
+      },
+      now,
+    );
     return "duplicate";
   }
 
@@ -120,7 +142,7 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
       await hold("the suppression check could not be read; retried next run");
       return "stop";
     }
-    return reject("the address is suppressed", true);
+    return reject("suppressed", "the address is suppressed", true);
   }
 
   // 6: conflicts are held for a person.
@@ -129,11 +151,12 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
   // 7: person fit and the never list, from the current brain.
   const fit = classifyTitle(row.job_title, ctx.brain.personas, { never: ctx.brain.never, reviews });
   attrs.person_fit = fitAttribute(fit);
-  if (fit.decision !== "keep") return reject(`person fit is ${fit.decision}: ${fit.reason}`);
   const never = matchNeverList(ctx.brain.never, { domain: account, accountName: row.account_name, title: row.job_title });
-  if (never) return reject(never);
+  // A title on the never list is also a person-fit drop; the never list is the reason recorded.
+  if (fit.decision !== "keep") return reject(never ? "never_list" : fit.decision === "drop" ? "person_fit_drop" : "person_fit_maybe", `person fit is ${fit.decision}: ${fit.reason}`);
+  if (never) return reject("never_list", never);
   const accountFit = await db.prepare("SELECT fit_score FROM account_fit WHERE account_key = ?1 AND status = 'scored'").bind(account).first<{ fit_score: number | null }>();
-  if (accountFit?.fit_score !== null && accountFit?.fit_score !== undefined && accountFit.fit_score < LOW_FIT_SCORE) return reject(`the account's fit score is below ${LOW_FIT_SCORE}`);
+  if (accountFit?.fit_score !== null && accountFit?.fit_score !== undefined && accountFit.fit_score < LOW_FIT_SCORE) return reject("low_fit", `the account's fit score is below ${LOW_FIT_SCORE}`);
 
   // 8: verification and the policy.
   const verification = await verifyAddress(fields.email, { db, verifier: options.verifier, gate: ctx.gate, now, log: ctx.log });
@@ -142,18 +165,18 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
     // A verifier error is retried on later runs and rejected after MAX_UNKNOWN_ATTEMPTS; one that
     // will not go away (or no verifier at all) stops the stage, so it is not repeated for every row.
     attrs.verify_errors = (typeof attrs.verify_errors === "number" ? attrs.verify_errors : 0) + 1;
-    if (attrs.verify_errors >= MAX_UNKNOWN_ATTEMPTS) return reject("the address could not be verified on three runs");
+    if (attrs.verify_errors >= MAX_UNKNOWN_ATTEMPTS) return reject("verification_failed", "the address could not be verified on three runs");
     await hold(`not promoted: the address could not be verified (${verification.reason})`);
     return verification.reason === "no_verifier" || verification.retryable === false ? "stop" : "held";
   }
   const record = verification.record;
   if (record.status === "unknown") {
     attrs.verify_attempts = (attrs.verify_attempts ?? 0) + (record.cached ? 0 : 1);
-    if ((attrs.verify_attempts ?? 0) >= MAX_UNKNOWN_ATTEMPTS) return reject("verification stayed unknown after three attempts");
+    if ((attrs.verify_attempts ?? 0) >= MAX_UNKNOWN_ATTEMPTS) return reject("verification_unknown", "verification stayed unknown after three attempts");
     return hold("verification is unknown; retried when the result expires");
   }
   if (!passesPromotionPolicy(record, options.policy)) {
-    return reject(`verification ${record.status}${record.disposable ? " (disposable)" : ""} does not pass the ${options.policy} policy`);
+    return reject("verification_policy", `verification ${record.status}${record.disposable ? " (disposable)" : ""} does not pass the ${options.policy} policy`);
   }
 
   // The batch.

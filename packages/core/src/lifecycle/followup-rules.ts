@@ -25,7 +25,7 @@
 import type { ActionClass } from "../autonomy/levels.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { LifecycleState } from "../data/enums.ts";
-import { checkOutboundQuality, hostFromConfig, usableFirstName, type LinkPolicy, type QualityResult } from "../quality/gate.ts";
+import { checkOutboundQuality, hostFromConfig, usableFirstName, type LinkPolicy, type QualityExtras, type QualityResult } from "../quality/gate.ts";
 import { renderTemplate, type TemplateValues } from "../templates/render.ts";
 
 export const FOLLOWUP_KINDS = ["first_use", "last_first_use", "usefulness", "upgrade_offer", "reengage", "at_risk", "win_back"] as const;
@@ -142,12 +142,16 @@ const clean = (value: string | null | undefined, max: number): string | undefine
   return text.length > 1 ? text : undefined;
 };
 
-/** Render a follow-up from its approved template, and run the quality gate on it. Pure. */
+/**
+ * Render a follow-up from its approved template, and run the quality gate on it. `extras` carries
+ * the cliche lint and the voice's avoid phrases while quality:cliche_lint_enabled is on. Pure.
+ */
 export function composeFollowup(
   template: { subject: string; body: string },
   contact: FollowupContact,
   config: Pick<GtmConfig, "agent" | "company" | "sending">,
   links: LinkPolicy,
+  extras: QualityExtras = {},
 ): ComposedFollowup {
   const values: TemplateValues = {
     first_name: usableFirstName(contact.first_name) ?? undefined,
@@ -166,6 +170,7 @@ export function composeFollowup(
     contact: { email: contact.email, firstName: contact.first_name, accountName: null, accountKey: contact.account_key },
     links,
     claimSources: sources,
+    ...extras,
   });
   return { status: "composed", subject: rendered.subject, body: rendered.body, quality, values };
 }

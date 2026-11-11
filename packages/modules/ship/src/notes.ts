@@ -27,13 +27,14 @@
 // Every decision is autonomy evidence for ship_notification, written once per note.
 import type { Env } from "@gtm-agents/core";
 import { readAutonomyLevel, recordAutonomyEvidenceOnce } from "@gtm-agents/core/autonomy/runtime";
+import { loadBrain } from "@gtm-agents/core/brain";
 import type { GtmConfig } from "@gtm-agents/core/config";
 import { PRODUCT_STATES } from "@gtm-agents/core/data";
-import type { FlagReader, JobLogger } from "@gtm-agents/core/jobs";
+import { isFlagOn, type FlagReader, type JobLogger } from "@gtm-agents/core/jobs";
 import { followupLinks } from "@gtm-agents/core/lifecycle";
 import type { OperatorChannel } from "@gtm-agents/core/ports";
 import { isErased } from "@gtm-agents/core/product-bridge";
-import { checkOutboundQuality, usableFirstName } from "@gtm-agents/core/quality";
+import { CLICHE_LINT_FLAG, checkOutboundQuality, usableFirstName, voiceAvoidPhrases, type QualityExtras } from "@gtm-agents/core/quality";
 import { detectInjection, draftDigest, sanitizeErrorMessage } from "@gtm-agents/core/security";
 import { checkSuppression, type OutreachOutcome, type SendOutreach } from "@gtm-agents/core/sending";
 import { loadTemplates, renderTemplate, serveTemplateFiles, type ServedTemplate, type TemplateFile } from "@gtm-agents/core/templates";
@@ -111,6 +112,22 @@ export async function noteTemplate<E extends Env>(deps: Pick<NoteDeps<E>, "env" 
 
 type Composed = { ok: true; subject: string; body: string; toName: string | null } | { ok: false; reason: string };
 
+/**
+ * The gate's cliche lint and the brain voice's avoid phrases, while quality:cliche_lint_enabled is
+ * on. Unreadable is off; an unreadable brain gives no phrases, and the cliche lint still runs.
+ */
+export async function noteQualityExtras(flags: FlagReader, kv: KVNamespace): Promise<QualityExtras> {
+  let on: boolean;
+  try {
+    on = isFlagOn(await flags.get(CLICHE_LINT_FLAG));
+  } catch {
+    on = false;
+  }
+  if (!on) return {};
+  const phrases = voiceAvoidPhrases((await loadBrain({ KV: kv }, "judge")).text);
+  return { clicheLint: true, ...(phrases.length > 0 ? { avoidPhrases: phrases } : {}) };
+}
+
 /** Render one note and run the quality gate on it. Pure. */
 export function composeNote(
   template: Pick<ServedTemplate, "subject" | "body">,
@@ -118,6 +135,7 @@ export function composeNote(
   title: string,
   config: Pick<GtmConfig, "agent" | "company" | "sending">,
   appUrl: string | undefined,
+  extras: QualityExtras = {},
 ): Composed {
   const first = usableFirstName(contact.first_name);
   const rendered = renderTemplate(template, {
@@ -135,6 +153,7 @@ export function composeNote(
     contact: { email: contact.email, firstName: contact.first_name, accountName: null, accountKey: contact.account_key },
     links: followupLinks(config, appUrl),
     claimSources: [template.subject, template.body, first ?? "", config.company.name, config.company.product.name, config.agent.name, title].filter((s) => s.length > 0),
+    ...extras,
   });
   if (quality.verdict !== "pass") return { ok: false, reason: `the quality gate ${quality.verdict === "block" ? "blocked" : "held"} it: ${quality.findings.map((f) => f.code).join(", ")}` };
   return { ok: true, subject: rendered.subject, body: rendered.body, toName: first };
@@ -254,6 +273,7 @@ export async function draftShipNotes<E extends Env>(deps: NoteDeps<E>, theme: { 
   if (typeof template === "string") return { ...result, reason: template };
   const reading = await readAutonomyLevel({ flags: deps.flags, db, config: deps.config }, "ship_notification");
   const level = reading.level;
+  const extras = await noteQualityExtras(deps.flags, deps.env.KV);
 
   for (const r of requesters) {
     try {
@@ -286,7 +306,7 @@ export async function draftShipNotes<E extends Env>(deps: NoteDeps<E>, theme: { 
         await skip("ship_notification is at level 0 (observe only)");
         continue;
       }
-      const composed = composeNote(template, { email: r.email, first_name: r.first_name, account_key: r.account_key }, title, deps.config, deps.env.PRODUCT_APP_URL);
+      const composed = composeNote(template, { email: r.email, first_name: r.first_name, account_key: r.account_key }, title, deps.config, deps.env.PRODUCT_APP_URL, extras);
       if (!composed.ok) {
         await skip(composed.reason);
         continue;

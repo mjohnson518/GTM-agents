@@ -3,6 +3,7 @@
 export { lintOutbound } from "./lint.ts";
 export type { LintFinding, LintResult } from "./lint.ts";
 export {
+  CLICHE_LINT_FLAG,
   QUALITY_CODES,
   REPLY_WORD_BOUNDS,
   checkOutboundQuality,
@@ -13,8 +14,8 @@ export {
   usableFirstName,
   withFinding,
 } from "./gate.ts";
-export type { FindingSeverity, LinkPolicy, QualityCode, QualityContact, QualityFinding, QualityInput, QualityKind, QualityResult, QualityVerdict } from "./gate.ts";
-export { approvedClaimLines, checkClaims } from "./claims.ts";
+export type { FindingSeverity, LinkPolicy, QualityCode, QualityExtras, QualityContact, QualityFinding, QualityInput, QualityKind, QualityResult, QualityVerdict } from "./gate.ts";
+export { approvedClaimLines, checkClaims, voiceAvoidPhrases } from "./claims.ts";
 export type { ClaimCheck } from "./claims.ts";
 export {
   REVIEW_MAX_SAMPLES,

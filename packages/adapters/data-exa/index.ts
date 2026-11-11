@@ -36,8 +36,19 @@ function discard(response: Response): void {
 
 export const NAME = "data-exa";
 export const SECRET = "EXA_API_KEY";
-/** Prices from manifest.json, used when a response does not report its own cost. */
-export const PRICES = Object.freeze({ search: 0.005, searchLarge: 0.025, highlightsPerResult: 0.001, findSimilar: 0.005, news: 0.005 });
+/**
+ * Prices from manifest.json, used when a response does not report its own cost. A search-type
+ * request includes up to INCLUDED_RESULTS results; each result asked for beyond that is billed
+ * at extraResult.
+ */
+export const PRICES = Object.freeze({ search: 0.007, extraResult: 0.001, highlightsPerResult: 0.001, findSimilar: 0.007, news: 0.007 });
+/** Results included in the base price of one search-type request. */
+export const INCLUDED_RESULTS = 10;
+
+/** The estimated price of one search-type request asking for `results` results. */
+export function requestPrice(base: number, results: number): number {
+  return base + Math.max(0, Math.floor(results) - INCLUDED_RESULTS) * PRICES.extraResult;
+}
 /** Websets credits, from manifest.json: per matching item, and per email enrichment. */
 export const WEBSET_CREDITS = Object.freeze({ item: 10, email: 5 });
 const MAX_RESULTS = 100;
@@ -167,7 +178,7 @@ export function mapSearchResponse(body: ExaResponse, q: DiscoveryQuery, retrieve
     }
   }
   const reported = typeof body.costDollars?.total === "number" && Number.isFinite(body.costDollars.total) ? body.costDollars.total : undefined;
-  const estimate = (q.limit > 25 ? PRICES.searchLarge : PRICES.search) + (highlightChars > 0 ? results.length * PRICES.highlightsPerResult : 0);
+  const estimate = requestPrice(PRICES.search, Math.min(MAX_RESULTS, q.limit)) + (highlightChars > 0 ? results.length * PRICES.highlightsPerResult : 0);
   const cost: Cost = { provider: NAME, capability: "search", usd: reported ?? estimate, units: 1 };
   return { items, cost };
 }
@@ -270,7 +281,7 @@ export function mapNewsResponse(body: { results?: unknown; costDollars?: { total
     items.push({ title, url, providerRef: id, ...(publishedAt ? { publishedAt } : {}) });
   }
   const reported = typeof body.costDollars?.total === "number" && Number.isFinite(body.costDollars.total) ? body.costDollars.total : undefined;
-  return { items, cost: { provider: NAME, capability: "news", usd: reported ?? PRICES.news, units: 1 } };
+  return { items, cost: { provider: NAME, capability: "news", usd: reported ?? requestPrice(PRICES.news, Math.min(MAX_RESULTS, limit)), units: 1 } };
 }
 
 const hex = (bytes: ArrayBuffer) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -402,7 +413,7 @@ export function createAdapter(ctx: AdapterContext): ExaAdapter {
       const body = await call<ExaResponse>("find-similar", "/findSimilar", { method: "POST", body: buildSimilarRequest(args) });
       const page = mapSearchResponse(body, { kind: "account", text: args.url, limit: args.limit }, ctx.now().toISOString(), 0);
       const reported = typeof body.costDollars?.total === "number" && Number.isFinite(body.costDollars.total) ? body.costDollars.total : undefined;
-      return { items: page.items.slice(0, args.limit), cost: { provider: NAME, capability: "find_similar", usd: reported ?? PRICES.findSimilar, units: 1 } };
+      return { items: page.items.slice(0, args.limit), cost: { provider: NAME, capability: "find_similar", usd: reported ?? requestPrice(PRICES.findSimilar, Math.min(MAX_RESULTS, args.limit)), units: 1 } };
     },
     async searchNews(args) {
       const body = await call<{ results?: unknown; costDollars?: { total?: unknown } }>("news search", "/search", { method: "POST", body: buildNewsRequest(args, options) });

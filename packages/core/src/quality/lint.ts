@@ -5,7 +5,10 @@
 //   - blocks: the message is never sent (hidden characters, an empty subject or body, a placeholder
 //     left unfilled, a link shortener, HTML, a house-rule character such as an em or en dash);
 //   - warnings: a person should look (spam phrases, a shouting or over-punctuated subject, more
-//     than one exclamation mark, a body over 200 words).
+//     than one exclamation mark, a body over 200 words, and CLICHE: the stock phrases machine-written
+//     copy leans on, such as hoping the message finds them well or a nudge with nothing new in it).
+// CLICHE is always reported here; the quality gate maps it to a hold only while
+// quality:cliche_lint_enabled is on, and every other reader of warnings ignores it with the flag off.
 // The quality gate adds the checks that need context (recipient, links, claims, length by kind).
 
 export interface LintFinding {
@@ -55,6 +58,65 @@ const SPAM_PHRASES = [
 
 const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 
+/**
+ * Stock phrases of machine-written outreach, whole words, case-insensitive. Each one is a hold, not a
+ * block: a person may decide the phrase is fine where it stands.
+ */
+const CLICHE_PATTERNS: readonly RegExp[] = [
+  // The "hope this finds you well" opener, in its common shapes.
+  /\b(?:hope|trust)\s+(?:this|that|my|the|you)\b[^.!?\n]{0,30}?\bfinds you\b/i,
+  /\bhope you(?:['\u2019]re| are)\s+(?:well|doing well)\b/i,
+  /\bsynerg(?:y|ies)\b/i,
+  /\bleverag(?:e|es|ed|ing)\b/i,
+  /\bunlock(?:s|ing)?\b/i,
+  /\bgame[- ]chang(?:er|ers|ing)\b/i,
+  /\bcutting[- ]edge\b/i,
+  /\bbest[- ]in[- ]class\b/i,
+  /\belevate your\b/i,
+  // "As a VP of Engineering at Globex, you ...": flattery built from the contact's record.
+  /\bas an? [^,.\n]{2,60}? at [^,.\n]{2,60},\s*you\b/i,
+];
+
+/** A nudge that carries nothing new. Flagged only when it is the whole message. */
+const NUDGE = /\b(?:circling back|just checking in|bumping this|following up)\b/i;
+const NUDGE_MAX_WORDS = 15;
+const GREETING_LINE = /^(?:hi|hello|hey|dear)\b[^\n]{0,40}$/i;
+const SIGNOFF_LINE = /^(?:thanks|thank you|best|cheers|regards|best regards|kind regards|warmly|talk soon)[,.!]?$/i;
+const NAME_LINE = /^[\p{L}][\p{L}' .-]{0,40}$/u;
+
+function nudgeOnly(body: string): boolean {
+  const lines = body.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  if (lines.length > 0 && GREETING_LINE.test(lines[0] ?? "")) lines.shift();
+  while (lines.length > 0) {
+    const last = lines[lines.length - 1] ?? "";
+    if (NUDGE.test(last) || !(SIGNOFF_LINE.test(last) || (NAME_LINE.test(last) && words(last) <= 3))) break;
+    lines.pop();
+  }
+  const rest = lines.join(" ");
+  return NUDGE.test(rest) && words(rest) <= NUDGE_MAX_WORDS;
+}
+
+const QUICK_QUESTION = /\bquick question\b/gi;
+
+/** The cliches in a message, as CLICHE warnings. Text is already normalized. */
+function cliches(subject: string, body: string): LintFinding[] {
+  const all = `${subject}\n${body}`;
+  const found: LintFinding[] = [];
+  for (const pattern of CLICHE_PATTERNS) {
+    const hit = pattern.exec(all);
+    if (hit) found.push({ code: "CLICHE", detail: hit[0] });
+  }
+  if (nudgeOnly(body)) found.push({ code: "CLICHE", detail: "a nudge with nothing new in it" });
+  for (const hit of all.matchAll(QUICK_QUESTION)) {
+    const after = all.slice((hit.index ?? 0) + hit[0].length, (hit.index ?? 0) + hit[0].length + 200);
+    if (!after.includes("?")) {
+      found.push({ code: "CLICHE", detail: `"${hit[0]}" with no question after it` });
+      break;
+    }
+  }
+  return found;
+}
+
 export function lintOutbound(content: { subject: string; body: string }): LintResult {
   const subject = (content.subject ?? "").normalize("NFKC");
   const body = (content.body ?? "").normalize("NFKC");
@@ -81,6 +143,7 @@ export function lintOutbound(content: { subject: string; body: string }): LintRe
   if (/[!?]{2,}/.test(subject)) warnings.push({ code: "SUBJECT_PUNCTUATION", detail: "the subject is over-punctuated" });
   if ((all.match(/!/g) ?? []).length > 1) warnings.push({ code: "EXCLAMATIONS", detail: "more than one exclamation mark" });
   if (words(body) > 200) warnings.push({ code: "BODY_TOO_LONG", detail: `${words(body)} words` });
+  warnings.push(...cliches(subject, body));
 
   return { blocks, warnings };
 }

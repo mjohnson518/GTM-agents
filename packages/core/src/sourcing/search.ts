@@ -26,6 +26,7 @@ import type { SourcingBrain } from "./brain.ts";
 import { insertCandidate } from "./candidates.ts";
 import type { StageContext } from "./context.ts";
 import { accountNameKey, matchNeverList, splitPersonName } from "./identity.ts";
+import type { RejectReason } from "./reasons.ts";
 import { PROVIDER_TEXT_CAPS, cleanProviderText, cleanProviderUrl } from "./text.ts";
 
 /** At most this many domains are sent to a provider as exclusions. */
@@ -157,15 +158,19 @@ async function storeResult(ctx: StageContext, source: string, query: PlannedQuer
 
   let status: "raw" | "rejected" = "raw";
   let notes: string | null = null;
+  let reason: RejectReason | null = null;
   const never = matchNeverList(ctx.brain.never, { domain, accountName, title });
   if (!domain) {
     status = "rejected";
+    reason = "no_domain";
     notes = "no company domain: a personal mailbox, a shared host or no domain at all";
   } else if (never) {
     status = "rejected";
+    reason = "never_list";
     notes = never;
   } else if (kind === "person" && !person?.first) {
     status = "rejected";
+    reason = "name_unreadable";
     notes = "the person's name could not be read";
   }
   const inserted = await insertCandidate(
@@ -186,7 +191,7 @@ async function storeResult(ctx: StageContext, source: string, query: PlannedQuer
       accountKey: domain,
       status,
       notes,
-      attributes: { ...(query.segment ? { segment: query.segment } : {}), ...(query.intent ? { intent: query.intent } : {}) },
+      attributes: { ...(query.segment ? { segment: query.segment } : {}), ...(query.intent ? { intent: query.intent } : {}), ...(reason ? { reject_reason: reason } : {}) },
     },
     ctx.now,
   );

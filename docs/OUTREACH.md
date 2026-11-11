@@ -87,6 +87,8 @@ Every draft passes the deterministic gate on NFKC-normalized text. A **block** m
 | `UNUSABLE_ACCOUNT_NAME` | block | The copy names an account name the identity rules reject |
 | `SUBJECT_LINE_BREAK` | block | The subject holds a line break |
 | `LINT_SPAM_PHRASE`, `LINT_SUBJECT_CAPS`, `LINT_SUBJECT_PUNCTUATION` | hold | Spam phrases; a shouting or over-punctuated subject |
+| `LINT_CLICHE` | hold | Only while `quality:cliche_lint_enabled` is on, and never for replies. Stock phrases of machine-written copy, whole words and case-insensitive: hoping the message finds them well, "synergy", "leverage", "unlock", "game-changer", "cutting-edge", "best-in-class", "elevate your", "As a (title) at (company), you", a "quick question" with no question mark in the next 200 characters, a message that is only "circling back", "just checking in", "bumping this" or "following up" and a sign-off, and three or more question marks in a cold intro |
+| `VOICE_AVOIDED` | hold | Only while `quality:cliche_lint_enabled` is on. The copy contains, as a whole phrase, a phrase the brain's `voice` quotes in a `dont` or `avoid` item ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)). Replies are checked too |
 | `GREETING_NOT_PERSONAL` | hold | The first line lacks the contact's first name, or the first name is unknown (not checked for replies) |
 | `ACCOUNT_FALLBACK_USED` | hold | "your company", "your firm" and similar while the company's name is known and absent |
 | `LINK_NOT_ALLOWED` | hold | A link (including a bare host such as `example.com/offer`) anywhere but your company's domain and its subdomains, the host of `company.url`, the app host (`PRODUCT_APP_URL`), or the exact booking URL |
@@ -162,7 +164,7 @@ A scorecard over the drafts about to go; the worst dimension decides. Any data t
 | Bounce rate (1 and 7 days) | 5% or more | 2% or more; under 20 sends is too few to judge. The hard bounce rate the bounce monitor reads (`hardBounceRate`, [MEASUREMENT.md](MEASUREMENT.md#the-metrics)): hard bounces that arrived in the window over sends in it |
 | Suppression overlap | Any recipient suppressed, or the check failed | |
 | Verification coverage | Any cached undeliverable address | Half or more without a cached result |
-| Content lint (sample of five) | Any lint block | Any lint warning |
+| Content lint (sample of five) | Any lint block | Any lint warning (cliches count only while `quality:cliche_lint_enabled` is on) |
 | Account cap | An account would go over the weekly cap | An account would reach it |
 
 **Salvage.** When RED comes only from suppression overlap or the account cap, the offending drafts are dropped and the rest scored once more. A RED from anything else, or from a suppression check that failed, holds the batch. Each batch's readiness is recorded as a `quality_checks` row with subject type `batch`.
@@ -217,6 +219,7 @@ The batch hands over drafts; the send function owns delivery. It runs every boun
 | `cold_batch:daily_limit` | unset | Your limit, which can only lower the day's volume |
 | `autonomy:cold_batch` | `1` | The class's level; 2 or above approves passing, reviewed drafts |
 | `quality:model_review_enabled` | `false` | The model reviewer |
+| `quality:cliche_lint_enabled` | `false` | Hold cold, sequence, lifecycle and ship mail with `LINT_CLICHE`, and any of them or a reply with `VOICE_AVOIDED`; an unreadable value counts as off |
 | `outreach:min_email_confidence` | `medium` | The verification floor for selection |
 | `outreach:holdout_rate` | `0.05` | The share held out as a no-send control (at most 0.2) |
 | `outreach:allocation_mode` | `weighted` | `weighted` rotation, or `thompson` sampling with guardrails ([EXPERIMENTS.md](EXPERIMENTS.md)) |
