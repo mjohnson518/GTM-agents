@@ -208,18 +208,55 @@ export async function runFitScoring(options: FitScoringOptions): Promise<FitScor
   return { scored, failed };
 }
 
-/** Provider-derived text about an account, for the fenced part of the prompt. Numbers and enums only from facts. */
-async function accountProfile(db: D1Database, account: string): Promise<string> {
+/** Technologies listed in the profile, at most. */
+const PROFILE_TECHNOLOGIES_MAX = 10;
+
+function jsonArray(raw: unknown): unknown[] {
+  if (typeof raw !== "string") return [];
+  try {
+    const value: unknown = JSON.parse(raw);
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+
+/** A comma-separated list of cleaned strings from a stored value, or null when nothing is left. */
+function profileList(values: unknown[], max: number, chars: number): string | null {
+  const items = values.map((v) => cleanProviderText(v, 60)).filter((v): v is string => v !== null).slice(0, max);
+  return items.length > 0 ? cleanProviderText(items.join(", "), chars) : null;
+}
+
+/**
+ * Provider-derived text about an account, for the fenced part of the prompt. Firmographic facts
+ * (with the researched funding, technologies, last round date and hiring functions), search
+ * snippets and contact titles. Every line here is third-party text and is only ever fenced.
+ */
+export async function accountProfile(db: D1Database, account: string): Promise<string> {
   const lines: string[] = [];
   const facts = await db
     .prepare(
-      `SELECT headcount_band, employees_count, hq_country, founded_year, sector, industry, company_type, funding_stage
+      `SELECT headcount_band, employees_count, hq_country, founded_year, sector, industry, company_type, funding_stage, raised_usd, technologies, attributes
          FROM account_facts WHERE account_key = ?1 AND status = 'found'`,
     )
     .bind(account)
     .first<Record<string, string | number | null>>();
   if (facts) {
-    for (const [key, value] of Object.entries(facts)) if (value !== null && value !== "") lines.push(`${key}: ${String(value)}`);
+    const { technologies, attributes, ...columns } = facts;
+    for (const [key, value] of Object.entries(columns)) if (value !== null && value !== "") lines.push(`${key}: ${String(value)}`);
+    const tech = profileList(jsonArray(technologies), PROFILE_TECHNOLOGIES_MAX, 400);
+    if (tech) lines.push(`technologies: ${tech}`);
+    let extra: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = typeof attributes === "string" ? JSON.parse(attributes) : {};
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) extra = parsed as Record<string, unknown>;
+    } catch {
+      // Unreadable attributes add nothing.
+    }
+    const lastRound = cleanProviderText(extra.last_round_date, 10);
+    if (lastRound && /^\d{4}-\d{2}-\d{2}$/.test(lastRound)) lines.push(`last_round_date: ${lastRound}`);
+    const hiring = profileList(Array.isArray(extra.hiring_functions) ? extra.hiring_functions : [], 5, 200);
+    if (hiring) lines.push(`hiring_functions: ${hiring}`);
   }
   const { results: snippets } = await db
     .prepare("SELECT result_title, snippet FROM candidates WHERE account_key = ?1 AND snippet IS NOT NULL ORDER BY created_at DESC LIMIT 3")

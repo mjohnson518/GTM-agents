@@ -18,6 +18,7 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 - Every candidate that ends rejected, borderline or duplicate records a reason code in `attributes.reject_reason`, and the weekly funnel digest counts rejections by reason, source and query ([docs/SOURCING.md](docs/SOURCING.md)).
 - The `data-exa` price table follows Exa's current list prices: $0.007 a request including 10 results, and $0.001 for each further result.
+- Account research, behind `enrichment:research_enabled`: the `account_research` job researches accounts through `data-exa` (Exa's Agent API) best prescore first, at most once a calendar month each, and fills `account_facts` only with fields a source is cited for, each with its URL; the fit score's profile adds funding raised, technologies, last round date and hiring functions. Effort `medium` ($0.10 a run) by default, `low` ($0.025) through the `researchEffort` option, 300 cents a day ([docs/SOURCING.md](docs/SOURCING.md#account-research)).
 
 ### Deploying
 

@@ -26,6 +26,8 @@ export const SOURCING_FLAGS = Object.freeze({
   fitEnabled: "fit:scoring_enabled",
   fitTopN: "fit:score_top_n",
   fitPerRun: "fit:score_per_run",
+  /** Account research: firmographic facts with a source URL each, from a company research source. */
+  researchEnabled: "enrichment:research_enabled",
 });
 
 /** Defaults and hard maximums for the per-run ceilings. The registry shows the same defaults. */

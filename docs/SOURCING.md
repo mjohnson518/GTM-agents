@@ -12,7 +12,7 @@ brain queries -> search -> candidates (raw) -> enrich -> qualify -> promote -> c
                                           verification
 ```
 
-Every weekday the discovery cycle searches with the queries in your brain, stores what it finds as candidates, finds the right person at each account and their work address, verifies the address, scores the candidate, and promotes the ones that pass every check to contacts with warmth `cold`. A nightly job prescores accounts for free, and an optional job asks a model to score account fit against your ICP. Everything is off until you turn it on, and every paid call is checked against the budget first.
+Every weekday the discovery cycle searches with the queries in your brain, stores what it finds as candidates, finds the right person at each account and their work address, verifies the address, scores the candidate, and promotes the ones that pass every check to contacts with warmth `cold`. A nightly job prescores accounts for free, an optional job asks a model to score account fit against your ICP, and another optional job researches each account's firmographics, keeping only the facts a source is cited for. Everything is off until you turn it on, and every paid call is checked against the budget first.
 
 What to look for never comes from code. Queries come from the brain's `keyword-portfolio` component and from rows you add to `discovery_queries`; who fits comes from `personas`; hard stops come from the `never` items of `icp` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)). Selling a different product means editing the brain, not this code.
 
@@ -170,7 +170,30 @@ Only keep is ever promoted. To accept a title variant, add it to the persona's `
 
 **Prescore** (`account_prescore`, daily at 04:00 UTC, `fit:prescore_enabled`) is free: it writes a 0 to 100 score to `account_fit` from data already held. Team size from contact count (up to 20), a decision maker (25) or senior people (15), persona roles covered (5 each, up to 15), a signal in the last 90 days (20 at severity 0.5 or more, otherwise 10), a deliverable contact (10) and firmographic facts on file (10). An account on the never list scores 0.
 
-**Fit score** (`account_fit_scoring`, every 15 minutes, `fit:scoring_enabled`) is optional. It scores the top `fit:score_top_n` accounts by prescore, `fit:score_per_run` per run, with the model role `classifier` (set `fitRole: "judge"` to use the judge role). The system prompt is fixed rubric text plus the brain's `fit` slice (the approved icp); provider text about the account (firmographic values, search snippets, contact titles) goes only in the user turn, inside the quarantine fence. The output is schema-bound: a 1 to 10 score, a segment, a team size, a confidence, up to three reasons and a disqualifier, which caps the score at 4. Accounts scored below 5 are not enriched further and join the search exclusion list. Scores refresh after 180 days; an account that fails three times is marked unreachable and keeps its prescore. A role with no model, or a model with no price in `models.pricing`, fails the run before any call.
+**Fit score** (`account_fit_scoring`, every 15 minutes, `fit:scoring_enabled`) is optional. It scores the top `fit:score_top_n` accounts by prescore, `fit:score_per_run` per run, with the model role `classifier` (set `fitRole: "judge"` to use the judge role). The system prompt is fixed rubric text plus the brain's `fit` slice (the approved icp); provider text about the account (firmographic values, including the researched funding raised, technologies, last round date and hiring functions; search snippets; contact titles) goes only in the user turn, inside the quarantine fence. The output is schema-bound: a 1 to 10 score, a segment, a team size, a confidence, up to three reasons and a disqualifier, which caps the score at 4. Accounts scored below 5 are not enriched further and join the search exclusion list. Scores refresh after 180 days; an account that fails three times is marked unreachable and keeps its prescore. A role with no model, or a model with no price in `models.pricing`, fails the run before any call.
+
+## Account research
+
+**Account research** (`account_research`, every 15 minutes, `enrichment:research_enabled`) is optional. It fills `account_facts` from a company research source (`data-exa`, through Exa's Agent API), so the prescore's facts points and the fit score's profile can use cited facts as well as search snippets. Research takes a while to arrive: a new account is often fit-scored before its research finishes, and its fit score is refreshed only after 180 days, so research mostly improves later scores and the prescore.
+
+A research run takes seconds to minutes, so each job run has two phases:
+
+- **Poll.** Runs in flight are read: `pending` rows with a run id, and `found` rows being refreshed. A finished run writes the kept fields and sets the row `found` when the provider's verdict is found and at least one field was kept, or `not_found` with every column empty when the verdict is not found or nothing was kept. A failed run, a run that could not inspect the site (verdict `cannot_verify`), or one still pending 24 hours after it started sets the row `failed` and adds an attempt.
+- **Start.** With the rows left in the run's budget (20 by default, polls included), it starts runs for accounts with no row, a `not_found` row older than 180 days, a `found` row older than 180 days (a refresh), or a `failed` row with fewer than 3 attempts and older than 7 days, best prescore first. Accounts on the brain's never list, accounts the model fit score put below 5, and accounts already started this calendar month are skipped. Each start asks the spend gate first, then claims `research:<account key>:<yyyy-mm>` in the effects ledger, so an account is paid for at most once a calendar month (UTC), whatever retries or reruns happen: a failed account is retried after 7 days, but never twice in the calendar month it was paid for. A 429, or a refusal for auth or quota, stops starting for the rest of the run. A timeout, a 5xx or a dropped connection keeps the claim and records the run's price, because the provider may have started the run.
+- **Refresh.** A `found` row stays `found`, with its columns, while its refresh runs, so the prescore and the fit profile keep seeing its facts. A refresh that comes back found replaces them; one that fails, cannot verify, finds nothing or times out keeps the old facts, records the error and counts a refresh attempt. After 3 failed refreshes the row is no longer refreshed automatically.
+
+What is stored, and the citation rule:
+
+| Field | Where |
+|---|---|
+| `employee_range` | `headcount_band` |
+| `employees_count`, `hq_country` (ISO 3166-1 alpha-2), `founded_year`, `industry`, `sector`, `company_type`, `funding_stage`, `raised_usd` | the column of the same name |
+| `technologies` (up to 10) | `technologies`, as a JSON array |
+| `last_round_date` (YYYY-MM-DD), `hiring_functions` (up to 5 of engineering, data, product, design, sales, marketing, customer_success, operations, finance, people, legal) | `attributes` |
+
+A field is stored only when the run grounds it with at least one http or https citation at medium or high confidence, and its value is valid (a founded year from 1800 to this year, a positive whole employee count, a two-letter country, a whole non-negative amount raised, a real date). A field with low or no stated confidence, no citation, or an invalid value is left empty and its name is listed in `attributes.dropped`. Each stored field's source is in `attributes.evidence` as `{ "<field>": { "url", "provider", "retrieved_at" } }`. The output schema and the system prompt are fixed in the adapter, the request names only the account's domain, and every stored value is cleaned like any provider text. It is read later only inside the quarantine fence.
+
+**Cost.** Effort `medium` costs $0.10 a run; set the `data-exa` option `researchEffort: "low"` for $0.025 a run. Other efforts are refused when the adapter is created, because only these two have a fixed price that can be reserved before a run. A start records the effort's price before its row is written; when a finished run reports a higher cost, only the difference is recorded. The cap is checked before each start, so a day can exceed it by at most one run's price. The job's cap is 300 cents a day (30 runs at `medium`); 200 accounts a month cost about $20 at `medium` and $5 at `low`.
 
 ## Jobs
 
@@ -179,8 +202,9 @@ Only keep is ever promoted. To accept a title variant, add it to the persona's `
 | `discovery_cycle` | `0 9 * * MON-FRI` | `discovery:enabled` | 10 minutes, 500 new rows, 300 cents a day |
 | `account_prescore` | `0 4 * * *` | `fit:prescore_enabled` | 2 minutes, 5,000 accounts, no spend |
 | `account_fit_scoring` | `*/15 * * * *` | `fit:scoring_enabled` | 5 minutes, 100 accounts, 100 cents a day |
+| `account_research` | `*/15 * * * *` | `enrichment:research_enabled` | 10 minutes, 20 rows (polls and starts), 300 cents a day |
 
-Change the schedules and caps with `createSourcingJobs({ adapters, options: { discoverySchedule, prescoreSchedule, fitSchedule, discoveryMaxSpendCents, fitMaxSpendCents, peoplePerAccount, fitRole } })`. Schedules use named days, and a model schedule that fires more often than every 15 minutes is refused. The job runner checks the halt, the job's flag and its budget before each run and leaves a run row either way; each job also re-reads its own flag, so calling `run()` with the flag off does nothing.
+Change the schedules and caps with `createSourcingJobs({ adapters, options: { discoverySchedule, prescoreSchedule, fitSchedule, researchSchedule, discoveryMaxSpendCents, fitMaxSpendCents, researchMaxSpendCents, peoplePerAccount, fitRole } })`. Account research runs only when `adapters` returns a `research` source. Schedules use named days, and a model schedule that fires more often than every 15 minutes is refused. The job runner checks the halt, the job's flag and its budget before each run and leaves a run row either way; each job also re-reads its own flag, so calling `run()` with the flag off does nothing.
 
 ## Flags
 
@@ -199,6 +223,7 @@ Change the schedules and caps with `createSourcingJobs({ adapters, options: { di
 | `fit:scoring_enabled` | `false` | The model fit score |
 | `fit:score_top_n` | `1000` (max 10,000) | Accounts in scope for the fit score |
 | `fit:score_per_run` | `20` (max 100) | Accounts scored per run |
+| `enrichment:research_enabled` | `false` | Account research |
 
 Reads fail closed: a boolean flag that cannot be read is off; a ceiling that cannot be read or does not parse as a whole number is 0, so that stage does nothing that run.
 
@@ -212,10 +237,11 @@ A rough day at the defaults, with the two shipped adapters: 5 searches, then for
 
 | Adapter | Ports | Secret | Options (`adapters.<name>.options` in `gtm.config.ts`) |
 |---|---|---|---|
-| `data-exa` | DiscoverySource (`search` here; websets, news, find-similar and monitors for [SIGNALS.md](SIGNALS.md)) | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400); for websets, `websetEmail` (`true`) and `creditUsd` (0.006) |
+| `data-exa` | DiscoverySource (`search` here; websets, news, find-similar and monitors for [SIGNALS.md](SIGNALS.md)), and company research | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400); for websets, `websetEmail` (`true`) and `creditUsd` (0.006); for account research, `researchEffort` (`medium`, or `low`) |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | `HUNTER_API_KEY` | `baseUrl`, `usdPerCredit` (0.025) |
 
 - **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.007 a request including up to 10 results, $0.001 for each result asked for beyond 10, and $0.001 per result for highlights).
+- **data-exa** also researches companies through the Agent API (`POST /agent/runs`, then `GET /agent/runs/{id}`), with the fixed output schema and the citation rule above. It reports the run's reported cost, or the effort's fixed price when none is reported.
 - **data-hunter** finds addresses (`/email-finder`), verifies them (`/email-verifier`) and lists named people at a domain (`/domain-search`, personal addresses only). Its statuses map as: `valid` to deliverable; `invalid` and `disposable` to undeliverable; `accept_all` and `webmail` to risky; `unknown`, and anything unrecognized, to unknown. A verification still in progress is a retryable error; a person who asked the vendor not to process their data comes back as unknown from the verifier and as no address from the finder. Costs are in credits (1 per address found, 0.5 per verification, 1 per ten addresses listed) times `usdPerCredit`.
 
 Neither adapter is offered to an agent as a tool; they are used only by these jobs and the signal jobs. `data-hunter` declares no tools, and `data-exa`'s manifest classifies its calls as full-taint egress tools so the security contract covers them ([INTERFACES.md](INTERFACES.md#how-adapters-become-tools)).

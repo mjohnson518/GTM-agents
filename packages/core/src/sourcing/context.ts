@@ -1,7 +1,7 @@
 // GTM-agents: what every sourcing stage receives: the database, flags, brain, spend gate and adapters.
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import type { ContactFinder, EmailVerifier } from "../ports/contact.ts";
-import type { DiscoverySource, PeopleProvider } from "../ports/discovery.ts";
+import type { CompanyResearchSource, DiscoverySource, PeopleProvider } from "../ports/discovery.ts";
 import type { ModelGateway } from "../ports/model.ts";
 import type { SourcingBrain } from "./brain.ts";
 import type { SpendGate } from "./spend.ts";
@@ -18,6 +18,8 @@ export interface SourcingAdapters {
   verifier?: EmailVerifier;
   /** The model gateway, for the optional account fit score. */
   model?: ModelGateway;
+  /** Company research, for the optional account research job. Without it, the job does nothing. */
+  research?: CompanyResearchSource;
 }
 
 export interface StageContext {

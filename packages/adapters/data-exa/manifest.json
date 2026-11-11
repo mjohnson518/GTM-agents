@@ -1,16 +1,17 @@
 {
   "name": "data-exa",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "ports": ["DiscoverySource"],
-  "capabilities": ["watch", "find_similar", "news", "monitor"],
+  "capabilities": ["watch", "find_similar", "news", "monitor", "company_research"],
   "requiredSecrets": ["EXA_API_KEY"],
   "optionalSecrets": [],
-  "flags": ["discovery:enabled", "signals:websets_enabled", "signals:monitors_enabled", "signals:news_enabled", "signals:lookalikes_enabled"],
+  "flags": ["discovery:enabled", "signals:websets_enabled", "signals:monitors_enabled", "signals:news_enabled", "signals:lookalikes_enabled", "enrichment:research_enabled"],
   "tools": {
     "exa_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" },
     "exa_webset_items": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" },
     "exa_find_similar": { "taint": "full", "gate": "metadata", "egress": "url", "rateCategory": "exa" },
-    "exa_news_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" }
+    "exa_news_search": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" },
+    "exa_company_research": { "taint": "full", "gate": "metadata", "egress": "query", "rateCategory": "exa" }
   },
   "costs": {
     "search": { "usd": 0.007, "per": "request of up to 10 results" },
@@ -20,7 +21,9 @@
     "news": { "usd": 0.007, "per": "request of up to 10 results" },
     "webset_item": { "credits": 10, "per": "webset item that matches every criterion (dollars per credit set by the creditUsd option)" },
     "webset_email": { "credits": 5, "per": "email enrichment returned on a webset item" },
-    "monitor_run": { "usd": 0.002, "per": "monitor run, billed by the provider on its own schedule" }
+    "monitor_run": { "usd": 0.002, "per": "monitor run, billed by the provider on its own schedule" },
+    "research_medium": { "usd": 0.1, "per": "company research run at effort medium (the default)" },
+    "research_low": { "usd": 0.025, "per": "company research run at effort low (the researchEffort option)" }
   },
   "limits": { "perSecond": 5 },
   "webhook": { "path": "/api/webhooks/search/:key", "signature": "exa-signature-hmac-sha256" },

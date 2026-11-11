@@ -272,6 +272,40 @@ export interface CompanyProvider {
 }
 ```
 
+### CompanyResearchSource
+
+Asynchronous company research, beside the ports in `packages/core/src/ports/discovery.ts` (optional capability `company_research`; `data-exa` implements it). The account research job starts a run in one job run and reads it in a later one ([SOURCING.md](SOURCING.md#account-research)). The adapter owns the output schema and the citation rule: it keeps a field only when the provider cites an http or https source for it at medium or high confidence and the value is valid, puts every kept value in `attributes` under its field name, gives each kept field exactly one `FieldEvidence`, and names every other field the provider returned in `dropped`. The request names only the company's domain. Core cleans every value again before storage and stores nothing without a source URL.
+
+```ts
+export const RESEARCH_FIELDS = ["employee_range", "employees_count", "hq_country", "founded_year", "industry", "sector",
+  "company_type", "funding_stage", "last_round_date", "raised_usd", "technologies", "hiring_functions"] as const;
+export type ResearchField = (typeof RESEARCH_FIELDS)[number];
+
+export interface FieldEvidence extends Evidence {
+  field: ResearchField;
+  url: string;                           // http or https
+}
+
+export interface CompanyResearchRecord extends CompanyRecord {
+  evidence: FieldEvidence[];             // one per kept field
+  verdict: "found" | "not_found" | "cannot_verify";
+}
+
+export type CompanyResearchRead =
+  | { status: "pending" }
+  | { status: "failed"; reason: string; cost?: Cost }
+  | { status: "done"; record: CompanyResearchRecord | null; dropped: ResearchField[]; cost: Cost };
+
+export interface CompanyResearchSource {
+  readonly name: string;
+  startCompanyResearch(args: { domain: string; name?: string }): Promise<{ runId: string; cost: Cost }>;
+  readCompanyResearch(runId: string): Promise<CompanyResearchRead>;
+  startCost(): Cost;                      // what one start is expected to bill
+}
+```
+
+`startCost` is what core records when a start fails in a way that may still have created a run (a timeout, a 5xx, an unreadable reply). `startCompanyResearch` reports the cost the run is expected to bill (a fixed price the job can reserve); `readCompanyResearch` reports the run's actual cost when the provider gives one, and core records only what exceeds what the start recorded. A 429 is a retryable `AdapterError` with code `rate_limited`, and a run the provider no longer has is `not_found`.
+
 ### ContactFinder and EmailVerifier
 
 The email waterfall calls finders in the configured order until one returns a usable address (the second and later finders only while `discovery:email_waterfall_enabled` is on), then verifies it ([SOURCING.md](SOURCING.md)). Verification semantics (cache lifetimes, confidence grades, the cold floor) belong to core. The adapter maps the vendor's vocabulary onto four statuses and nothing else.
@@ -716,7 +750,7 @@ runBillingProviderContract(create, fixtures)      // _contract/billing-provider.
 runCalendarProviderContract(create, fixtures)     // _contract/calendar-provider.ts; the request asks for no title or description
 runCodeHostContract(create, fixtures)             // _contract/code-host.ts; one idempotent commit, never the base branch, a force or a merge; path kinds, containment, push refusal
 runCodingSandboxContract(fixtures)                // _contract/coding-sandbox.ts; a fake container: internet off, no secret inside, limits enforced
-// SignalSource, PeopleProvider, CompanyProvider and CrmSink have no shared runner: an adapter tests
+// SignalSource, PeopleProvider, CompanyProvider, CompanyResearchSource and CrmSink have no shared runner: an adapter tests
 // them in its own contract.test.ts, with the same recordedFetch and testContext.
 ```
 
@@ -733,7 +767,7 @@ The adapters in `packages/adapters/`, each with a hermetic contract test, and th
 | `inbox-gmail` | InboxProvider | Reading, draft mirroring, approved reply sends, push watch when configured. Available |
 | `email-cloudflare` | InboxProvider (inbound routing only) | Receives mail sent to the agent's domain through Cloudflare Email Routing and normalizes it; no sending. Available |
 | `operator-telegram` | OperatorChannel | Secret-token webhook, inline keyboards, callback digests. Available |
-| `data-exa` | DiscoverySource | `search`, `watch` (websets), search monitors (signed deliveries), `find_similar` and dated news. Available |
+| `data-exa` | DiscoverySource | `search`, `watch` (websets), search monitors (signed deliveries), `find_similar`, dated news and `company_research` (CompanyResearchSource, through the Agent API). Available |
 | `data-jobboards` | SignalSource, and `HiringBoardSource` from `@gtm-agents/core/signals` | Public Greenhouse, Lever and Ashby board JSON from their documented hosts only; returns role-kind counts, never titles. No key. Available |
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Planned. Many providers behind one gateway, with spend bounded by core's budget gate |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |

@@ -1,20 +1,23 @@
 // GTM-agents: the sourcing jobs a deployment registers.
 //
-//   createSourcingJobs({ adapters: (env) => ({ sources, people, finders, verifier, model }) })
+//   createSourcingJobs({ adapters: (env) => ({ sources, people, finders, verifier, model, research }) })
 //
-// returns three job definitions for the job registry:
+// returns four job definitions for the job registry:
 //   - discovery_cycle      weekdays 09:00 UTC, flag discovery:enabled: search, enrich, qualify,
 //                          promote. Paid calls are capped by ceilings.maxSpendCents per day;
 //   - account_prescore     daily 04:00 UTC, flag fit:prescore_enabled: the free 0 to 100 prescore;
 //   - account_fit_scoring  every 15 minutes, flag fit:scoring_enabled: the optional model fit score.
 //                          Model calls never run in a per-minute job, so a schedule that fires more
-//                          often than every 15 minutes is refused.
+//                          often than every 15 minutes is refused;
+//   - account_research     every 15 minutes, flag enrichment:research_enabled: company research runs
+//                          started and read (enrichment/research.ts), 20 rows and 300 cents a day.
 // Every flag defaults off, so registering the jobs changes nothing until the operator turns them
 // on. The job runner checks the halt, the flag and the budget before a run; each job re-reads its
 // own flag as well (failing closed), so calling run() directly with the flag off does nothing.
 // Adapters are built per run from the environment, so secrets are read when a job runs, not at
 // import time.
 import type { KVReader } from "../brain/load.ts";
+import { runAccountResearch, summarizeResearch } from "../enrichment/research.ts";
 import { parseCron } from "../jobs/cron.ts";
 import { defineJob, type JobContext, type RegisteredJob } from "../jobs/registry.ts";
 import { runFitScoring } from "../scoring/fit.ts";
@@ -28,6 +31,7 @@ import { createSpendGate } from "./spend.ts";
 export const DISCOVERY_JOB = "discovery_cycle";
 export const PRESCORE_JOB = "account_prescore";
 export const FIT_JOB = "account_fit_scoring";
+export const RESEARCH_JOB = "account_research";
 
 /** The bindings the sourcing jobs read. A deployment's Env satisfies it. */
 export interface SourcingEnv {
@@ -39,10 +43,13 @@ export interface SourcingJobOptions {
   discoverySchedule: string;
   prescoreSchedule: string;
   fitSchedule: string;
+  researchSchedule: string;
   /** Daily spend cap for the discovery cycle, in cents. */
   discoveryMaxSpendCents: number;
   /** Daily spend cap for model fit scoring, in cents. */
   fitMaxSpendCents: number;
+  /** Daily spend cap for account research, in cents (30 runs at effort medium). */
+  researchMaxSpendCents: number;
   /** People kept per account candidate (the best one, plus this many minus one as new candidates). */
   peoplePerAccount: number;
   /** The model role fit scoring asks for. */
@@ -53,8 +60,10 @@ export const DEFAULT_SOURCING_JOB_OPTIONS: Readonly<SourcingJobOptions> = Object
   discoverySchedule: "0 9 * * MON-FRI",
   prescoreSchedule: "0 4 * * *",
   fitSchedule: "*/15 * * * *",
+  researchSchedule: "*/15 * * * *",
   discoveryMaxSpendCents: 300,
   fitMaxSpendCents: 100,
+  researchMaxSpendCents: 300,
   peoplePerAccount: 2,
   fitRole: "classifier",
 });
@@ -164,5 +173,30 @@ export function createSourcingJobs<E extends SourcingEnv>(deps: SourcingDeps<E>)
     },
   });
 
-  return [discovery, prescore, fit];
+  const research = defineJob<E>({
+    name: RESEARCH_JOB,
+    schedule: options.researchSchedule,
+    flag: SOURCING_FLAGS.researchEnabled,
+    ceilings: { maxDurationMs: 600_000, maxRows: 20, maxSpendCents: options.researchMaxSpendCents },
+    rerunnable: true,
+    async run(ctx: JobContext<E>) {
+      if (!(await readFlagOn(ctx.flags, SOURCING_FLAGS.researchEnabled))) return { summary: "flag off" };
+      const source = deps.adapters(ctx.env).research;
+      if (!source) return { summary: "no company research source configured" };
+      const brain = await loadSourcingBrain(ctx.env.KV);
+      if (brain.degraded) return { summary: "skipped: the brain could not be read whole" };
+      const gate = createSpendGate({
+        db: ctx.env.DB,
+        flags: ctx.flags,
+        job: ctx.job,
+        ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+        jobCapCents: options.researchMaxSpendCents,
+        log: ctx.log,
+      });
+      const result = await runAccountResearch({ db: ctx.env.DB, source, brain, gate, now: ctx.now, maxRows: ctx.ceilings.maxRows ?? 20, log: ctx.log, signal: ctx.signal });
+      return { summary: summarizeResearch(result), rows: result.polled + result.started };
+    },
+  });
+
+  return [discovery, prescore, fit, research];
 }

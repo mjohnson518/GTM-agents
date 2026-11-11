@@ -7,7 +7,7 @@ import { FLAGS, findFlag } from "../src/flags/registry.ts";
 import { createJobRegistry, type JobContext, type RegisteredJob } from "../src/jobs/registry.ts";
 import { runOneJob } from "../src/jobs/loop.ts";
 import { createJobRunner } from "../src/runtime/job-runner.ts";
-import { DISCOVERY_JOB, FIT_JOB, PRESCORE_JOB, createSourcingJobs } from "../src/sourcing/jobs.ts";
+import { DISCOVERY_JOB, FIT_JOB, PRESCORE_JOB, RESEARCH_JOB, createSourcingJobs } from "../src/sourcing/jobs.ts";
 import { SOURCING_FLAGS, SOURCING_LIMITS, readCeiling, readPromotionPolicy } from "../src/sourcing/flags.ts";
 import type { SourcingAdapters } from "../src/sourcing/context.ts";
 import { acmeConfig } from "./fixtures.ts";
@@ -41,22 +41,25 @@ function run(job: RegisteredJob<TestEnv>, flags: ReturnType<typeof flagsOf>) {
 }
 
 describe("createSourcingJobs", () => {
-  it("returns three jobs with named-day schedules, flags and ceilings", () => {
+  it("returns four jobs with named-day schedules, flags and ceilings", () => {
     const jobs = createSourcingJobs<TestEnv>({ adapters: () => ({ sources: [], finders: [] }) });
     const registry = createJobRegistry(jobs);
     expect(jobs.map((j) => [j.name, j.schedule, j.flag])).toEqual([
       [DISCOVERY_JOB, "0 9 * * MON-FRI", "discovery:enabled"],
       [PRESCORE_JOB, "0 4 * * *", "fit:prescore_enabled"],
       [FIT_JOB, "*/15 * * * *", "fit:scoring_enabled"],
+      [RESEARCH_JOB, "*/15 * * * *", "enrichment:research_enabled"],
     ]);
     expect(jobs[0]?.ceilings).toMatchObject({ maxSpendCents: 300, maxRows: 500 });
     expect(jobs[2]?.ceilings.maxSpendCents).toBe(100);
+    expect(jobs[3]?.ceilings).toMatchObject({ maxSpendCents: 300, maxRows: 20 });
+    // Fit scoring and account research share one cron expression.
     expect(registry.schedules()).toHaveLength(3);
   });
 
   it("registers every flag the jobs read, each defaulting off or to a conservative ceiling", () => {
     for (const key of Object.values(SOURCING_FLAGS)) expect(findFlag(key), key).toBeDefined();
-    for (const key of [SOURCING_FLAGS.enabled, SOURCING_FLAGS.prescoreEnabled, SOURCING_FLAGS.fitEnabled, SOURCING_FLAGS.waterfall]) expect(findFlag(key)?.default).toBe("false");
+    for (const key of [SOURCING_FLAGS.enabled, SOURCING_FLAGS.prescoreEnabled, SOURCING_FLAGS.fitEnabled, SOURCING_FLAGS.waterfall, SOURCING_FLAGS.researchEnabled]) expect(findFlag(key)?.default).toBe("false");
     expect(findFlag(SOURCING_FLAGS.promotionPolicy)?.default).toBe("strict");
     expect(findFlag(SOURCING_FLAGS.searchesPerCycle)?.default).toBe(String(SOURCING_LIMITS.searchesPerCycle.default));
     expect(new Set(FLAGS.map((f) => f.key)).size).toBe(FLAGS.length);
@@ -85,6 +88,7 @@ describe("createSourcingJobs", () => {
     expect(rows.results).toEqual([
       { task_name: FIT_JOB, status: "skipped", summary: "flag off" },
       { task_name: PRESCORE_JOB, status: "skipped", summary: "flag off" },
+      { task_name: RESEARCH_JOB, status: "skipped", summary: "flag off" },
       { task_name: DISCOVERY_JOB, status: "skipped", summary: "flag off" },
     ]);
   });

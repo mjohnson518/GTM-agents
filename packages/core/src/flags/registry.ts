@@ -54,6 +54,7 @@ export const FLAGS: readonly FlagDefinition[] = [
   { key: "fit:scoring_enabled", kind: "boolean", default: "false", description: "Model fit scoring for accounts." },
   { key: "fit:score_top_n", kind: "number", default: "1000", description: "Accounts in scope for fit scoring." },
   { key: "fit:score_per_run", kind: "number", default: "20", description: "Accounts scored per run." },
+  { key: "enrichment:research_enabled", kind: "boolean", default: "false", description: "Account research (account_research, every 15 minutes): a company research run per account, best prescore first, skipping never-list and low-fit accounts, at most once a month each; each stored firmographic field carries a source URL (docs/SOURCING.md). Paid per run; the daily cap is the job's maxSpendCents. Off, or unreadable, nothing is started or read." },
   { key: "fit:prescore_enabled", kind: "boolean", default: "false", description: "The free nightly account prescore (0 to 100) from data already held." },
   { key: "discovery:enabled", kind: "boolean", default: "false", description: "Master switch for the discovery cycle: search, enrich, qualify and promote." },
   { key: "discovery:searches_per_cycle", kind: "number", default: "5", description: "Paid searches per discovery cycle (at most 25)." },

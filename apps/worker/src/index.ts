@@ -56,11 +56,13 @@ const calendar = (env: Env) => createGoogleCalendar(context(env, "calendar-googl
 // approval digest, send window, caps, circuit breaker) runs inside it.
 const sendOutreach = (env: Env) => createOutreachSender(senderDepsFromEnv(env, { config, provider: email(env), operator: operator(env) }));
 
-// Sourcing and enrichment: discovery, the email waterfall, prescore and fit scoring.
+// Sourcing and enrichment: discovery, the email waterfall, prescore, fit scoring and account research
+// (enrichment:research_enabled; the research effort is the data-exa researchEffort option).
 const sourcing = createSourcingJobs<Env>({
   adapters(env) {
     const hunter = createHunter(context(env, "data-hunter"));
-    return { sources: [createExa(context(env, "data-exa"))], people: hunter, finders: [hunter], verifier: hunter, model: model(env) };
+    const exa = createExa(context(env, "data-exa"));
+    return { sources: [exa], people: hunter, finders: [hunter], verifier: hunter, model: model(env), research: exa };
   },
 });
 

@@ -1,7 +1,7 @@
 // GTM-agents: the sourcing module's public surface: the discovery cycle and its stages, identity
 // rules, the typed brain items sourcing reads, the spend gate and the job factory.
 // docs/SOURCING.md describes how it works and how to deploy it.
-export { DEFAULT_SOURCING_JOB_OPTIONS, DISCOVERY_JOB, FIT_JOB, PRESCORE_JOB, createSourcingJobs } from "./jobs.ts";
+export { DEFAULT_SOURCING_JOB_OPTIONS, DISCOVERY_JOB, FIT_JOB, PRESCORE_JOB, RESEARCH_JOB, createSourcingJobs } from "./jobs.ts";
 export type { SourcingDeps, SourcingEnv, SourcingJobOptions } from "./jobs.ts";
 export type { SourcingAdapters, StageContext } from "./context.ts";
 export { runDiscoveryCycle, summarizeCycle } from "./cycle.ts";

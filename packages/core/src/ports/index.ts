@@ -1,17 +1,23 @@
 // GTM-agents: public entry point for the port interfaces and the adapter manifest schema.
 export { AdapterError, TAINT_LEVELS } from "./types.ts";
 export type { AdapterContext, AdapterErrorCode, AdapterLogger, BilledUsage, Cost, Evidence, Page, TaintLevel } from "./types.ts";
-export { SIGNAL_TYPES } from "./discovery.ts";
+export { RESEARCH_FIELDS, RESEARCH_HIRING_FUNCTIONS, SIGNAL_TYPES } from "./discovery.ts";
 export type {
   Candidate,
   CompanyProvider,
   CompanyRecord,
+  CompanyResearchRead,
+  CompanyResearchRecord,
+  CompanyResearchSource,
   DiscoveryQuery,
   DiscoverySource,
+  FieldEvidence,
   PeopleProvider,
   PersonFilters,
   PersonRecord,
   ResearchDossier,
+  ResearchField,
+  ResearchHiringFunction,
   Signal,
   SignalSource,
   SignalType,
