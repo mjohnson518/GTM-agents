@@ -2,7 +2,8 @@
 //
 // A message runs the same hub turn as the operator chat (agents/hub.ts): the same tools, taint rules,
 // budgets and turn ceiling, in a session of its own per operator email. It runs only while
-// operator:agent_enabled is on. /clean, /status and /help work as in the chat. Every other command
+// operator:agent_enabled is on. /clean, /status, /notes and /help work as in the chat; notes are shared
+// with the operator chat, and with operator:notes_enabled on a turn here reads and saves them too. Every other command
 // (release, sequence, meeting, autonomy, experiment, lifecycle follow-up and learning commands, and
 // any command an optional module contributed) does not run here and never reaches the model: it
 // stays in the operator chat, where it is shown with its code. An autonomy proposal is dismissed
@@ -23,7 +24,7 @@ import { parseConvertCommand } from "../convert/commands.ts";
 import { parseExperimentCommand } from "../experiments/commands.ts";
 import { parseLearningCommand } from "../learning/commands.ts";
 import { parseFollowupCommand } from "../lifecycle/followup-commands.ts";
-import { AGENT_DISABLED_TEXT, isAgentEnabled } from "../operator/access.ts";
+import { AGENT_DISABLED_TEXT, isAgentEnabled, isNotesEnabled } from "../operator/access.ts";
 import { requestDraftApproval } from "../operator/approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand } from "../operator/commands.ts";
 import { matchModuleCommand, moduleHelpLines } from "../operator/module-commands.ts";
@@ -33,7 +34,7 @@ import { ChatStream } from "./chat-stream.ts";
 import { RpcError, type GatewayContext, type Handler } from "./context.ts";
 import { tryBuild } from "./wiring.ts";
 
-const BASIC_COMMANDS = new Set(["clean", "status", "help", "start"]);
+const BASIC_COMMANDS = new Set(["clean", "status", "help", "start", "notes"]);
 
 export function dashboardChatId(email: string): string {
   return `dashboard:${email}`;
@@ -98,7 +99,7 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
         if (!BASIC_COMMANDS.has(command.name)) return finish(ctx, turnId, `/${command.name} runs from the operator chat or its own view here. Nothing was run.`, "completed");
         try {
           const reply = await runCommand(
-            { db: ctx.env.DB, agentName: ctx.wiring.config.agent.name, strategistModel: ctx.wiring.config.models.roles.strategist, moduleHelpLines: moduleHelpLines(ctx.wiring.commands), now: ctx.now },
+            { db: ctx.env.DB, agentName: ctx.wiring.config.agent.name, strategistModel: ctx.wiring.config.models.roles.strategist, moduleHelpLines: moduleHelpLines(ctx.wiring.commands), flags: ctx.flags, now: ctx.now },
             command,
             session,
           );
@@ -118,6 +119,7 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
   ctx.turns.set(turnId, { controller, email: ctx.state.email });
   ctx.audit.kind = "turn";
   const live = model.stream ? new ChatStream({ turnId, push: ctx.push, signal: controller.signal }) : null;
+  const notes = await isNotesEnabled(ctx.flags);
   ctx.defer(
     (async () => {
       try {
@@ -131,6 +133,7 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
             ...(ctx.wiring.agent.fetch ? { fetch: ctx.wiring.agent.fetch } : {}),
             ...(ctx.wiring.agent.maxRounds !== undefined ? { maxRounds: ctx.wiring.agent.maxRounds } : {}),
             ...(ctx.wiring.agent.maxTokens !== undefined ? { maxTokens: ctx.wiring.agent.maxTokens } : {}),
+            ...(notes ? { notes: true } : {}),
             now: ctx.now,
           },
           { ...session, text, signal: controller.signal, ...(live ? { onText: (piece: string, round: number) => live.text(piece, round) } : {}) },

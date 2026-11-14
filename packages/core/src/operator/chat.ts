@@ -44,7 +44,8 @@
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest. Each message of the run is
 //     claimed on its own before the turn, and one claimed already (a redelivery) is left out.
-//     While operator:timers_enabled is on, the turn is offered timer_set.
+//     While operator:timers_enabled is on, the turn is offered timer_set, and while
+//     operator:notes_enabled is on, note_save and notes_read with the saved notes loaded.
 // A message the operator_timers job queued (it carries a timerId) is a timer's turn, and takes none
 // of the routes above: it always runs alone, its text is never read, and it is never matched as a
 // command. The consumer reads the timer's row, checks it can still fire (still waiting, its operator
@@ -63,7 +64,7 @@ import { runHubTurn, type AgentLogger } from "../agents/hub.ts";
 import { STORED_MESSAGE_MAX_CHARS } from "../agents/sessions.ts";
 import { claimEffect } from "../events/effects.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
-import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled, isTimersEnabled } from "./access.ts";
+import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled, isNotesEnabled, isTimersEnabled } from "./access.ts";
 // Timers: later turns the agent set for itself (docs/OPERATOR.md#timers).
 import { loadTimer, minuteUtc, timerEffectKey, timerTurnText, transitionTimer, type TimerStatus } from "../agents/timers.ts";
 import { requestDraftApproval } from "./approvals.ts";
@@ -598,6 +599,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
     }
     if (claimed.length === 0) return;
     const timersOn = options.timers === true && (await isTimersEnabled(flags));
+    const notesOn = await isNotesEnabled(flags);
     const turn = await runHubTurn(
       {
         db: env.DB,
@@ -611,6 +613,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
         ...(options.now ? { now: options.now } : {}),
         logger: log,
         ...(timersOn ? { timers: { userId: message.userId } } : {}),
+        ...(notesOn ? { notes: true } : {}),
       },
       { ...session, text: claimed.map((m) => m.text).join(CHAT_RUN_SEPARATOR) },
     );
@@ -715,6 +718,7 @@ async function processTimerRun<E extends Env>(options: OperatorAgentOptions<E>, 
         // A timer carrying taint cannot re-arm itself: its turn is not offered timer_set, so text a
         // note picked up from a record can never keep scheduling turns. A clean timer's turn can.
         ...(timer.taint === "none" && options.timers === true ? { timers: { userId: timer.userId } } : {}),
+        ...((await isNotesEnabled(flags)) ? { notes: true } : {}),
       },
       { sessionKey: timer.sessionKey, chatId: timer.chatId, text: timerTurnText(timer), taintFloor: timer.taint, requireClearedAt: timer.sessionClearedAt },
     );

@@ -5,7 +5,9 @@
 // (gate never, egress url), contacts_search is metadata (gate never), drafts_create is taint none,
 // gate full. The dispatcher reads only those classes, so a definition here can never loosen a gate.
 // timer_set (taint none, gate full) is not one of the three: the hub offers it only in operator
-// chat turns while operator:timers_enabled is on (agents/hub.ts, HubAgentDeps.timers).
+// chat turns while operator:timers_enabled is on (agents/hub.ts, HubAgentDeps.timers). note_save
+// (taint none, gate full) and notes_read (taint none, gate never, reporting the notes' own taint) are
+// offered while operator:notes_enabled is on (HubAgentDeps.notes).
 import type { ToolHandler } from "../runtime/dispatcher.ts";
 import { contactsSearchDefinition, createContactsSearchHandler } from "./contacts-search.ts";
 import { createDraftsCreateHandler, draftsCreateDefinition, type CreatedDraft } from "./drafts-create.ts";
@@ -45,6 +47,8 @@ export { CONTACTS_SEARCH_MAX_QUERY, CONTACTS_SEARCH_MAX_ROWS, contactsSearchDefi
 export { CHAT_DRAFT_KINDS, DRAFT_BODY_MAX_CHARS, DRAFT_SUBJECT_MAX_CHARS, createDraftsCreateHandler, draftsCreateDefinition, newDraftId } from "./drafts-create.ts";
 export type { ChatDraftKind, CreatedDraft, DraftsCreateDeps } from "./drafts-create.ts";
 export { createTimerSetHandler, resolveTimerDue, timerSetDefinition } from "./timer-set.ts";
+export { createNoteSaveHandler, createNotesReadHandler, noteSaveDefinition, notesReadDefinition } from "./notes.ts";
+export type { NoteToolDeps } from "./notes.ts";
 export type { TimerSetDeps } from "./timer-set.ts";
 export { WEB_FETCH_MAX_BYTES, WEB_FETCH_MAX_REDIRECTS, WEB_FETCH_TIMEOUT_MS, createWebFetchHandler, fetchableUrl, htmlToText, webFetchDefinition } from "./web-fetch.ts";
 export type { WebFetchOptions } from "./web-fetch.ts";

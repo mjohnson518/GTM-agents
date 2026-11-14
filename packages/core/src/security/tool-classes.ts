@@ -69,6 +69,9 @@ export const CORE_TOOL_CLASSES: Readonly<Record<string, ToolClass>> = deepFreeze
   drafts_list: { taint: "metadata", gate: "never" },
   task_list: { taint: "metadata", gate: "never" },
   task_get: { taint: "metadata", gate: "never" },
+  // Saved notes, which tainted sessions may write. The handler also reports the notes' own taint, so
+  // a note saved at structured raises the reader to structured.
+  notes_read: { taint: "metadata", gate: "never" },
 
   // Reads of the deployment's own data: operator-written content, counts and status.
   contacts_stats: { taint: "none", gate: "never" },
@@ -99,6 +102,9 @@ export const CORE_TOOL_CLASSES: Readonly<Record<string, ToolClass>> = deepFreeze
   // A later turn in the same session, which starts at least as tainted as the session was when the
   // timer was set; refused once a page was read, so a page can never schedule work.
   timer_set: { taint: "none", gate: "full" },
+  // A note later sessions see, which keeps the saving session's taint (agents/notes.ts): only notes
+  // saved with no taint load into turns on their own. Refused once a page was read.
+  note_save: { taint: "none", gate: "full" },
 
   // Outward actions and durable shared state: sends, approvals, launches, queue control,
   // documents, workflows. Refused at structured taint and above.

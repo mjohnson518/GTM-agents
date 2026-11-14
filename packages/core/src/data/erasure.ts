@@ -206,10 +206,12 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     db.prepare(`DELETE FROM drafts WHERE ${addressIn("recipient_email")}`).bind(addresses),
     db.prepare(`DELETE FROM deferred_sends WHERE ${addressIn("recipient_email")}`).bind(addresses),
     db.prepare(`DELETE FROM referrals WHERE ${addressIn("referee_email")}`).bind(addresses),
-    // Operator chat history can quote an address; drop any message that mentions one of them, and
-    // any timer whose note does (a deleted timer never fires: its queued message finds no row).
+    // Operator chat history can quote an address; drop any message that mentions one of them, any
+    // timer whose note does (a deleted timer never fires: its queued message finds no row), and any
+    // saved note that does.
     db.prepare("DELETE FROM chat_messages WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(content), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM operator_timers WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(note), value) > 0)").bind(addresses),
+    db.prepare("DELETE FROM operator_notes WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(text), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM email_verifications WHERE email_sha256 IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([fields.email_sha256, ...hashes.map(([h]) => h)])),
     // Calendar sync: a meeting that belongs to someone else stays theirs and loses the person's
     // attendee entry and contact id; events linked to their contact or still holding one of their

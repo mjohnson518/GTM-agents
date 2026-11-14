@@ -1,5 +1,5 @@
 // GTM-agents: the agents module's public surface: the hub agent's chat turn, its system prompt, the
-// chat sessions that carry taint and history across turns, and the timers a turn can set. Test doubles live in
+// chat sessions that carry taint and history across turns, the timers a turn can set and the notes it can save. Test doubles live in
 // "@gtm-agents/core/agents/testing".
 export { CHAT_JOB, DEFAULT_MAX_ROUNDS, DEFAULT_MAX_TOKENS, runHubTurn } from "./hub.ts";
 export type { AgentLogger, HubAgentDeps, TurnInput, TurnResult, TurnStop } from "./hub.ts";
@@ -40,3 +40,22 @@ export {
   transitionTimer,
 } from "./timers.ts";
 export type { NewTimer, Timer, TimerChange, TimerStatus } from "./timers.ts";
+export {
+  NOTES_LISTED_MAX,
+  NOTES_MAX,
+  NOTES_PER_TURN,
+  NOTES_TAINTED_MAX,
+  NOTES_PROMPT_MAX_BYTES,
+  NOTES_READ_MAX,
+  NOTE_MAX_CHARS,
+  forgetAllNotes,
+  forgetNote,
+  insertNote,
+  listNotes,
+  newNoteId,
+  noteLine,
+  noteSource,
+  notesPrefix,
+  readNotes,
+} from "./notes.ts";
+export type { NewNote, Note } from "./notes.ts";

@@ -1,6 +1,6 @@
 # The operator chat
 
-This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, timers the agent sets for itself, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
+This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, timers the agent sets for itself, notes it keeps across sessions, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
 
 ## How a message is handled
 
@@ -162,6 +162,7 @@ npx gtm flags set operator:agent_enabled true
 |---|---|
 | `/clean` | Starts a clean session: deletes this chat's history and resets its taint, together, and cancels its waiting timers |
 | `/status` | The session's taint, how many messages it holds, drafts waiting for approval, today's chat spend, the strategist model |
+| `/notes`, `/notes forget <id>`, `/notes forget all` | The notes the agent saved for the deployment, with the taint each keeps, and forgetting them ([Notes](#notes)); works in the dashboard too |
 | `/timers`, `/timers cancel <id>`, `/timers cancel all` | The timers the agent set in this chat, with when each is due and the taint it carries, and cancelling them ([Timers](#timers)) |
 | `/help` (or `/start`) | What the agent can do and how sessions, taint and approvals work |
 
@@ -197,7 +198,7 @@ Commands never reach the model, and each runs once per message even if the chann
 
 ## What the agent can do
 
-The hub agent has three tools, and a fourth while `operator:timers_enabled` is on:
+The hub agent has three tools, plus `timer_set` while `operator:timers_enabled` is on and the note tools while `operator:notes_enabled` is on:
 
 | Tool | What it does | Class |
 |---|---|---|
@@ -205,6 +206,8 @@ The hub agent has three tools, and a fourth while `operator:timers_enabled` is o
 | `contacts_search` | Looks people up in your contact records: at most 20 rows | Metadata taint; allowed in any session |
 | `drafts_create` | Writes one plain-text draft that waits for your approval | Refused once the session has read a web page |
 | `timer_set` | Sets a timer that starts a later turn in this chat ([Timers](#timers)) | Refused once the session has read a web page |
+| `note_save` | Saves a short note that later sessions see ([Notes](#notes)) | Refused once the session has read a web page; the note keeps the session's taint |
+| `notes_read` | Reads saved notes by id | Allowed in any session; raises it to at least `metadata` |
 
 A draft's recipient must be exactly one valid address, or the draft is refused: the agent asks you rather than guessing. Drafts written in chat are one-offs you asked for; cold sequence steps are assembled from your templates, never written by the model.
 
@@ -266,6 +269,33 @@ Timers follow the session's taint:
 
 What stops a timer: `/timers cancel <id>`, `/timers cancel all` and `/clean`. While `operator:agent_enabled` is off nothing fires, and timers wait until they become too late. While `operator:timers_enabled` is off, `timer_set` is not offered and nothing fires, but `/timers` still lists and cancels. A timer whose operator was removed from the allowlist is cancelled when it comes due, and the halt flag stops the job like any job. A timer that expires or is cancelled by the system is not announced; it leaves `/timers`. The job leaves a run row every minute, a skipped one while the flag is off; `ops:retention_enabled` deletes skipped rows after 7 days.
 
+## Notes
+
+With `operator:notes_enabled` on, the agent keeps short notes across sessions and `/clean`: "remember that I want drafts under 80 words", "the Globex pilot started on 3 November and Sam is the champion". Notes belong to the deployment, so a note saved in the operator chat is there in the dashboard's chat too. The agent saves one only when you ask it to remember something or state a lasting preference.
+
+```bash
+npx gtm migrate                                  # creates operator_notes
+npx gtm flags set operator:notes_enabled true
+```
+
+A note keeps the taint of the session that saved it, and that decides how later turns see it:
+
+- **A note saved with no taint** was written from your words, the approved brain and the deployment's own data only. Every turn sees it at the start of your message, as a fact or preference an operator gave, with where it was saved (the operator chat or the dashboard), including the first turn after `/clean`.
+- **A note saved after reading third-party text** (a contact lookup, say) is never shown on its own. A turn sees only its id, date and taint, and reads its text with `notes_read` only when you name the note or ask for what it holds. Reading any note raises that turn's session to at least `metadata` (higher for a note saved at `structured`), exactly as reading the record again would.
+- `note_save` is refused once the session has read a web page, like `drafts_create`, so a page can never leave a note behind. Saving a note after reading a tainted one keeps the higher taint, so a note can never become cleaner by being copied.
+
+So `/clean` still starts a clean session: clean notes are clean, and nothing tainted comes in unless the agent reads it on purpose. If you want a tainted note's fact treated as clean, tell the agent the fact yourself in a clean session and forget the old note.
+
+| Bound | Value |
+|---|---|
+| Notes kept | 50, for the deployment, of which at most 10 saved after reading third-party text; `note_save` is refused when full, never replacing an old note |
+| Saved in one turn | 3 |
+| One note | 500 characters |
+| Shown in each turn | Clean notes, newest first, up to 4,000 bytes (about eight full-length notes); the rest are listed by id (up to 20). Forget old notes to keep the ones that matter shown |
+| Read at once | 5 notes per `notes_read` call |
+
+`/notes` lists every note with the taint it keeps, and `/notes forget <id>` or `/notes forget all` deletes them; both work whether the flag is on or not. Erasing a person deletes every note that names one of their addresses. While the flag is off, no note is read or saved.
+
 ## Approvals
 
 Every draft a turn creates comes back as an approval request showing the whole draft, with Approve and Reject buttons. Each button carries the draft's id and the digest of exactly the text you were shown.
@@ -285,6 +315,7 @@ Every draft a turn creates comes back as an approval request showing the whole d
 | Model rounds per turn | 8 | `agent.maxRounds` in `createWorker` |
 | Messages per chat | 30 a minute | Fixed: the `chat` category in `RATE_LIMITS` (`packages/core/src/security/rate-limiter.ts`) |
 | Timers fired per day, each one a chat turn | 20 | `operator:timers_daily_max` ([Timers](#timers)) |
+| Saved notes shown in each turn | 4,000 bytes | Fixed: `NOTES_PROMPT_MAX_BYTES` ([Notes](#notes)) |
 | Page fetches | 40 an hour | Fixed: the `web` category in `RATE_LIMITS` |
 
 Every model call writes a row to the cost ledger with the turn, its run and the job `operator_chat`, priced from `models.pricing`. Each turn writes one row to `execution_runs` with trigger `chat`. A turn is never retried automatically: ask again instead.

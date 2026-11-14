@@ -129,6 +129,20 @@ describe("chat commands that run elsewhere", () => {
     expect(ran).toBe(0);
   });
 
+  it("runs /notes here, since notes belong to the deployment, and leaves /timers to the operator chat", async () => {
+    const h = harness();
+    h.kv.map.set("operator:agent_enabled", "true");
+    const said = async (text: string) => {
+      const before = h.events.length;
+      await h.call("chat.send", { text });
+      await Promise.all(h.deferred);
+      const delta = h.events.slice(before).find((e) => e.event === "chat.delta");
+      return delta?.event === "chat.delta" ? delta.data.text : "";
+    };
+    expect(await said("/notes")).toContain("Notes are off for this deployment");
+    expect(await said("/timers")).toContain("runs from the operator chat");
+  });
+
   it("lists a module's commands in /help", async () => {
     const ship: ModuleCommand = { module: "ship", helpLines: ["ship-themes  list the open themes"], match: () => null };
     const h = harness([ship]);

@@ -159,7 +159,7 @@ function harness(model: ModelGateway, email = `ops+${crypto.randomUUID().slice(0
   const settle = async () => {
     while (deferred.length > 0) await Promise.all(deferred.splice(0));
   };
-  return { events, call, settle };
+  return { events, call, settle, kv };
 }
 
 const spaced = (ms: number, extra: ScriptedStreamOptions = {}): ScriptedStreamOptions => ({ chunkChars: 4, between: () => sleep(ms), ...extra });
@@ -189,6 +189,21 @@ describe("drafts a dashboard turn saves", () => {
 });
 
 describe("chat.send with a streaming model", () => {
+  it("offers the note tools only while operator:notes_enabled is on", async () => {
+    const off = scriptedModel([{ text: "ok" }]);
+    const a = harness(off);
+    await a.call("chat.send", { text: "hello" });
+    await a.settle();
+    expect(off.requests[0]?.tools?.map((t) => t.name)).not.toContain("note_save");
+    const on = scriptedModel([{ text: "ok" }]);
+    const b = harness(on);
+    b.kv.map.set("operator:notes_enabled", "true");
+    await b.call("chat.send", { text: "hello" });
+    await b.settle();
+    expect(on.requests[0]?.tools?.map((t) => t.name)).toEqual(["web_fetch", "contacts_search", "drafts_create", "note_save", "notes_read"]);
+    expect(on.requests[0]?.tools?.map((t) => t.name)).not.toContain("timer_set");
+  });
+
   it("streams the reply in several batched deltas and keeps only the final reply in chat.history", async () => {
     const answer = "Acme has three plans: Starter, Team and Enterprise, each billed monthly.";
     const h = harness(scriptedModel([{ text: answer }], { stream: spaced(30) }));

@@ -232,6 +232,19 @@ describe("the operator flow", () => {
     expect(history?.n).toBe(4);
   });
 
+  it("with operator:notes_enabled on, keeps a note across /clean and shows it in the next turn", async () => {
+    const h = harness({}, {
+      flags: { "operator:notes_enabled": "true" },
+      script: [toolStep({ name: "note_save", input: { text: "The operator prefers drafts under 80 words." } }), { text: "Noted." }, { text: "A short plan for the draft." }],
+    });
+    await h.say("Remember that I like drafts under 80 words.");
+    await h.say("/clean");
+    await h.say("Plan a draft to jane@acme.example.");
+    expect(JSON.stringify(h.model.requests[2]?.messages)).toContain("The operator prefers drafts under 80 words.");
+    await h.say("/notes");
+    expect(h.operator.messages.at(-1)?.text).toContain("The operator prefers drafts under 80 words.");
+  });
+
   it("does not offer timer_set with operator:timers_enabled off, or without the timer job", async () => {
     const off = harness({ jobs: createOperatorTimerJobs() }, { script: [{ text: "Timers are not available here." }] });
     await off.say("Remind me tomorrow.");

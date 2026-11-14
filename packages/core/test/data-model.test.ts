@@ -179,6 +179,7 @@ describe("the schema", () => {
       env.DB.prepare("INSERT OR IGNORE INTO chat_sessions (session_key, chat_id) VALUES ('erasure-test', 'chat-1')"),
       env.DB.prepare("INSERT INTO chat_messages (session_key, role, content) VALUES ('erasure-test', 'user', ?1)").bind(JSON.stringify({ text: `draft a note to ${email}` })),
       env.DB.prepare("INSERT INTO operator_timers (id, session_key, chat_id, user_id, note, taint, due_at) VALUES (?1, 'erasure-test', 'chat-1', 'chat-1', ?2, 'metadata', '2026-11-20T09:00:00.000Z')").bind(uid("tmr"), `Check whether ${email.toUpperCase()} replied.`),
+      env.DB.prepare("INSERT INTO operator_notes (id, text, taint) VALUES (?1, ?2, 'metadata')").bind(uid("note"), `${email} is the champion.`),
       env.DB.prepare("INSERT INTO referrals (id, referrer_contact_id, referee_email) VALUES (?1, ?2, ?3)").bind(uid("r"), await contact(), email),
       env.DB.prepare("INSERT INTO outreach_sends (id, contact_id, send_path, provider, sent_at) VALUES (?1, ?2, 'cold', 'test', '2026-11-04T00:00:00.000Z')").bind(sendId, id),
     ]);
@@ -195,6 +196,7 @@ describe("the schema", () => {
     expect(await env.DB.prepare("SELECT contact_id FROM outreach_sends WHERE id = ?1").bind(sendId).first()).toEqual({ contact_id: null });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE instr(lower(content), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_timers WHERE instr(lower(note), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_notes WHERE instr(lower(text), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT source FROM erasure_tombstones WHERE email_sha256 = ?1").bind(result.emailSha256).first()).toEqual({ source: "operator" });
   });
 

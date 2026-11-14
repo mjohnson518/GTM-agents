@@ -2,7 +2,7 @@
 
 This page is for two readers: contributors adding a tool, an adapter or a module, who need to classify what they add; and deployers judging what the system protects against. The code lives in `packages/core/src/security/`, `packages/core/src/runtime/`, `packages/core/src/sending/`, `packages/core/src/budget/` and `packages/core/src/events/`. The tests that prove it live in `tests/security/`.
 
-The first half of this page covers untrusted text: taint, tool classes, the dispatcher, the fence, egress, delegation, timers and approvals. The second half covers the controls that bound what the system does even when nothing is tainted: the effects ledger, the halt and kill switch, suppression, budgets, rate limits and the job runner. The rule behind all of them: **gates fail closed, bookkeeping fails open.**
+The first half of this page covers untrusted text: taint, tool classes, the dispatcher, the fence, egress, delegation, timers, notes and approvals. The second half covers the controls that bound what the system does even when nothing is tainted: the effects ledger, the halt and kill switch, suppression, budgets, rate limits and the job runner. The rule behind all of them: **gates fail closed, bookkeeping fails open.**
 
 ## The threat
 
@@ -44,7 +44,7 @@ The gate is a threshold, so a tool refused at one level is refused at every high
 | Gate | Refused when the session is at | Use it for |
 |---|---|---|
 | `never` | Never | Reads: they cannot act, and their output raises the session's taint instead |
-| `full` | `full` | Records a session holding extracted values may still write: contacts, open deals, unsent drafts, a timer for a later turn |
+| `full` | `full` | Records a session holding extracted values may still write: contacts, open deals, unsent drafts, a timer for a later turn, a saved note |
 | `structured` | `structured`, `full` | Outward actions and durable shared state: sends, approvals, launches, queue control, documents, workflows, checkout links |
 | `metadata` | `metadata`, `structured`, `full` | Writes that later sessions load (memory, code, the link-intake queue, win and loss records) and code execution |
 
@@ -55,7 +55,7 @@ The gate is a threshold, so a tool refused at one level is refused at every high
 Answer these in order.
 
 1. **What can the output contain?** Text a third party wrote, at any length: `full`. Short third-party text such as subjects, snippets, names and titles from a provider: `metadata`. Only validated typed values from a schema-bound extractor: `structured`. Only the deployment's own records: `none`. Text that a stranger wrote and that round-tripped through your own storage (an inbound message body, a stored transcript) is still third-party text.
-2. **What can the tool do?** Nothing but read: `gate: "never"`. Write a record that a person reviews before anything leaves the system: `gate: "full"`. Send, approve, launch, spend, or write shared state that acts later: `gate: "structured"`. Write something that future sessions load as trusted, or execute code: `gate: "metadata"`. When unsure, choose the lower gate (refused earlier).
+2. **What can the tool do?** Nothing but read: `gate: "never"`. Write a record that a person reviews before anything leaves the system: `gate: "full"`. Send, approve, launch, spend, or write shared state that acts later: `gate: "structured"`. Write something that future sessions load as trusted, or execute code: `gate: "metadata"` (or carry the writer's taint and load only untainted entries unasked, as [notes](#notes) do). When unsure, choose the lower gate (refused earlier).
 3. **Does it reach out with input the model chose?** A URL it fetches: `egress: "url"`. Free text it sends to a search or research service: `egress: "query"`. Then add a `rateCategory`.
 4. **Is it permanently human?** Merging code, pricing, billing and auth changes, offers and discounts, proof-of-value sends and data deletion are never earned ([ARCHITECTURE.md](ARCHITECTURE.md#the-safety-spine)). A tool that does one of these is `humanOnly`.
 
@@ -168,6 +168,18 @@ A timer (`timer_set`, [OPERATOR.md](OPERATOR.md#timers)) is the one way a hub tu
 - **Bounded:** a timer that carries taint cannot re-arm: its turn is not offered `timer_set`. The job that queues timers makes no model call. Five timers may wait per chat, a daily cap counts what fires, and a timer's turn is a chat turn under the same ceilings and budgets.
 
 `tests/security/agent-timers.test.ts` proves the taint, clean and once rules and the re-arm refusal; `packages/core/test/operator-timers.test.ts` proves the caps and expiry.
+
+## Notes
+
+Notes (`note_save`, `notes_read`, [OPERATOR.md](OPERATOR.md#notes)) are the one store a chat session writes that later sessions load unasked, across `/clean`. The rule for "writes that later sessions load" is gate `metadata`: refused once anything untrusted has been read. Notes keep that rule's purpose by a different route: instead of refusing every tainted write, a note keeps its writer's taint, and only a note with none is ever loaded unasked.
+
+- **Save:** `note_save` is taint `none`, gate `full`, so a session that has read raw untrusted text cannot save one. Otherwise the note stores the session's taint at the moment of the call, including anything read earlier in the same turn.
+- **Load:** each turn, notes saved with no taint go in front of the operator's message as trusted text, under a header core writes and within a byte budget, never into the system prompt. Every other note appears only as its id, date and taint, which core writes; its text is not loaded.
+- **Read:** `notes_read` is taint `metadata`, gate `never`, like the other reads of records a tainted session may write, and its handler also reports the highest taint of the notes it returns, so the dispatcher raises the session at least to `metadata`, higher for a note saved at `structured`, and fences the text. The model is told to read one only when the operator names it or asks for what it holds.
+- **No laundering:** calls run one at a time, so a `note_save` after a `notes_read` in the same model response runs at the raised taint, and the copy keeps it. Taint goes down only through `/clean`, which leaves tainted notes tainted.
+- **Bounded:** 50 notes of 500 characters each, at most 10 of them tainted, so a tainted session cannot crowd out clean notes, and 3 saves a turn; a full store refuses new notes. Erasing a person deletes the notes that contain one of their stored addresses.
+
+`tests/security/agent-notes.test.ts` proves each of these.
 
 ## Approvals
 

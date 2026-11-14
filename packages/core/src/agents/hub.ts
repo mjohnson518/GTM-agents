@@ -25,6 +25,9 @@
 // carries, so the turn starts at least that tainted; and requireClearedAt, so a session cleared
 // since the timer was set stops the turn before any model call. With deps.timers, the turn also
 // offers timer_set, whose timers belong to this session and carry its taint at the moment of the call.
+// With deps.notes, the turn offers note_save and notes_read, and loads the saved notes in front of the
+// operator's message: notes saved with no taint as trusted text, every other note by id only
+// (agents/notes.ts). Notes are context, so a read that fails leaves them out and the turn goes on.
 import { loadBrain } from "../brain/load.ts";
 import type { BrainSlice } from "../brain/assemble.ts";
 import { checkBudget, checkRunCeiling, checkTurnCeiling, readBudgetSettings } from "../budget/gate.ts";
@@ -42,6 +45,8 @@ import type { KvStore } from "../shared/kv.ts";
 import { HUB_TOOL_DEFINITIONS, createHubToolHandlers, type ToolDefinition } from "../tools/index.ts";
 import type { CreatedDraft } from "../tools/drafts-create.ts";
 import { createTimerSetHandler, timerSetDefinition } from "../tools/timer-set.ts";
+import { createNoteSaveHandler, createNotesReadHandler, noteSaveDefinition, notesReadDefinition } from "../tools/notes.ts";
+import { listNotes, notesPrefix } from "./notes.ts";
 import { minuteUtc } from "./timers.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { appendTurn, loadSession, raiseSessionTaint, type SessionState } from "./sessions.ts";
@@ -83,6 +88,8 @@ export interface HubAgentDeps {
    * `userId` is the operator a timer's turn is checked against when it fires.
    */
   timers?: { userId: string };
+  /** Offer note_save and notes_read, and load the saved notes into the turn (operator:notes_enabled). */
+  notes?: boolean;
 }
 
 export interface TurnInput {
@@ -235,8 +242,9 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
   const log = deps.logger ?? silent;
   const registry = deps.registry ?? createToolRegistry();
   const offered = deps.tools ?? HUB_TOOL_DEFINITIONS;
-  // timer_set goes last, so the offered tools before it keep the same, cacheable order.
-  const tools = deps.timers && !offered.some((t) => t.name === timerSetDefinition.name) ? [...offered, timerSetDefinition] : offered;
+  // Optional tools go after the base ones, in a fixed order, so the request prefix stays cacheable.
+  const extra = [...(deps.timers ? [timerSetDefinition] : []), ...(deps.notes ? [noteSaveDefinition, notesReadDefinition] : [])];
+  const tools = [...offered, ...extra.filter((d) => !offered.some((t) => t.name === d.name))];
   const maxRounds = Math.max(1, deps.maxRounds ?? DEFAULT_MAX_ROUNDS);
   const maxTokens = deps.maxTokens ?? DEFAULT_MAX_TOKENS;
   const turnId = shortId("turn");
@@ -322,12 +330,15 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
   const base = deps.handlers
     ? deps.handlers({ onDraftCreated: (d) => drafts.push(d) })
     : createHubToolHandlers({ db: deps.db, ...(deps.fetch ? { fetch: deps.fetch } : {}), onDraftCreated: (d) => drafts.push(d), now });
-  const handlers = deps.timers
-    ? {
-        ...base,
-        timer_set: createTimerSetHandler({ db: deps.db, sessionKey: input.sessionKey, chatId: input.chatId, userId: deps.timers.userId, clearedAt: state.clearedAt, turnId, now }),
-      }
-    : base;
+  const handlers = {
+    ...base,
+    ...(deps.timers
+      ? { timer_set: createTimerSetHandler({ db: deps.db, sessionKey: input.sessionKey, chatId: input.chatId, userId: deps.timers.userId, clearedAt: state.clearedAt, turnId, now }) }
+      : {}),
+    ...(deps.notes
+      ? { note_save: createNoteSaveHandler({ db: deps.db, sessionKey: input.sessionKey, turnId, now }), notes_read: createNotesReadHandler({ db: deps.db }) }
+      : {}),
+  };
   const dispatcher = {
     registry,
     handlers,
@@ -337,9 +348,18 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
 
   // Notes core adds in front of the operator's message, never stored in the history: what the
   // session refuses, and, on a turn that can set timers, the time, so "tomorrow at 9" is not a guess.
+  let saved: string | null = null;
+  if (deps.notes) {
+    try {
+      saved = notesPrefix(await listNotes(deps.db));
+    } catch (error) {
+      log.warn("saved notes could not be read; the turn runs without them", { turnId, error: sanitizeErrorMessage(error) });
+      saved = "[Saved notes from the system: the saved notes could not be read this turn. Do not tell the operator there are none, and do not save a note again because it seems missing.]";
+    }
+  }
   const notes = [
     ...(deps.timers ? [`[Time from the system: it is now ${minuteUtc(now().toISOString())}.]`] : []),
-    ...[sessionNote(registry, tools, startTaint)].filter((n): n is string => n !== null),
+    ...[saved, sessionNote(registry, tools, startTaint)].filter((n): n is string => n !== null),
   ];
   const messages: Array<{ role: "user" | "assistant"; content: string | Array<Record<string, unknown>> }> = [
     ...state.history.map((m) => ({ role: m.role, content: m.text })),
