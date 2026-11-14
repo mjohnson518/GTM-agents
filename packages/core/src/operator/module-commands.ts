@@ -39,7 +39,7 @@ export interface ModuleCommand<E extends Env = Env> {
  * The built-in slash commands. They always win: a module command that would answer to one of them
  * is never matched, so no module can change what /clean, /status or /help do.
  */
-export const BUILT_IN_COMMAND_NAMES: ReadonlySet<string> = new Set(["clean", "help", "start", "status"]);
+export const BUILT_IN_COMMAND_NAMES: ReadonlySet<string> = new Set(["clean", "help", "start", "status", "timers"]);
 
 const builtInName = (text: string): string | null => /^\/([A-Za-z][A-Za-z0-9_]{0,31})(?:@[A-Za-z0-9_]{1,64})?(?:\s|$)/.exec(text.trim())?.[1]?.toLowerCase() ?? null;
 

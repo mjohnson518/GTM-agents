@@ -1,8 +1,9 @@
 // GTM-agents: operator chat commands. A message that starts with "/" is a command and never reaches
 // the model; anything else is a task for the hub agent.
 //
-//   /clean   delete this chat's history and reset its taint, in one batch
+//   /clean   delete this chat's history and reset its taint, in one batch, and cancel its timers
 //   /status  the session's taint and size, drafts waiting for approval, today's chat spend
+//   /timers  the timers the agent set in this chat; /timers cancel <id> or /timers cancel all
 //   /help    what the agent can do and how sessions, taint and approvals work (also /start)
 //
 // One command does not start with "/": `batch-release-<id>-<code>` releases a cold batch that waits
@@ -60,6 +61,8 @@ import type { FlagReader } from "../jobs/registry.ts";
 import { releaseBatch, type ReleaseCommand } from "../outreach/release.ts";
 import type { SendOutreach } from "../sending/types.ts";
 import { startOfUtcDay } from "../shared/kv.ts";
+import { cancelSessionTimers } from "../agents/timers.ts";
+import { TIMERS_HELP_LINE, runTimersCommand } from "./timers.ts";
 
 export { parseReleaseCommand } from "../outreach/release.ts";
 // Sequences: the follow-up release, resume and manual-touch commands.
@@ -107,6 +110,7 @@ export function helpText(agentName: string, domain = "your-prospect.example", mo
     `${agentName} commands:`,
     "/clean  start a clean session (clears this chat's history and taint)",
     "/status  session taint, drafts waiting for approval, today's chat spend",
+    TIMERS_HELP_LINE,
     "/help  this message",
     "batch-release-<id>-<code>  send a cold batch that waits for you (the batch message carries the exact command)",
     "sequence-release-<id>-<code>  send follow-ups that wait for you (the follow-up message carries the exact command)",
@@ -135,6 +139,8 @@ export interface CommandDeps {
   strategistModel: string | undefined;
   /** The optional modules' /help lines. */
   moduleHelpLines?: readonly string[];
+  /** Flags, so /timers can say whether timers are on. */
+  flags?: FlagReader;
   now?: () => Date;
 }
 
@@ -142,9 +148,21 @@ export interface CommandDeps {
 export async function runCommand(deps: CommandDeps, command: ParsedCommand, session: { sessionKey: string; chatId: string }): Promise<string> {
   const now = deps.now?.() ?? new Date();
   switch (command.name) {
-    case "clean":
+    case "clean": {
       await clearSession(deps.db, session.sessionKey, session.chatId, now);
-      return "Started a clean session. This chat's history and taint are cleared.";
+      // The timers' own check (a session cleared since a timer was set never runs it) is what keeps
+      // them out of the clean session; cancelling here keeps /timers accurate, so it fails open.
+      let cancelled: number;
+      try {
+        cancelled = await cancelSessionTimers(deps.db, session.sessionKey, "session cleared", now);
+      } catch {
+        cancelled = 0;
+      }
+      const timers = cancelled > 0 ? ` ${cancelled === 1 ? "Its waiting timer was" : `Its ${cancelled} waiting timers were`} cancelled.` : "";
+      return `Started a clean session. This chat's history and taint are cleared.${timers}`;
+    }
+    case "timers":
+      return runTimersCommand({ db: deps.db, ...(deps.flags ? { flags: deps.flags } : {}), now }, command.args, session);
     case "help":
     case "start":
       return helpText(deps.agentName, undefined, deps.moduleHelpLines ?? []);

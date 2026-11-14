@@ -8,7 +8,8 @@
 //
 // The agent runs only while the operator:agent_enabled flag is on. The flag is a gate: a value that
 // cannot be read counts as off. operator:chat_batching decides whether messages sent in a row share
-// one turn (chat.ts); a value that cannot be read counts as off there too.
+// one turn (chat.ts); a value that cannot be read counts as off there too. operator:timers_enabled
+// offers timer_set and lets due timers fire (operator/timers.ts); unreadable, it is off.
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import { isFlagOn } from "../jobs/loop.ts";
@@ -38,6 +39,20 @@ export const CHAT_BATCHING_FLAG = "operator:chat_batching";
 export async function isChatBatchingEnabled(flags: FlagReader): Promise<boolean> {
   try {
     return isFlagOn(await flags.get(CHAT_BATCHING_FLAG));
+  } catch {
+    return false;
+  }
+}
+
+export const TIMERS_FLAG = "operator:timers_enabled";
+
+/**
+ * True only when the flag reads as on. Timers are a capability: a read error or an unset flag means
+ * timer_set is not offered and no timer fires.
+ */
+export async function isTimersEnabled(flags: FlagReader): Promise<boolean> {
+  try {
+    return isFlagOn(await flags.get(TIMERS_FLAG));
   } catch {
     return false;
   }

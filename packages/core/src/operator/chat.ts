@@ -36,7 +36,7 @@
 //     `learning-approve-<id>-<code>`, `learning-reject-<id>`, `learnings`, `objection-list`,
 //     `objection-answer`, `voice-build`, `voice-status`, `fitness`) runs once per message, without
 //     the model. Proposals apply only from here or the dashboard, bound to the detail shown;
-//   - a command (/clean, /status, /help) runs without the model;
+//   - a command (/clean, /status, /timers, /help) runs without the model;
 //   - a command an optional module contributed (`commands`, module-commands.ts) runs once per
 //     message, without the model, after every built-in command has had its turn. A built-in name
 //     is never matched as a module command. A handler that throws is answered with a generic
@@ -44,6 +44,13 @@
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
 //     every draft the turn created, bound to that draft's digest. Each message of the run is
 //     claimed on its own before the turn, and one claimed already (a redelivery) is left out.
+//     While operator:timers_enabled is on, the turn is offered timer_set.
+// A message the operator_timers job queued (it carries a timerId) is a timer's turn, and takes none
+// of the routes above: it always runs alone, its text is never read, and it is never matched as a
+// command. The consumer reads the timer's row, checks it can still fire (still waiting, its operator
+// still allowed, the agent and timers on, its session not cleared since it was set), claims it once,
+// and runs one hub turn in that session starting at the taint the timer carries (processTimerRun).
+// That turn is offered timer_set only when the timer carries no taint, so a tainted timer cannot re-arm.
 // Every message is acknowledged after one attempt. A turn is not retried automatically: a retry
 // would spend again, and the operator can simply ask again.
 import type { GtmConfig } from "../config/schema.ts";
@@ -56,7 +63,9 @@ import { runHubTurn, type AgentLogger } from "../agents/hub.ts";
 import { STORED_MESSAGE_MAX_CHARS } from "../agents/sessions.ts";
 import { claimEffect } from "../events/effects.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
-import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled } from "./access.ts";
+import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled, isTimersEnabled } from "./access.ts";
+// Timers: later turns the agent set for itself (docs/OPERATOR.md#timers).
+import { loadTimer, minuteUtc, timerEffectKey, timerTurnText, transitionTimer, type TimerStatus } from "../agents/timers.ts";
 import { requestDraftApproval } from "./approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
 // Sequences: follow-up release, resume and manual-touch commands, and the send function for steps.
@@ -95,6 +104,7 @@ export const EXPERIMENT_COMMAND_EFFECT = "operator_experiment_command";
 export const FOLLOWUP_COMMAND_EFFECT = "operator_followup_command";
 export const LEARNING_COMMAND_EFFECT = "operator_learning_command";
 export const MODULE_COMMAND_EFFECT = "operator_module_command";
+export const TIMER_TURN_EFFECT = "operator_timer_turn";
 /** What the operator reads when a module command throws. Its error text is never shown. */
 export const MODULE_COMMAND_FAILED_TEXT = "That command could not be completed. Nothing more was done; send it again to retry, and check the Worker's logs if it keeps failing.";
 
@@ -134,6 +144,11 @@ export interface OperatorAgentOptions<E extends Env = Env> {
    * after the allowlist, the agent flag and every built-in command; /help lists their help lines.
    */
   commands?: ReadonlyArray<ModuleCommand<E>>;
+  /**
+   * True when the Worker registers the operator_timers job (createWorker sets it). Without the job a
+   * timer would never fire or expire, so timer_set is offered only with it and operator:timers_enabled.
+   */
+  timers?: boolean;
   now?: () => Date;
   logger?: AgentLogger;
 }
@@ -166,6 +181,7 @@ export function resolveChannel<E extends Env>(factory: ((env: E) => OperatorChan
 export function isChatMessage(body: unknown): body is ChatMessage {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
+  if (b.timerId !== undefined && (typeof b.timerId !== "string" || b.timerId.length === 0)) return false;
   return ["updateId", "chatId", "userId", "sessionKey", "text"].every((k) => {
     const value = b[k];
     return typeof value === "string" && value.length > 0;
@@ -253,14 +269,15 @@ function sameSession(a: ChatMessage, b: ChatMessage): boolean {
  * Split delivered messages into runs, keeping their order. A message joins the run before it only
  * when `joinable` says both are for the model, they come from the same operator in the same session,
  * and the joined text stays within CHAT_RUN_MAX_CHARS; anything else starts a new run. With
- * `joinable` always false, every message is its own run.
+ * `joinable` always false, every message is its own run. A timer's message (timerId) is always its
+ * own run, whatever `joinable` says.
  */
 export function planChatRuns<T>(items: readonly T[], bodyOf: (item: T) => ChatMessage, joinable: (text: string) => boolean): T[][] {
   const runs: T[][] = [];
   let open: { items: T[]; last: ChatMessage; chars: number } | undefined;
   for (const item of items) {
     const body = bodyOf(item);
-    if (!joinable(body.text)) {
+    if (body.timerId !== undefined || !joinable(body.text)) {
       runs.push([item]);
       open = undefined;
       continue;
@@ -290,7 +307,7 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
 export async function processChatRun<E extends Env>(options: OperatorAgentOptions<E>, env: E, run: readonly ChatMessage[]): Promise<void> {
   const message = run[0];
   if (!message) return;
-  if (run.length > 1 && !run.every((m) => sameSession(message, m) && routeChatText(options, m.text).kind === "turn")) {
+  if (run.length > 1 && !run.every((m) => m.timerId === undefined && sameSession(message, m) && routeChatText(options, m.text).kind === "turn")) {
     // Only messages for the model from one session share a turn; anything else is handled one by one.
     for (const m of run) await processChatRun(options, env, [m]);
     return;
@@ -299,6 +316,10 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
   const channel = resolveChannel(options.operator, env);
   if (!channel) {
     log.warn("operator channel is not configured; a queued message was dropped", { updateIds: run.map((m) => m.updateId) });
+    return;
+  }
+  if (message.timerId !== undefined) {
+    await processTimerRun(options, env, message.timerId, channel, log);
     return;
   }
   const reply = async (text: string) => {
@@ -544,6 +565,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
             agentName: options.config.agent.name,
             strategistModel: options.config.models.roles.strategist,
             moduleHelpLines: moduleHelpLines(options.commands),
+            flags,
             ...(options.now ? { now: options.now } : {}),
           },
           command,
@@ -575,6 +597,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
       else log.warn("redelivered chat message was not run again", { updateId: m.updateId });
     }
     if (claimed.length === 0) return;
+    const timersOn = options.timers === true && (await isTimersEnabled(flags));
     const turn = await runHubTurn(
       {
         db: env.DB,
@@ -587,6 +610,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
         ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
         ...(options.now ? { now: options.now } : {}),
         logger: log,
+        ...(timersOn ? { timers: { userId: message.userId } } : {}),
       },
       { ...session, text: claimed.map((m) => m.text).join(CHAT_RUN_SEPARATOR) },
     );
@@ -602,6 +626,120 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
   } catch (error) {
     log.error("operator message failed", { updateIds: run.map((m) => m.updateId), error: sanitizeErrorMessage(error) });
     await reply("Something went wrong while handling that message. Nothing was sent. Please try again.");
+  }
+}
+
+/**
+ * Run the turn a timer starts. Never throws. The queued message gave only the timer's id; everything
+ * else comes from its row. A timer fires at most once: it moves to fired with a compare-and-set and
+ * is claimed in the effects ledger before its turn. One that can no longer fire is settled without a
+ * turn: cancelled when its operator is no longer allowed or its session was cleared since it was set,
+ * expired when no model gateway is configured, and back to pending while the agent or timers are off
+ * (it fires once both are on again, or expires if that comes too late).
+ */
+async function processTimerRun<E extends Env>(options: OperatorAgentOptions<E>, env: E, timerId: string, channel: OperatorChannel, log: AgentLogger): Promise<void> {
+  const clock = () => options.now?.() ?? new Date();
+  // Set once the turn is claimed: nothing is said to the operator about a timer that never ran.
+  let chatId: string | undefined;
+  const reply = async (text: string) => {
+    if (!chatId) return;
+    try {
+      await channel.notify({ text, chatId });
+    } catch (error) {
+      log.warn("operator reply failed", { error: sanitizeErrorMessage(error) });
+    }
+  };
+  try {
+    const timer = await loadTimer(env.DB, timerId);
+    if (!timer) {
+      log.warn("a queued timer was not found; the message was dropped", { timerId: timerId.slice(0, 40) });
+      return;
+    }
+    if (timer.status !== "pending" && timer.status !== "queued") {
+      log.warn("a queued timer was already settled; the message was dropped", { timerId: timer.id, status: timer.status });
+      return;
+    }
+    // Only the job queues a timer, and only once it is due; a message that arrives early fires nothing.
+    if (!(Date.parse(timer.dueAt) <= clock().getTime())) {
+      await transitionTimer(env.DB, timer.id, ["queued"], "pending", { queuedAt: null }, clock());
+      log.warn("a timer's message arrived before it was due; it waits for the job", { timerId: timer.id });
+      return;
+    }
+    const settle = (to: TimerStatus, reason: string) => transitionTimer(env.DB, timer.id, ["pending", "queued"], to, { reason }, clock());
+    if (!isAllowedOperator(options.config.operator, timer.chatId, timer.userId)) {
+      await settle("cancelled", "operator no longer allowed");
+      log.warn("a timer whose operator is no longer allowed was cancelled", { timerId: timer.id });
+      return;
+    }
+    const flags = flagsFromKv(env.KV);
+    if (!(await isAgentEnabled(flags)) || !(await isTimersEnabled(flags))) {
+      await transitionTimer(env.DB, timer.id, ["queued"], "pending", { queuedAt: null }, clock());
+      return;
+    }
+    // A session cleared since the timer was set never runs it: its note belongs to the conversation
+    // /clean ended. runHubTurn checks the same again when it loads the session.
+    const session = await env.DB.prepare("SELECT cleared_at FROM chat_sessions WHERE session_key = ?1").bind(timer.sessionKey).first<{ cleared_at: string | null }>();
+    if (!session || session.cleared_at !== timer.sessionClearedAt) {
+      await settle("cancelled", "session cleared");
+      return;
+    }
+    let model: ModelGateway | undefined;
+    try {
+      model = options.model?.(env);
+    } catch {
+      model = undefined;
+    }
+    if (!model) {
+      await settle("expired", "no model gateway");
+      log.warn("a timer expired because no model gateway is configured", { timerId: timer.id });
+      return;
+    }
+    if (!(await transitionTimer(env.DB, timer.id, ["pending", "queued"], "fired", { firedAt: clock().toISOString() }, clock()))) return;
+    if (!(await claimEffect(env.DB, timerEffectKey(timer.id), TIMER_TURN_EFFECT))) {
+      log.warn("a timer's turn was claimed already; it was not run again", { timerId: timer.id });
+      return;
+    }
+    chatId = timer.chatId;
+    const turn = await runHubTurn(
+      {
+        db: env.DB,
+        kv: env.KV,
+        flags,
+        config: options.config,
+        model,
+        ...(options.fetch ? { fetch: options.fetch } : {}),
+        ...(options.maxRounds !== undefined ? { maxRounds: options.maxRounds } : {}),
+        ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
+        ...(options.now ? { now: options.now } : {}),
+        logger: log,
+        // A timer carrying taint cannot re-arm itself: its turn is not offered timer_set, so text a
+        // note picked up from a record can never keep scheduling turns. A clean timer's turn can.
+        ...(timer.taint === "none" && options.timers === true ? { timers: { userId: timer.userId } } : {}),
+      },
+      { sessionKey: timer.sessionKey, chatId: timer.chatId, text: timerTurnText(timer), taintFloor: timer.taint, requireClearedAt: timer.sessionClearedAt },
+    );
+    if (turn.stop === "session_cleared") {
+      chatId = undefined;
+      await transitionTimer(env.DB, timer.id, ["fired"], "cancelled", { reason: "session cleared" }, clock());
+      return;
+    }
+    try {
+      await transitionTimer(env.DB, timer.id, ["fired"], "fired", { firedTurnId: turn.turnId }, clock());
+    } catch {
+      // Bookkeeping: the turn ran either way.
+    }
+    await reply(`Timer ${timer.id}, set ${minuteUtc(timer.createdAt)}:\n\n${turn.reply}`);
+    for (const draft of turn.drafts) {
+      const result = await requestDraftApproval(
+        { db: env.DB, shown: env.KV, operator: channel, ...(options.now ? { now: options.now } : {}), logger: log },
+        draft.id,
+        timer.chatId,
+      );
+      if (!result.ok) await reply(`Draft ${draft.id} was saved, but its approval request could not be shown (${result.reason}). It stays pending.`);
+    }
+  } catch (error) {
+    log.error("a timer's turn failed", { timerId: timerId.slice(0, 40), error: sanitizeErrorMessage(error) });
+    await reply("Something went wrong while running that timer. Nothing was sent. Send /timers to see what is still waiting.");
   }
 }
 

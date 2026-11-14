@@ -96,6 +96,9 @@ export const CORE_TOOL_CLASSES: Readonly<Record<string, ToolClass>> = deepFreeze
   followup_draft: { taint: "none", gate: "full" },
   objection_draft: { taint: "none", gate: "full" },
   suppression_add: { taint: "none", gate: "full" },
+  // A later turn in the same session, which starts at least as tainted as the session was when the
+  // timer was set; refused once a page was read, so a page can never schedule work.
+  timer_set: { taint: "none", gate: "full" },
 
   // Outward actions and durable shared state: sends, approvals, launches, queue control,
   // documents, workflows. Refused at structured taint and above.

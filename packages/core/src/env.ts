@@ -18,6 +18,12 @@ export interface ChatMessage {
   messageId?: string;
   sessionKey: string;
   text: string;
+  /**
+   * Set only by the operator_timers job: the timer whose turn this message starts. The consumer
+   * reads the timer's row for everything else, never this message's text, and never routes it as a
+   * command or merges it with another message.
+   */
+  timerId?: string;
 }
 
 export interface Env {

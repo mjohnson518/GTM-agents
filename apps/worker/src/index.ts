@@ -10,12 +10,14 @@
 // cold_batch:enabled, real sends behind delivery:enabled, mailbox intake behind inbox:enabled,
 // reply triage and drafting behind the replies:* flags, follow-ups behind sequences:enabled, and
 // the scorecard and digests behind the ops:* flags, calendar sync behind convert:calendar_enabled,
-// and product events and billing behind lifecycle:enabled and billing:enabled.
+// product events and billing behind lifecycle:enabled and billing:enabled, and the timers the chat
+// agent sets for itself behind operator:timers_enabled.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
 import { createWorker, kvFlagReader, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
 import { createExperimentJobs } from "@gtm-agents/core/experiments";
+import { createOperatorTimerJobs } from "@gtm-agents/core/operator";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createAutonomyJobs } from "@gtm-agents/core/autonomy/runtime";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
@@ -136,12 +138,17 @@ const autonomy = createAutonomyJobs<Env>({ operator });
 // proposes; a person approves the exact text (docs/LEARNING.md).
 const learning = createLearningJobs<Env>({ model, operator });
 
+// Timers: later chat turns the agent sets for itself (docs/OPERATOR.md#timers). Every minute, behind
+// operator:timers_enabled, due timers go to the chat queue; the model runs only in the chat consumer.
+// The agent offers timer_set only when this job is registered.
+const timers = createOperatorTimerJobs<Env>();
+
 // Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
 const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},

@@ -1,6 +1,6 @@
 # The operator chat
 
-This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
+This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, timers the agent sets for itself, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
 
 ## How a message is handled
 
@@ -13,11 +13,13 @@ Telegram -> POST /api/webhooks/operator
               5. a message is rate limited per chat and goes to CHAT_QUEUE;
                  a button tap is handled at once
 CHAT_QUEUE -> the chat consumer, one delivery at a time
-              a command (/clean, /status, /help) runs without the model
+              a command (/clean, /status, /timers, /help) runs without the model
               anything else runs one hub agent turn, replies, and sends an
               approval request for every draft the turn created
               (with operator:chat_batching on, messages sent in a row share
               one turn: see below)
+              a timer the agent set runs one hub agent turn in the session
+              that set it ([Timers](#timers))
 ```
 
 Nothing touches the database before the update is verified. The agent never sends email from chat: approving a draft marks it approved, and sending is a separate path with its own gates.
@@ -158,8 +160,9 @@ npx gtm flags set operator:agent_enabled true
 
 | Command | What it does |
 |---|---|
-| `/clean` | Starts a clean session: deletes this chat's history and resets its taint, together |
+| `/clean` | Starts a clean session: deletes this chat's history and resets its taint, together, and cancels its waiting timers |
 | `/status` | The session's taint, how many messages it holds, drafts waiting for approval, today's chat spend, the strategist model |
+| `/timers`, `/timers cancel <id>`, `/timers cancel all` | The timers the agent set in this chat, with when each is due and the taint it carries, and cancelling them ([Timers](#timers)) |
 | `/help` (or `/start`) | What the agent can do and how sessions, taint and approvals work |
 
 The other capabilities add their own commands, documented with them. `/help` lists every one:
@@ -194,13 +197,14 @@ Commands never reach the model, and each runs once per message even if the chann
 
 ## What the agent can do
 
-The hub agent has three tools:
+The hub agent has three tools, and a fourth while `operator:timers_enabled` is on:
 
 | Tool | What it does | Class |
 |---|---|---|
 | `web_fetch` | Reads one public web page as text: http and https only, every redirect validated, at most 512 KB, HTML and plain text only | Full taint; allowed in any session |
 | `contacts_search` | Looks people up in your contact records: at most 20 rows | Metadata taint; allowed in any session |
 | `drafts_create` | Writes one plain-text draft that waits for your approval | Refused once the session has read a web page |
+| `timer_set` | Sets a timer that starts a later turn in this chat ([Timers](#timers)) | Refused once the session has read a web page |
 
 A draft's recipient must be exactly one valid address, or the draft is refused: the agent asks you rather than guessing. Drafts written in chat are one-offs you asked for; cold sequence steps are assembled from your templates, never written by the model.
 
@@ -216,6 +220,51 @@ So "research and a draft" takes two steps, and you are the bridge between them:
 2. Send `/clean`, then ask for the draft with the facts you want used: "Draft a short intro to jane@acme.example. Facts: three plans, setup takes under an hour." The clean session can look Jane up and write the draft.
 
 Nothing carries the research into the clean session for you. Retyping or pasting the facts is the point: a person reads the untrusted text and decides what is true. A task that needs no web page (a draft from facts you give, or from your contact records) works in one message.
+
+## Timers
+
+With `operator:timers_enabled` on, the agent can set a timer for itself. Ask "check the reply queue tomorrow at 9 UTC" or "in two hours, look at the Globex thread again", and it calls `timer_set` with a time and a short note saying what to do. When the timer is due, the note starts a new turn in the same chat, and the reply comes to you headed with the timer's id. Nothing else about the turn is special: it has the same tools, gates, approvals and limits as a turn you started.
+
+To turn timers on:
+
+1. Make sure the Worker registers the timer job. The template does (`createOperatorTimerJobs` in `apps/worker/src/index.ts`); an entry written before timers existed adds `...createOperatorTimerJobs<Env>()` from `@gtm-agents/core/operator` to its `jobs`. Without the job the agent never offers `timer_set`, whatever the flag says.
+2. Apply the migrations (`npx gtm migrate`), which create `operator_timers`.
+3. Turn the flag on:
+
+```bash
+npx gtm flags set operator:timers_enabled true
+```
+
+How a timer runs:
+
+```
+timer_set, in a chat turn     writes a pending timer: the chat, you, the note, the due time,
+                              and the session's taint and last /clean at that moment
+operator_timers, every minute no model call: expires timers too late to fire, then sends
+                              each due timer to CHAT_QUEUE carrying only its id
+CHAT_QUEUE consumer           reads the timer, checks it can still fire, claims it once,
+                              and runs one hub agent turn in the session that set it
+```
+
+Timers follow the session's taint:
+
+- A timer remembers the session's taint when it was set, and the turn it starts begins at least that tainted. A timer set after a contact lookup starts a turn at `metadata` or higher, whatever happened in the chat since: higher when the session read more since.
+- `timer_set` is refused once the session has read a web page, like `drafts_create`, so a page can never schedule work.
+- A timer that carries taint cannot set another: its turn is not offered `timer_set`. A repeating check ("every morning") works from a clean session only, so text picked up from a record can never keep scheduling turns.
+- `/clean` cancels the session's waiting timers, and a timer never runs in a session cleared after it was set, even one that was somehow not cancelled: its note belongs to the conversation `/clean` ended.
+- The note is text the agent wrote. When the timer carries taint, the turn sees the note fenced as untrusted data, as it would see a tool result at that taint.
+- A timer's message is never read as a command and never shares a turn with your messages, whatever `operator:chat_batching` says.
+
+| Bound | Value |
+|---|---|
+| When it can be due | 5 minutes to 14 days after it is set; an exact time must carry a timezone |
+| Timers waiting per chat | 5 |
+| Note | 500 characters |
+| Timers fired per day, across the deployment | 20, set with `operator:timers_daily_max` (at most 200; a value that cannot be read is 0) |
+| Late | A timer more than 6 hours late (the agent was off, an outage) expires instead of firing, and so does one queued whose message never arrived |
+| Spend | A timer's turn is a chat turn: `chat:turn_max_cents` and `budget:job:operator_chat:daily_cents` apply |
+
+What stops a timer: `/timers cancel <id>`, `/timers cancel all` and `/clean`. While `operator:agent_enabled` is off nothing fires, and timers wait until they become too late. While `operator:timers_enabled` is off, `timer_set` is not offered and nothing fires, but `/timers` still lists and cancels. A timer whose operator was removed from the allowlist is cancelled when it comes due, and the halt flag stops the job like any job. A timer that expires or is cancelled by the system is not announced; it leaves `/timers`. The job leaves a run row every minute, a skipped one while the flag is off; `ops:retention_enabled` deletes skipped rows after 7 days.
 
 ## Approvals
 
@@ -235,6 +284,7 @@ Every draft a turn creates comes back as an approval request showing the whole d
 | Global daily and monthly limits (in `hard` mode) | $20, $500 | `budget:*` flags |
 | Model rounds per turn | 8 | `agent.maxRounds` in `createWorker` |
 | Messages per chat | 30 a minute | Fixed: the `chat` category in `RATE_LIMITS` (`packages/core/src/security/rate-limiter.ts`) |
+| Timers fired per day, each one a chat turn | 20 | `operator:timers_daily_max` ([Timers](#timers)) |
 | Page fetches | 40 an hour | Fixed: the `web` category in `RATE_LIMITS` |
 
 Every model call writes a row to the cost ledger with the turn, its run and the job `operator_chat`, priced from `models.pricing`. Each turn writes one row to `execution_runs` with trigger `chat`. A turn is never retried automatically: ask again instead.

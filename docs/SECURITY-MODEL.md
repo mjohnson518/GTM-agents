@@ -2,7 +2,7 @@
 
 This page is for two readers: contributors adding a tool, an adapter or a module, who need to classify what they add; and deployers judging what the system protects against. The code lives in `packages/core/src/security/`, `packages/core/src/runtime/`, `packages/core/src/sending/`, `packages/core/src/budget/` and `packages/core/src/events/`. The tests that prove it live in `tests/security/`.
 
-The first half of this page covers untrusted text: taint, tool classes, the dispatcher, the fence, egress, delegation and approvals. The second half covers the controls that bound what the system does even when nothing is tainted: the effects ledger, the halt and kill switch, suppression, budgets, rate limits and the job runner. The rule behind all of them: **gates fail closed, bookkeeping fails open.**
+The first half of this page covers untrusted text: taint, tool classes, the dispatcher, the fence, egress, delegation, timers and approvals. The second half covers the controls that bound what the system does even when nothing is tainted: the effects ledger, the halt and kill switch, suppression, budgets, rate limits and the job runner. The rule behind all of them: **gates fail closed, bookkeeping fails open.**
 
 ## The threat
 
@@ -44,7 +44,7 @@ The gate is a threshold, so a tool refused at one level is refused at every high
 | Gate | Refused when the session is at | Use it for |
 |---|---|---|
 | `never` | Never | Reads: they cannot act, and their output raises the session's taint instead |
-| `full` | `full` | Records a session holding extracted values may still write: contacts, open deals, unsent drafts |
+| `full` | `full` | Records a session holding extracted values may still write: contacts, open deals, unsent drafts, a timer for a later turn |
 | `structured` | `structured`, `full` | Outward actions and durable shared state: sends, approvals, launches, queue control, documents, workflows, checkout links |
 | `metadata` | `metadata`, `structured`, `full` | Writes that later sessions load (memory, code, the link-intake queue, win and loss records) and code execution |
 
@@ -156,6 +156,18 @@ A delegation runs another agent on a curated tool subset. Core classifies the de
 - **Up:** the caller ends at the higher of its own taint and the worker's final taint (`returnTaint`). The delegation handler reports the worker's taint to the dispatcher. When a result has to travel as plain text, the taint travels with it as a marker.
 
 Markers are read escalate-only, so text that forges or strips a marker can only make the caller stricter. Markers are read only from delegation tools, so a page that contains a marker cannot lock a session. A delegation that reports neither a taint nor a marker, or that fails, raises its caller to full taint, because the dispatcher cannot know what the worker read.
+
+## Timers
+
+A timer (`timer_set`, [OPERATOR.md](OPERATOR.md#timers)) is the one way a hub turn starts without a message from the operator. It carries taint across time the way delegation carries it across agents, so a note the model wrote after reading third-party text cannot come back later as a clean instruction:
+
+- **Set:** `timer_set` is taint `none`, gate `full`, and offered only while the flag is on and the job that fires and expires timers is registered. It is refused once the session has read raw untrusted text, so a page can never schedule work. In a session at `metadata` or `structured` it is allowed, and the timer stores the session's taint at the moment of the call, including anything read earlier in the same turn.
+- **Fire:** the turn starts at `maxTaintLevel` of the session's taint and the timer's, and records that on the session like any read, so taint still only rises. The note goes into the user turn under a header core writes, fenced as untrusted whenever the timer carries taint, and never into the system prompt.
+- **Clean:** the timer also stores the session's `cleared_at`. A session cleared since the timer was set never runs it: the consumer cancels the timer, and the turn itself stops before any model call if the session was cleared in between.
+- **Once:** the queued message carries only the timer's id. The consumer reads the timer's row, never routes the message as a command, never merges it with other messages, refuses one that arrives before the timer is due, and moves the timer to `fired` with a compare-and-set and claims it in the effects ledger before the turn.
+- **Bounded:** a timer that carries taint cannot re-arm: its turn is not offered `timer_set`. The job that queues timers makes no model call. Five timers may wait per chat, a daily cap counts what fires, and a timer's turn is a chat turn under the same ceilings and budgets.
+
+`tests/security/agent-timers.test.ts` proves the taint, clean and once rules and the re-arm refusal; `packages/core/test/operator-timers.test.ts` proves the caps and expiry.
 
 ## Approvals
 

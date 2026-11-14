@@ -25,6 +25,7 @@ import { approvalPayload } from "../src/operator/approval-payload.ts";
 import type { OperatorUpdate } from "../src/ports/operator.ts";
 import { draftDigest } from "../src/security/approval-digest.ts";
 import { DEFAULT_CHAT_QUEUE, createWorker } from "../src/worker.ts";
+import { TIMERS_JOB, createOperatorTimerJobs, queueDueTimers } from "../src/operator/timers.ts";
 import { acmeConfig } from "./fixtures.ts";
 
 const SECRET = "test-channel-secret";
@@ -97,7 +98,7 @@ function harness(extra: Partial<Parameters<typeof createWorker<Env>>[1]> = {}, s
     await deliver(queued);
     return queued;
   };
-  return { OPERATOR, operator, model, kv, pages, post, say, sayTogether, deliver };
+  return { OPERATOR, operator, model, kv, pages, queue, testEnv, config, post, say, sayTogether, deliver };
 }
 
 describe("the operator flow", () => {
@@ -187,6 +188,57 @@ describe("the operator flow", () => {
     expect(h.model.requests[0]?.messages).toEqual([{ role: "user", content: "find contacts at acme.example" }]);
     expect(h.model.requests[1]?.messages.at(-1)).toEqual({ role: "user", content: "and at globex.example too" });
     expect(h.operator.messages.map((m) => m.text)).toEqual(["One.", "Two."]);
+  });
+
+  it("with operator:timers_enabled on, runs a timer the agent set as a later turn in the same chat", async () => {
+    const h = harness({ jobs: createOperatorTimerJobs() }, {
+      flags: { "operator:timers_enabled": "true" },
+      script: [
+        toolStep({ name: "timer_set", input: { in_minutes: 30, note: "Check the reply queue and tell the operator what is owed." } }),
+        { text: "I set a timer for 30 minutes from now." },
+        { text: "Nothing is owed in the reply queue." },
+      ],
+    });
+    await h.say("In half an hour, check the reply queue for me.");
+    expect(h.model.requests[0]?.tools?.map((t) => t.name)).toContain("timer_set");
+    const timer = await env.DB.prepare("SELECT id, status, taint, due_at FROM operator_timers WHERE session_key = ?1").bind(`chat:${h.OPERATOR}`).first<{ id: string; status: string; taint: string; due_at: string }>();
+    expect(timer).toMatchObject({ status: "pending", taint: "none" });
+    if (!timer) throw new Error("no timer was written");
+
+    // Half an hour later (the due time moved back, since the consumer reads the real clock), the job
+    // queues it and the chat consumer runs its turn.
+    expect(Date.parse(timer.due_at) - Date.now()).toBeGreaterThan(29 * 60_000);
+    await env.DB.prepare("UPDATE operator_timers SET due_at = ?1 WHERE id = ?2").bind(new Date(Date.now() - 60_000).toISOString(), timer.id).run();
+    const before = h.queue.sent.length;
+    await queueDueTimers({
+      env: h.testEnv,
+      config: h.config,
+      job: TIMERS_JOB,
+      now: new Date(),
+      signal: new AbortController().signal,
+      ceilings: { maxDurationMs: 30_000, maxRows: 10 },
+      flags: { get: (k) => h.kv.get(k) },
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+    });
+    const queued = h.queue.sent.slice(before);
+    expect(queued).toEqual([expect.objectContaining({ timerId: timer.id })]);
+    await h.deliver(queued);
+
+    expect(JSON.stringify(h.model.requests[2]?.messages.at(-1))).toContain(`set timer ${timer.id}`);
+    expect(h.operator.messages.at(-1)?.text).toMatch(new RegExp(`^Timer ${timer.id}, set .*\n\nNothing is owed in the reply queue\\.$`));
+    expect(await env.DB.prepare("SELECT status FROM operator_timers WHERE id = ?1").bind(timer.id).first()).toEqual({ status: "fired" });
+    // The timer's turn joined the session history like any other turn.
+    const history = await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE session_key = ?1").bind(`chat:${h.OPERATOR}`).first<{ n: number }>();
+    expect(history?.n).toBe(4);
+  });
+
+  it("does not offer timer_set with operator:timers_enabled off, or without the timer job", async () => {
+    const off = harness({ jobs: createOperatorTimerJobs() }, { script: [{ text: "Timers are not available here." }] });
+    await off.say("Remind me tomorrow.");
+    expect(off.model.requests[0]?.tools?.map((t) => t.name)).not.toContain("timer_set");
+    const unwired = harness({}, { flags: { "operator:timers_enabled": "true" }, script: [{ text: "Timers are not available here." }] });
+    await unwired.say("Remind me tomorrow.");
+    expect(unwired.model.requests[0]?.tools?.map((t) => t.name)).not.toContain("timer_set");
   });
 
   it("hands the email provider and the mailbox to the release and reply commands", async () => {

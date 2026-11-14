@@ -20,6 +20,11 @@
 //      turn goes on.
 // Tool calls run sequentially, so a write that follows a page read in the same model response is
 // checked against the taint the read just raised.
+//
+// A turn a timer started (agents/timers.ts) passes two more inputs: taintFloor, the taint the timer
+// carries, so the turn starts at least that tainted; and requireClearedAt, so a session cleared
+// since the timer was set stops the turn before any model call. With deps.timers, the turn also
+// offers timer_set, whose timers belong to this session and carry its taint at the moment of the call.
 import { loadBrain } from "../brain/load.ts";
 import type { BrainSlice } from "../brain/assemble.ts";
 import { checkBudget, checkRunCeiling, checkTurnCeiling, readBudgetSettings } from "../budget/gate.ts";
@@ -32,10 +37,12 @@ import { budgetCheck, rateLimitCheck } from "../runtime/checks.ts";
 import { executeToolCall, type ToolHandler, type ToolSession } from "../runtime/dispatcher.ts";
 import { createToolRegistry, type ToolRegistry } from "../security/registry.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
-import { isRefusedAt, type TaintLevel } from "../security/taint.ts";
+import { isRefusedAt, maxTaintLevel, toTaintLevel, type TaintLevel } from "../security/taint.ts";
 import type { KvStore } from "../shared/kv.ts";
 import { HUB_TOOL_DEFINITIONS, createHubToolHandlers, type ToolDefinition } from "../tools/index.ts";
 import type { CreatedDraft } from "../tools/drafts-create.ts";
+import { createTimerSetHandler, timerSetDefinition } from "../tools/timer-set.ts";
+import { minuteUtc } from "./timers.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { appendTurn, loadSession, raiseSessionTaint, type SessionState } from "./sessions.ts";
 
@@ -71,6 +78,11 @@ export interface HubAgentDeps {
   maxTokens?: number;
   now?: () => Date;
   logger?: AgentLogger;
+  /**
+   * Offer timer_set this turn: the operator chat passes it while operator:timers_enabled is on.
+   * `userId` is the operator a timer's turn is checked against when it fires.
+   */
+  timers?: { userId: string };
 }
 
 export interface TurnInput {
@@ -87,9 +99,30 @@ export interface TurnInput {
    * it, and an exception it throws is ignored.
    */
   onText?: (text: string, round: number) => void;
+  /**
+   * The lowest taint the turn starts at. A timer's turn passes the taint its timer carries. The
+   * session's own taint still applies when it is higher, so this can only make a turn stricter.
+   */
+  taintFloor?: TaintLevel;
+  /**
+   * When set, the turn runs only while the session's cleared_at still equals this value (a timer's
+   * turn passes the one from when the timer was set). A session cleared since stops the turn with
+   * "session_cleared" before any model call, and nothing is written to it.
+   */
+  requireClearedAt?: string | null;
 }
 
-export type TurnStop = "end" | "max_tokens" | "round_limit" | "turn_ceiling" | "budget" | "unpriced" | "no_model" | "model_error" | "session_unreadable";
+export type TurnStop =
+  | "end"
+  | "max_tokens"
+  | "round_limit"
+  | "turn_ceiling"
+  | "budget"
+  | "unpriced"
+  | "no_model"
+  | "model_error"
+  | "session_unreadable"
+  | "session_cleared";
 
 export interface TurnResult {
   turnId: string;
@@ -201,7 +234,9 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
   const now = deps.now ?? (() => new Date());
   const log = deps.logger ?? silent;
   const registry = deps.registry ?? createToolRegistry();
-  const tools = deps.tools ?? HUB_TOOL_DEFINITIONS;
+  const offered = deps.tools ?? HUB_TOOL_DEFINITIONS;
+  // timer_set goes last, so the offered tools before it keep the same, cacheable order.
+  const tools = deps.timers && !offered.some((t) => t.name === timerSetDefinition.name) ? [...offered, timerSetDefinition] : offered;
   const maxRounds = Math.max(1, deps.maxRounds ?? DEFAULT_MAX_ROUNDS);
   const maxTokens = deps.maxTokens ?? DEFAULT_MAX_TOKENS;
   const turnId = shortId("turn");
@@ -248,8 +283,12 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
     log.error("chat session could not be read", { sessionKey: input.sessionKey, error: detail });
     return finish(result({ reply: "I could not read this chat's session, so I did not run. Please try again shortly.", stop: "session_unreadable" }), detail);
   }
-  const session: ToolSession = { id: input.sessionKey, taint: state.taint };
-  const startTaint = state.taint;
+  if (input.requireClearedAt !== undefined && state.clearedAt !== input.requireClearedAt) {
+    log.info("the session was cleared since this turn was scheduled; it did not run", { sessionKey: input.sessionKey });
+    return finish(result({ reply: "", stop: "session_cleared", startTaint: state.taint, taint: state.taint }));
+  }
+  const startTaint = input.taintFloor === undefined ? state.taint : maxTaintLevel(state.taint, toTaintLevel(input.taintFloor));
+  const session: ToolSession = { id: input.sessionKey, taint: startTaint };
 
   // 2. The model and its price.
   const modelId = deps.config.models.roles.strategist;
@@ -280,9 +319,15 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
   }
   const system = buildSystemPrompt({ config: deps.config, brain, tools: tools.map((t) => t.name) });
 
-  const handlers = deps.handlers
+  const base = deps.handlers
     ? deps.handlers({ onDraftCreated: (d) => drafts.push(d) })
     : createHubToolHandlers({ db: deps.db, ...(deps.fetch ? { fetch: deps.fetch } : {}), onDraftCreated: (d) => drafts.push(d), now });
+  const handlers = deps.timers
+    ? {
+        ...base,
+        timer_set: createTimerSetHandler({ db: deps.db, sessionKey: input.sessionKey, chatId: input.chatId, userId: deps.timers.userId, clearedAt: state.clearedAt, turnId, now }),
+      }
+    : base;
   const dispatcher = {
     registry,
     handlers,
@@ -290,10 +335,15 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
     logger: { warn: (msg: string, data?: Record<string, unknown>) => log.warn(msg, data) },
   };
 
-  const note = sessionNote(registry, tools, startTaint);
+  // Notes core adds in front of the operator's message, never stored in the history: what the
+  // session refuses, and, on a turn that can set timers, the time, so "tomorrow at 9" is not a guess.
+  const notes = [
+    ...(deps.timers ? [`[Time from the system: it is now ${minuteUtc(now().toISOString())}.]`] : []),
+    ...[sessionNote(registry, tools, startTaint)].filter((n): n is string => n !== null),
+  ];
   const messages: Array<{ role: "user" | "assistant"; content: string | Array<Record<string, unknown>> }> = [
     ...state.history.map((m) => ({ role: m.role, content: m.text })),
-    { role: "user", content: note ? `${note}\n\n${input.text}` : input.text },
+    { role: "user", content: notes.length ? `${notes.join("\n")}\n\n${input.text}` : input.text },
   ];
 
   // The turn ceiling is also enforced from an in-memory total, so a cost row that could not be

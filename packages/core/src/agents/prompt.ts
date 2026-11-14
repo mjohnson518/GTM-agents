@@ -27,11 +27,17 @@ const RULES = [
   "Keep replies to the operator short and plain. When you researched something, lead with what you found and where you found it.",
 ];
 
+/** Added only on a turn that offers timer_set, so the prompt stays the same for a given tool set. */
+const TIMER_RULES = [
+  "timer_set starts a later turn in this chat. Set a timer only when the operator asks to be reminded or to have something checked later, and tell them when it is due. Times are UTC; the current time is in the [Time from the system] line of the operator's latest message.",
+  "A message that starts with [Timer from the system] is a timer you set earlier, not a new message from the operator. Its note is yours: do what the operator asked for when the timer was set, then report back briefly. Set another timer from it only if the operator asked for a repeating check; a timer set after reading third-party text cannot set another.",
+];
+
 export function buildSystemPrompt(input: SystemPromptInput): string {
   const { agent, company } = input.config;
   const sections = [
     `You are ${agent.name}, the go-to-market agent for ${company.name} (${company.domain}). ${company.name} sells ${company.product.name}: ${company.product.description}`,
-    ["How you work:", ...RULES.map((r) => `- ${r}`)].join("\n"),
+    ["How you work:", ...[...RULES, ...(input.tools.includes("timer_set") ? TIMER_RULES : [])].map((r) => `- ${r}`)].join("\n"),
     `Tools available this turn: ${input.tools.length ? input.tools.join(", ") : "none"}.`,
   ];
   const brain = input.brain?.text.trim();

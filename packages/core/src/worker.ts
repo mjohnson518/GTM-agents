@@ -43,6 +43,7 @@ import type { ModelGateway } from "./ports/model.ts";
 import type { OperatorChannel } from "./ports/operator.ts";
 import type { SendOutreach } from "./sending/types.ts";
 import { createCronHealthJob } from "./runtime/cron-health.ts";
+import { TIMERS_JOB } from "./operator/timers.ts";
 import { createJobRunner } from "./runtime/job-runner.ts";
 import { UNSUBSCRIBE_ROUTE, createUnsubscribeHandlers } from "./sending/unsubscribe.ts";
 import { EMAIL_WEBHOOK_PATH, createEmailWebhook } from "./sending/webhook.ts";
@@ -297,6 +298,8 @@ export function createWorker<E extends Env = Env>(config: GtmConfig, options: Cr
     ...(options.agent?.fetch ? { fetch: options.agent.fetch } : {}),
     ...(options.agent?.templates ? { templates: options.agent.templates } : {}),
     ...(options.commands && options.commands.length > 0 ? { commands: options.commands } : {}),
+    // timer_set is offered only when the job that fires and expires timers is registered.
+    ...(registry.get(TIMERS_JOB) ? { timers: true } : {}),
     logger: consoleLogger({ service: "gtm-agents", scope: "operator" }),
   };
   app.post(OPERATOR_WEBHOOK_PATH, createOperatorWebhook<E>(agentOptions));
