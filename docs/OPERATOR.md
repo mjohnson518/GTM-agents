@@ -12,13 +12,33 @@ Telegram -> POST /api/webhooks/operator
               4. operator:agent_enabled off: "the agent is turned off"
               5. a message is rate limited per chat and goes to CHAT_QUEUE;
                  a button tap is handled at once
-CHAT_QUEUE -> the chat consumer
+CHAT_QUEUE -> the chat consumer, one delivery at a time
               a command (/clean, /status, /help) runs without the model
               anything else runs one hub agent turn, replies, and sends an
               approval request for every draft the turn created
+              (with operator:chat_batching on, messages sent in a row share
+              one turn: see below)
 ```
 
 Nothing touches the database before the update is verified. The agent never sends email from chat: approving a draft marks it approved, and sending is a separate path with its own gates.
+
+### Messages sent in a row
+
+The chat consumer runs one delivery at a time (`max_concurrency: 1`), so whatever you send while a turn is running waits in the queue. The template takes one message per delivery (`max_batch_size: 1`), so every message gets its own turn, its own reply and its own invocation.
+
+To let messages sent in a row share one turn, raise `max_batch_size` on the chat queue's consumer in `wrangler.jsonc` (3 to 5 is plenty), deploy, then turn on `operator:chat_batching`. Adjacent messages for the model in one delivery, from you in the same chat and session, then share one turn:
+
+- They are joined in delivery order, separated by a blank line, and the agent answers once. "Find contacts at acme.example", then "and at globex.example too", is one task with one reply.
+- A command is never joined. It runs on its own, in its place in the delivery: "summarize the pipeline", `/status`, "now list the open drafts" is a turn, the status, then a second turn. The queue delivers in order on a best-effort basis only, so when the order matters (a `/clean` between two tasks), wait for the reply before sending the next message.
+- Another person in a group chat, another chat, or a joined text over 8,000 characters (what the session history keeps of one message) starts a new turn.
+- The shared turn is one turn for every limit: one `chat:turn_max_cents` ceiling, one run row, at most `agent.maxRounds` model rounds.
+- Each message is still claimed on its own, so a redelivered message is never answered twice, whether it arrives alone or with others.
+
+```bash
+npx gtm flags set operator:chat_batching true
+```
+
+The flag changes nothing while `max_batch_size` is 1. Keep `max_batch_timeout` at 0: a message that arrives while nothing is running is delivered at once, never held back to wait for others. Know the trade-off of a larger batch: every run in one delivery shares that invocation's 15-minute wall time, and the chat queue has no retries, so messages a stopped invocation had not reached are dropped without a reply. Commands are quick and merged messages are one turn, but several long tasks in separate sessions, or with the flag off, run one after another, which is why the template keeps 1. Off, or unreadable, every message is its own turn.
 
 ## 1. Create the bot
 
@@ -210,7 +230,7 @@ Every draft a turn creates comes back as an approval request showing the whole d
 
 | Limit | Default | Change it with |
 |---|---|---|
-| Spend per chat turn, checked before every model call and every tool | $0.50 | `chat:turn_max_cents` |
+| Spend per chat turn, checked before every model call and every tool (a turn shared by messages sent in a row has one ceiling) | $0.50 | `chat:turn_max_cents` |
 | Spend per day for all chat turns | none | `budget:job:operator_chat:daily_cents` |
 | Global daily and monthly limits (in `hard` mode) | $20, $500 | `budget:*` flags |
 | Model rounds per turn | 8 | `agent.maxRounds` in `createWorker` |

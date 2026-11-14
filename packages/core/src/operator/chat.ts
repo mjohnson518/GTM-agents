@@ -1,8 +1,16 @@
-// GTM-agents: the chat queue consumer: one operator message in, one reply out.
+// GTM-agents: the chat queue consumer: operator messages in, replies out.
 //
 // The webhook verifies, allowlists, deduplicates and enqueues; this consumer does the slow work off
-// the webhook path. For each message it checks the allowlist and the agent flag again (the config
-// or the flag may have changed while the message waited), then:
+// the webhook path. It handles a delivered batch as runs, in delivery order (planChatRuns): every
+// message is its own run, except that with operator:chat_batching on, adjacent messages for the
+// model from the same operator in the same session share one run, up to CHAT_RUN_MAX_CHARS of text.
+// A command always runs alone, so a run never crosses one (a /clean between two messages keeps them
+// apart). A merged run is one hub turn on the messages joined by a blank line, with one reply, one
+// turn ceiling and one run row. Which messages go to the model is decided by routeChatText, the
+// same matcher the handler below uses, so the two cannot disagree.
+//
+// For each run it checks the allowlist and the agent flag again (the config or the flag may have
+// changed while the message waited), then:
 //   - `batch-release-<id>-<code>` releases a waiting cold batch through the send function, once
 //     per message, without the model;
 //   - a sequence command (`sequence-release-<id>-<code>`, `sequence-resume-<contact id>`,
@@ -34,7 +42,8 @@
 //     is never matched as a module command. A handler that throws is answered with a generic
 //     error and an audit row, never with its error text;
 //   - anything else runs one hub agent turn, sends the reply, and sends an approval request for
-//     every draft the turn created, bound to that draft's digest.
+//     every draft the turn created, bound to that draft's digest. Each message of the run is
+//     claimed on its own before the turn, and one claimed already (a redelivery) is left out.
 // Every message is acknowledged after one attempt. A turn is not retried automatically: a retry
 // would spend again, and the operator can simply ask again.
 import type { GtmConfig } from "../config/schema.ts";
@@ -44,9 +53,10 @@ import type { ModelGateway } from "../ports/model.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import type { SendOutreach } from "../sending/types.ts";
 import { runHubTurn, type AgentLogger } from "../agents/hub.ts";
+import { STORED_MESSAGE_MAX_CHARS } from "../agents/sessions.ts";
 import { claimEffect } from "../events/effects.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
-import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator } from "./access.ts";
+import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled } from "./access.ts";
 import { requestDraftApproval } from "./approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
 // Sequences: follow-up release, resume and manual-touch commands, and the send function for steps.
@@ -184,12 +194,111 @@ async function runModuleCommand<E extends Env>(options: OperatorAgentOptions<E>,
   }
 }
 
+type Parsed<F extends (text: string) => unknown> = NonNullable<ReturnType<F>>;
+
+/** Where one operator message goes: a command, each matched in the order the handler tries them, or a model turn. */
+export type ChatRoute<E extends Env = Env> =
+  | { kind: "release"; command: Parsed<typeof parseReleaseCommand> }
+  | { kind: "sequence"; command: Parsed<typeof parseSequenceCommand> }
+  | { kind: "convert"; command: Parsed<typeof parseConvertCommand> }
+  | { kind: "autonomy"; command: Parsed<typeof parseAutonomyCommand> }
+  | { kind: "experiment"; command: Parsed<typeof parseExperimentCommand> }
+  | { kind: "followup"; command: Parsed<typeof parseFollowupCommand> }
+  | { kind: "learning"; command: Parsed<typeof parseLearningCommand> }
+  | { kind: "reply"; command: Parsed<typeof parseCommand> }
+  | { kind: "report"; command: Parsed<typeof parseCommand> }
+  | { kind: "module"; matched: MatchedModuleCommand<E> }
+  | { kind: "command"; command: Parsed<typeof parseCommand> }
+  | { kind: "turn" };
+
+/**
+ * Route one message by its text alone. It runs nothing and reads no binding, so the consumer can
+ * tell a model turn from a command before anything happens, with the same matchers in the same
+ * order the handler uses.
+ */
+export function routeChatText<E extends Env>(options: Pick<OperatorAgentOptions<E>, "commands">, text: string): ChatRoute<E> {
+  const release = parseReleaseCommand(text);
+  if (release) return { kind: "release", command: release };
+  const sequence = parseSequenceCommand(text);
+  if (sequence) return { kind: "sequence", command: sequence };
+  const convert = parseConvertCommand(text);
+  if (convert) return { kind: "convert", command: convert };
+  const autonomy = parseAutonomyCommand(text);
+  if (autonomy) return { kind: "autonomy", command: autonomy };
+  const experiment = parseExperimentCommand(text);
+  if (experiment) return { kind: "experiment", command: experiment };
+  const followup = parseFollowupCommand(text);
+  if (followup) return { kind: "followup", command: followup };
+  const learning = parseLearningCommand(text);
+  if (learning) return { kind: "learning", command: learning };
+  const command = parseCommand(text);
+  if (command && isReplyCommand(command.name)) return { kind: "reply", command };
+  if (command && isReportCommand(command.name)) return { kind: "report", command };
+  const matched = matchModuleCommand(options.commands, text);
+  if (matched) return { kind: "module", matched };
+  if (command) return { kind: "command", command };
+  return { kind: "turn" };
+}
+
+/** The most operator text one merged run carries: what the session history keeps of one message, so a merged turn is never stored cut. */
+export const CHAT_RUN_MAX_CHARS = STORED_MESSAGE_MAX_CHARS;
+/** What joins the messages of a merged run into the turn's text. */
+export const CHAT_RUN_SEPARATOR = "\n\n";
+
+function sameSession(a: ChatMessage, b: ChatMessage): boolean {
+  return a.sessionKey === b.sessionKey && a.chatId === b.chatId && a.userId === b.userId;
+}
+
+/**
+ * Split delivered messages into runs, keeping their order. A message joins the run before it only
+ * when `joinable` says both are for the model, they come from the same operator in the same session,
+ * and the joined text stays within CHAT_RUN_MAX_CHARS; anything else starts a new run. With
+ * `joinable` always false, every message is its own run.
+ */
+export function planChatRuns<T>(items: readonly T[], bodyOf: (item: T) => ChatMessage, joinable: (text: string) => boolean): T[][] {
+  const runs: T[][] = [];
+  let open: { items: T[]; last: ChatMessage; chars: number } | undefined;
+  for (const item of items) {
+    const body = bodyOf(item);
+    if (!joinable(body.text)) {
+      runs.push([item]);
+      open = undefined;
+      continue;
+    }
+    const chars = (open?.chars ?? 0) + CHAT_RUN_SEPARATOR.length + body.text.length;
+    if (open && sameSession(open.last, body) && chars <= CHAT_RUN_MAX_CHARS) {
+      open.items.push(item);
+      open.last = body;
+      open.chars = chars;
+      continue;
+    }
+    open = { items: [item], last: body, chars: body.text.length };
+    runs.push(open.items);
+  }
+  return runs;
+}
+
 /** Handle one queued operator message. Never throws. */
 export async function processChatMessage<E extends Env>(options: OperatorAgentOptions<E>, env: E, message: ChatMessage): Promise<void> {
+  await processChatRun(options, env, [message]);
+}
+
+/**
+ * Handle one run from planChatRuns: a single message, or messages for the model from one operator
+ * in one session, which share one hub turn. Never throws.
+ */
+export async function processChatRun<E extends Env>(options: OperatorAgentOptions<E>, env: E, run: readonly ChatMessage[]): Promise<void> {
+  const message = run[0];
+  if (!message) return;
+  if (run.length > 1 && !run.every((m) => sameSession(message, m) && routeChatText(options, m.text).kind === "turn")) {
+    // Only messages for the model from one session share a turn; anything else is handled one by one.
+    for (const m of run) await processChatRun(options, env, [m]);
+    return;
+  }
   const log = options.logger ?? quiet;
   const channel = resolveChannel(options.operator, env);
   if (!channel) {
-    log.warn("operator channel is not configured; a queued message was dropped", { updateId: message.updateId });
+    log.warn("operator channel is not configured; a queued message was dropped", { updateIds: run.map((m) => m.updateId) });
     return;
   }
   const reply = async (text: string) => {
@@ -210,8 +319,9 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     const session = { sessionKey: message.sessionKey, chatId: message.chatId };
-    const release = parseReleaseCommand(message.text);
-    if (release) {
+    const route: ChatRoute<E> = run.length > 1 ? { kind: "turn" } : routeChatText(options, message.text);
+    if (route.kind === "release") {
+      const release = route.command;
       // Queue delivery is at least once: a redelivered release must not run twice. (Each draft is
       // also claimed before it is handed over, so even a second run could not send it again.)
       if (!(await claimEffect(env.DB, message.updateId, RELEASE_EFFECT))) {
@@ -237,8 +347,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Sequences: follow-up release, resume and manual-touch commands, once per message.
-    const sequenceCommand = parseSequenceCommand(message.text);
-    if (sequenceCommand) {
+    if (route.kind === "sequence") {
+      const sequenceCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, SEQUENCE_COMMAND_EFFECT))) {
         log.warn("redelivered sequence command was not run again", { updateId: message.updateId });
         return;
@@ -264,8 +374,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Convert: the meeting commands and the prep brief on demand, once per message.
-    const convertCommand = parseConvertCommand(message.text);
-    if (convertCommand) {
+    if (route.kind === "convert") {
+      const convertCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, CONVERT_COMMAND_EFFECT))) {
         log.warn("redelivered meeting command was not run again", { updateId: message.updateId });
         return;
@@ -283,8 +393,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Autonomy: levels are set only here, by an allowlisted operator, in two steps; once per message.
-    const autonomyCommand = parseAutonomyCommand(message.text);
-    if (autonomyCommand) {
+    if (route.kind === "autonomy") {
+      const autonomyCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, AUTONOMY_COMMAND_EFFECT))) {
         log.warn("redelivered autonomy command was not run again", { updateId: message.updateId });
         return;
@@ -299,8 +409,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Experiments: experiments start in two steps and proposals apply only from here; once per message.
-    const experimentCommand = parseExperimentCommand(message.text);
-    if (experimentCommand) {
+    if (route.kind === "experiment") {
+      const experimentCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, EXPERIMENT_COMMAND_EFFECT))) {
         log.warn("redelivered experiment command was not run again", { updateId: message.updateId });
         return;
@@ -318,8 +428,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Lifecycle follow-ups: an approval sends through the send function after every check; once per message.
-    const followupCommand = parseFollowupCommand(message.text);
-    if (followupCommand) {
+    if (route.kind === "followup") {
+      const followupCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, FOLLOWUP_COMMAND_EFFECT))) {
         log.warn("redelivered follow-up command was not run again", { updateId: message.updateId });
         return;
@@ -343,8 +453,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Self-improvement: list, show, approve and reject proposals, objection answers and the voice profile; once per message.
-    const learningCommand = parseLearningCommand(message.text);
-    if (learningCommand) {
+    if (route.kind === "learning") {
+      const learningCommand = route.command;
       if (!(await claimEffect(env.DB, message.updateId, LEARNING_COMMAND_EFFECT))) {
         log.warn("redelivered learning command was not run again", { updateId: message.updateId });
         return;
@@ -364,9 +474,9 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       await reply(text);
       return;
     }
-    const command = parseCommand(message.text);
     // Replies: list and settle owed replies, and send approved ones, once per message.
-    if (command && isReplyCommand(command.name)) {
+    if (route.kind === "reply") {
+      const command = route.command;
       if (!(await claimEffect(env.DB, message.updateId, REPLY_COMMAND_EFFECT))) {
         log.warn("redelivered reply command was not run again", { updateId: message.updateId });
         return;
@@ -403,7 +513,8 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Reports: the scorecard and the other reports on demand, read-only, once per message.
-    if (command && isReportCommand(command.name)) {
+    if (route.kind === "report") {
+      const command = route.command;
       if (!(await claimEffect(env.DB, message.updateId, REPORT_COMMAND_EFFECT))) {
         log.warn("redelivered report command was not run again", { updateId: message.updateId });
         return;
@@ -418,13 +529,13 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       return;
     }
     // Optional modules: a command a module contributed, once per message, never to the model.
-    const moduleCommand = matchModuleCommand(options.commands, message.text);
-    if (moduleCommand) {
-      const text = await runModuleCommand(options, env, message, moduleCommand, log);
+    if (route.kind === "module") {
+      const text = await runModuleCommand(options, env, message, route.matched, log);
       if (text !== null) await reply(text);
       return;
     }
-    if (command) {
+    if (route.kind === "command") {
+      const command = route.command;
       let text: string;
       try {
         text = await runCommand(
@@ -455,11 +566,15 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       await reply("No model gateway is configured for this deployment, so I cannot work on tasks yet. Commands still work: send /help.");
       return;
     }
-    // Queue delivery is at least once: a redelivered message must not run (and spend on) a second turn.
-    if (!(await claimEffect(env.DB, message.updateId, "operator_chat_turn"))) {
-      log.warn("redelivered chat message was not run again", { updateId: message.updateId });
-      return;
+    // Queue delivery is at least once: a redelivered message must not run (and spend on) a second
+    // turn. Each message of a run is claimed on its own, so one already handled, alone or in an
+    // earlier run, is left out of this turn.
+    const claimed: ChatMessage[] = [];
+    for (const m of run) {
+      if (await claimEffect(env.DB, m.updateId, "operator_chat_turn")) claimed.push(m);
+      else log.warn("redelivered chat message was not run again", { updateId: m.updateId });
     }
+    if (claimed.length === 0) return;
     const turn = await runHubTurn(
       {
         db: env.DB,
@@ -473,7 +588,7 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
         ...(options.now ? { now: options.now } : {}),
         logger: log,
       },
-      { ...session, text: message.text },
+      { ...session, text: claimed.map((m) => m.text).join(CHAT_RUN_SEPARATOR) },
     );
     await reply(turn.reply);
     for (const draft of turn.drafts) {
@@ -485,20 +600,43 @@ export async function processChatMessage<E extends Env>(options: OperatorAgentOp
       if (!result.ok) await reply(`Draft ${draft.id} was saved, but its approval request could not be shown (${result.reason}). It stays pending.`);
     }
   } catch (error) {
-    log.error("operator message failed", { updateId: message.updateId, error: sanitizeErrorMessage(error) });
+    log.error("operator message failed", { updateIds: run.map((m) => m.updateId), error: sanitizeErrorMessage(error) });
     await reply("Something went wrong while handling that message. Nothing was sent. Please try again.");
   }
 }
 
-/** The queue consumer for CHAT_QUEUE. Register it under the chat queue's name. */
+/**
+ * The queue consumer for CHAT_QUEUE. Register it under the chat queue's name. Each run is
+ * acknowledged once it has been handled, whatever happened; a malformed message is acknowledged and
+ * dropped at once.
+ */
 export function createChatConsumer<E extends Env>(options: OperatorAgentOptions<E>): (batch: MessageBatch, env: E, ctx: ExecutionContext) => Promise<void> {
   return async (batch, env) => {
+    const log = options.logger ?? quiet;
+    const queued: Array<{ message: MessageBatch["messages"][number]; body: ChatMessage }> = [];
     for (const message of batch.messages) {
-      try {
-        if (isChatMessage(message.body)) await processChatMessage(options, env, message.body);
-        else (options.logger ?? quiet).warn("malformed chat queue message was dropped", { id: message.id });
-      } finally {
+      if (isChatMessage(message.body)) queued.push({ message, body: message.body });
+      else {
+        log.warn("malformed chat queue message was dropped", { id: message.id });
         message.ack();
+      }
+    }
+    // Merging needs two messages, so a lone message costs no flag read. Planning cannot fail today,
+    // but if it ever did, every message would still be handled, each as its own run.
+    let runs: Array<typeof queued>;
+    try {
+      const merge = queued.length > 1 && (await isChatBatchingEnabled(flagsFromKv(env.KV)));
+      const joinable = merge ? (text: string) => routeChatText(options, text).kind === "turn" : () => false;
+      runs = planChatRuns(queued, (q) => q.body, joinable);
+    } catch (error) {
+      log.warn("chat runs could not be planned; each message runs alone", { error: sanitizeErrorMessage(error) });
+      runs = queued.map((q) => [q]);
+    }
+    for (const run of runs) {
+      try {
+        await processChatRun(options, env, run.map((q) => q.body));
+      } finally {
+        for (const q of run) q.message.ack();
       }
     }
   };

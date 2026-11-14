@@ -6,6 +6,10 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Operator chat
+
+- Messages sent in a row can share one hub turn, behind `operator:chat_batching`: adjacent messages for the model in one chat queue delivery, from the same operator in the same session, are joined by a blank line into one turn with one reply and one turn ceiling, up to 8,000 characters. Commands always run alone and in their place, and each message is still claimed once. The flag needs `max_batch_size` above 1 on the chat queue's consumer; the template keeps 1, so nothing changes until a deployment raises it and turns the flag on ([docs/OPERATOR.md](docs/OPERATOR.md#messages-sent-in-a-row)).
+
 ## 0.2.0 (2026-11-11)
 
 Sharper copy checks, cleaner sourcing reports, two new signal and research sources and a DNS check for the sending domain. As in 0.1.0, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off. Upgrading applies migration `0030` (`gtm migrate`, or `gtm deploy`, which migrates first).

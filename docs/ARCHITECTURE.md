@@ -65,7 +65,7 @@ Core never imports a vendor SDK. Every third party (email providers, mailboxes, 
 | `GATEWAY` | Durable Object `OperatorGateway` | The dashboard's WebSocket connections and requests, including its chat view |
 | `FOLLOWUP_AGENT` | Durable Object `FollowupAgent` | Declared so the binding set validates; it answers 501 to every request ([below](#durable-objects-and-why)) |
 | `EVENTS_QUEUE` | Queue (`gtm setup` names it `<worker>-events`, with a `-dlq` dead-letter queue) | Event spine dispatch |
-| `CHAT_QUEUE` | Queue (`<worker>-chat`) | Operator chat turns, moved off the webhook path and run one at a time |
+| `CHAT_QUEUE` | Queue (`<worker>-chat`) | Operator chat turns, moved off the webhook path and run one at a time; with `operator:chat_batching` on, messages sent in a row share a turn ([OPERATOR.md](OPERATOR.md#messages-sent-in-a-row)) |
 | `JOBS_QUEUE` | Queue (`<worker>-jobs`, with a `-dlq` dead-letter queue; optional) | One message per due job, so each runs in its own invocation |
 | `ASSETS` | Static assets | The operator dashboard at `/admin` |
 
