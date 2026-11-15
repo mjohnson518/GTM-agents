@@ -180,7 +180,7 @@ export default createWorker(config, {
 });
 ```
 
-`planning.announceShipped` is the `AnnounceShipped` the build side calls, and `planning.evaluatePathPolicy` the path policy it runs. `createWorker`'s `commands` option is how any optional module adds operator chat commands: each `ModuleCommand` (`@gtm-agents/core/operator`) is matched after the allowlist, the agent flag and every built-in command, runs once per message, cannot take a built-in name (`/clean`, `/status`, `/help`, `/start`, `/timers`, `/notes`), and adds its help lines to `/help`. A handler that throws is answered with a generic error and leaves a `module_command_failed` audit row.
+`planning.announceShipped` is the `AnnounceShipped` the build side calls, and `planning.evaluatePathPolicy` the path policy it runs. `createWorker`'s `commands` option is how any optional module adds operator chat commands: each `ModuleCommand` (`@gtm-agents/core/operator`) is matched after the allowlist, the agent flag and every built-in command, runs once per message, cannot take a built-in name (`/clean`, `/status`, `/help`, `/start`, `/timers`, `/notes`, `/outbox`), and adds its help lines to `/help`. A handler that throws is answered with a generic error and leaves a `module_command_failed` audit row.
 
 ## Data
 

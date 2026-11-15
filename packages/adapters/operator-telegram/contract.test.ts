@@ -1,6 +1,6 @@
 // GTM-agents: contract and behavior tests for the operator-telegram adapter, against recorded,
 // synthetic Bot API responses. The chat ids, people and tokens are invented; nothing reaches the network.
-import { AdapterError } from "@gtm-agents/core/ports";
+import { AdapterError, type ApprovalRequest } from "@gtm-agents/core/ports";
 import { describe, expect, it } from "vitest";
 import { testContext } from "../_contract/context.ts";
 import { json, recordedFetch, type RecordedRoute } from "../_contract/fetch.ts";
@@ -119,6 +119,19 @@ describe("operator-telegram", () => {
     const request = createAdapter(ctx).requestApproval({ approvalId: "dr_long", chatId: "100200300", kind: "send", digest, summary: "Approve?", preview: "y".repeat(5000), actions: ["approve"] });
     await expect(request).rejects.toMatchObject({ code: "invalid" });
     expect(calls).toHaveLength(0);
+  });
+
+  it("delivers a silent notice or approval without a notification sound, and others with one", async () => {
+    const { ctx, calls } = context();
+    const channel = createAdapter(ctx);
+    const approval: ApprovalRequest = { approvalId: "dr_quiet", chatId: "100200300", kind: "send", digest: "b".repeat(64), summary: "Approve?", preview: "Hi", actions: ["approve"] };
+    await channel.notify({ text: "Held overnight", chatId: "100200300", silent: true });
+    await channel.requestApproval({ ...approval, silent: true });
+    await channel.requestApproval(approval);
+    const [notice, quietApproval, loudApproval] = await Promise.all(calls.map(sentBody));
+    expect(notice?.disable_notification).toBe(true);
+    expect(quietApproval?.disable_notification).toBe(true);
+    expect(loudApproval).not.toHaveProperty("disable_notification");
   });
 
   it("refuses a button whose data would not fit Telegram's callback limit", async () => {

@@ -18,7 +18,7 @@ import type { Env } from "../env.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
 import type { JobLogger } from "../jobs/registry.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
-import { notifyWithin } from "../runtime/job-runner.ts";
+import { NOTIFY_TIMEOUT_MS, notifyWithin } from "../runtime/job-runner.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { optOutAddress } from "./opt-out.ts";
 import { isUsableSigningKey, verifyUnsubscribeToken } from "./unsubscribe-token.ts";
@@ -110,7 +110,7 @@ export function createUnsubscribeHandlers<E extends Env>(options: UnsubscribeRou
     const eventId = `unsubscribe:${hash}`;
     try {
       if (!(await claimEffect(env.DB, eventId, "operator_notice"))) return;
-      if (!(await notifyWithin(operator, text))) await releaseEffect(env.DB, eventId, "operator_notice");
+      if (!(await notifyWithin(operator, text, NOTIFY_TIMEOUT_MS, "notice"))) await releaseEffect(env.DB, eventId, "operator_notice");
     } catch {
       // Bookkeeping: the opt-out stands without the notice.
     }

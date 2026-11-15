@@ -137,7 +137,8 @@ export async function runAutonomyWatch(deps: WatchDeps): Promise<WatchResult> {
     }
   }
 
-  // 4. A notice for every new demotion, once each, retried until it is delivered.
+  // 4. A notice for every new demotion, once each, retried until it is delivered. It is a page: the
+  //    operator outbox never holds it, and keeps retrying it for a week when the channel refuses it.
   try {
     const since = new Date(now.getTime() - INCIDENT_WINDOW_DAYS * DAY_MS).toISOString();
     const { results } = await db
@@ -158,6 +159,7 @@ export async function runAutonomyWatch(deps: WatchDeps): Promise<WatchResult> {
         await deps.operator.notify({
           text: `Autonomy demoted: ${row.action_class} is back to level ${row.to_level} at most, after ${row.reason ?? "an incident"} (${row.created_at.slice(0, 16).replace("T", " ")} UTC). Its automatically approved drafts that had not gone out are back for review, and nothing in it goes out on its own (the cold batch's auto-approve switch included) until you record a level again with autonomy-set ${row.action_class} <level>.`,
           ...(chat ? { chatId: chat } : {}),
+          kind: "page",
         });
         result.notified += 1;
       } catch (error) {
@@ -177,7 +179,7 @@ export async function runAutonomyWatch(deps: WatchDeps): Promise<WatchResult> {
   }
   if (reconciled.failed > 0 && deps.operator) {
     try {
-      await deps.operator.notify({ text: `The autonomy watch could not record ${reconciled.failed} incident(s) after an automatic send. It tries again next hour; until then every level read that fails counts as level 1.`, ...(deps.chatId ? { chatId: deps.chatId } : {}) });
+      await deps.operator.notify({ text: `The autonomy watch could not record ${reconciled.failed} incident(s) after an automatic send. It tries again next hour; until then every level read that fails counts as level 1.`, ...(deps.chatId ? { chatId: deps.chatId } : {}), kind: "page" });
     } catch {
       // The run row records the failure count.
     }

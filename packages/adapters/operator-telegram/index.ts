@@ -157,7 +157,7 @@ export function createAdapter(ctx: AdapterContext): OperatorChannel {
       if (text.length > MESSAGE_MAX_CHARS) throw new AdapterError("operator-telegram: the approval does not fit in one message, so it was not sent", "invalid", false);
       const payload = approvalPayload(req.approvalId, req.digest);
       const markup = keyboard([req.actions.map((action) => ({ label: LABELS[action], action, payload }))]);
-      return { messageId: await send(target(req.chatId), text, markup, false) };
+      return { messageId: await send(target(req.chatId), text, markup, req.silent === true) };
     },
 
     async editMessage(messageId, message) {

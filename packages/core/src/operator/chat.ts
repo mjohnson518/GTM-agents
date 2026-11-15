@@ -323,9 +323,10 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
     await processTimerRun(options, env, message.timerId, channel, log);
     return;
   }
+  // An answer to the operator's own message: the outbox never holds it.
   const reply = async (text: string) => {
     try {
-      await channel.notify({ text, chatId: message.chatId });
+      await channel.notify({ text, chatId: message.chatId, kind: "reply" });
     } catch (error) {
       log.warn("operator reply failed", { error: sanitizeErrorMessage(error) });
     }
@@ -567,6 +568,7 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
             strategistModel: options.config.models.roles.strategist,
             moduleHelpLines: moduleHelpLines(options.commands),
             flags,
+            quietHours: options.config.operator.quietHours,
             ...(options.now ? { now: options.now } : {}),
           },
           command,

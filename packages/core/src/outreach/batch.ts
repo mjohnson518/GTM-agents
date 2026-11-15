@@ -161,10 +161,10 @@ function linkPolicy(config: Pick<GtmConfig, "company" | "sending">, appUrl: stri
   return { domains: [...new Set(domains)], exactUrls: config.sending.bookingUrl ? [config.sending.bookingUrl] : [] };
 }
 
-async function notify(deps: ColdBatchDeps, text: string): Promise<boolean> {
+async function notify(deps: ColdBatchDeps, text: string, kind?: "page"): Promise<boolean> {
   if (!deps.operator) return false;
   try {
-    await deps.operator.notify({ text });
+    await deps.operator.notify({ text, ...(kind ? { kind } : {}) });
     return true;
   } catch (error) {
     deps.log.warn("an operator message could not be sent", { error: sanitizeErrorMessage(error) });
@@ -180,7 +180,7 @@ async function notifyOnce(deps: ColdBatchDeps, key: string, effect: string, text
   } catch {
     first = true;
   }
-  if (first) await notify(deps, text);
+  if (first) await notify(deps, text, effect === PAGE_EFFECT ? "page" : undefined);
 }
 
 /** The most first touches this run may hand over or draft. 0 means none today. */

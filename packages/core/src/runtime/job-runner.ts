@@ -248,13 +248,13 @@ export async function notifyJobFailure(n: FailureNotice): Promise<"paged" | "esc
  * the caller can release its claim and let a later run retry. A message that arrives after the
  * time-out can therefore be followed by a retry; a duplicate page is preferred to none.
  */
-export async function notifyWithin(operator: OperatorChannel, text: string, timeoutMs: number = NOTIFY_TIMEOUT_MS): Promise<boolean> {
+export async function notifyWithin(operator: OperatorChannel, text: string, timeoutMs: number = NOTIFY_TIMEOUT_MS, kind: "page" | "notice" = "page"): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<false>((resolve) => {
     timer = setTimeout(() => resolve(false), timeoutMs);
   });
   try {
-    return await Promise.race([operator.notify({ text }).then(() => true as const), timeout]);
+    return await Promise.race([operator.notify({ text, kind }).then(() => true as const), timeout]);
   } catch {
     return false;
   } finally {

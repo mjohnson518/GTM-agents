@@ -10,7 +10,8 @@
 // cannot be read counts as off. operator:chat_batching decides whether messages sent in a row share
 // one turn (chat.ts); a value that cannot be read counts as off there too. operator:timers_enabled
 // offers timer_set and lets due timers fire (operator/timers.ts), and operator:notes_enabled offers
-// note_save and notes_read and loads saved notes into turns (agents/notes.ts); unreadable, each is off.
+// note_save and notes_read and loads saved notes into turns (agents/notes.ts), and
+// operator:outbox_enabled holds and paces notices (operator/outbox.ts); unreadable, each is off.
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader } from "../jobs/registry.ts";
 import { isFlagOn } from "../jobs/loop.ts";
@@ -65,6 +66,20 @@ export const NOTES_FLAG = "operator:notes_enabled";
 export async function isNotesEnabled(flags: FlagReader): Promise<boolean> {
   try {
     return isFlagOn(await flags.get(NOTES_FLAG));
+  } catch {
+    return false;
+  }
+}
+
+export const OUTBOX_FLAG = "operator:outbox_enabled";
+
+/**
+ * True only when the flag reads as on. The outbox only delays and folds notices, so off is the
+ * conservative side: a read error or an unset flag sends every message straight to the channel.
+ */
+export async function isOutboxEnabled(flags: FlagReader): Promise<boolean> {
+  try {
+    return isFlagOn(await flags.get(OUTBOX_FLAG));
   } catch {
     return false;
   }

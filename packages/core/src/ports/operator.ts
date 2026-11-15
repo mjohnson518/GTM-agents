@@ -12,6 +12,13 @@ export interface OperatorMessage {
   silent?: boolean;
   /** The chat to deliver to, as the channel reported it in an update. Omitted: the channel's default operator chat. */
   chatId?: string;
+  /**
+   * How soon the operator must see it, for core's operator outbox (operator/outbox.ts); channels
+   * ignore it. "reply" answers something the operator just sent and is always delivered at once.
+   * "page" (a failing job, an alert) is delivered at once, silently during quiet hours. "notice", the
+   * default, may be held for quiet hours or the hourly limit and delivered later, folded with others.
+   */
+  kind?: "reply" | "page" | "notice";
 }
 
 export interface ApprovalRequest {
@@ -24,6 +31,8 @@ export interface ApprovalRequest {
   summary: string;
   preview: string;
   actions: Array<"approve" | "edit" | "skip" | "snooze" | "reject">;
+  /** Deliver without a sound or vibration where the channel supports it (core sets it during quiet hours). */
+  silent?: boolean;
 }
 
 export type OperatorUpdate =

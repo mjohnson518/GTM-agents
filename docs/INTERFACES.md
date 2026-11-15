@@ -441,8 +441,9 @@ export interface OperatorMessage {
   text: string;                        // plain text or the channel's minimal markup
   buttons?: Array<Array<{ label: string; action: string; payload: string }>>;   // rows of buttons
   threadKey?: string;                  // groups related messages when the channel supports it
-  silent?: boolean;
+  silent?: boolean;                    // no sound or vibration where the channel supports it
   chatId?: string;                     // the chat to send to; the adapter's default chat when omitted
+  kind?: "reply" | "page" | "notice";  // for core's outbox only; adapters ignore it
 }
 
 export interface ApprovalRequest {
@@ -453,6 +454,7 @@ export interface ApprovalRequest {
   summary: string;
   preview: string;
   actions: Array<"approve" | "edit" | "skip" | "snooze" | "reject">;
+  silent?: boolean;                    // core sets it during quiet hours
 }
 
 export type OperatorUpdate =
@@ -476,6 +478,8 @@ export interface OperatorChannel {
 An approval button's callback payload is `<approvalId>.<the first 32 hex characters of the digest>`. Core re-reads the item, recomputes its digest and refuses the tap when they differ, so an approval never covers content the operator did not see. [OPERATOR.md](OPERATOR.md) covers setting up the operator chat.
 
 Authorization, meaning which chat and user ids may command the agent, belongs to core and comes from `gtm.config.ts`. The adapter only reports ids.
+
+An adapter delivers what it is given, when it is given it. Quiet hours, the hourly limit and retries belong to core's outbox (`withOperatorOutbox`, [OPERATOR.md](OPERATOR.md#quiet-hours-and-the-outbox)), which wraps any channel: it reads `kind` to decide what may wait, and sets `silent` on the messages and approval requests it delivers during quiet hours. An adapter honors `silent` where its vendor can, and throws an `AdapterError` with `retryable` set for errors worth retrying (rate limits, outages), so the outbox knows which to keep.
 
 ### CalendarProvider
 

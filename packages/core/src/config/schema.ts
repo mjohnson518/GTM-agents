@@ -6,6 +6,7 @@
 import { z } from "zod";
 import { ACTION_CLASSES, isPermanentHuman } from "../autonomy/levels.ts";
 import { MODEL_ROLES } from "../ports/model.ts";
+import { isValidTimezone } from "../sending/timezone.ts";
 
 const DOMAIN = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 /** One or more DNS labels (letters, digits, hyphens), as a DKIM selector is (RFC 6376, section 3.1). */
@@ -128,6 +129,21 @@ export const configSchema = z
         /** Chat ids allowed to command the agent. Empty denies everyone. */
         allowedChatIds: z.array(z.string().min(1)).default([]),
         allowedUserIds: z.array(z.string().min(1)).default([]),
+        /**
+         * Hours, in the operator's own time zone, when notices are held instead of delivered
+         * (docs/OPERATOR.md#quiet-hours-and-the-outbox): whole hours, start inclusive, end exclusive,
+         * and the window may cross midnight (start 22, end 7). Held notices arrive together when the
+         * window ends; replies to the operator are never held, and pages and approval requests arrive
+         * silently. Used only while operator:outbox_enabled is on.
+         */
+        quietHours: z
+          .strictObject({
+            start: z.number().int().min(0).max(23),
+            end: z.number().int().min(0).max(23),
+            timeZone: z.string().refine(isValidTimezone, "use an IANA time zone, for example America/New_York"),
+          })
+          .refine((q) => q.start !== q.end, "quietHours.start and quietHours.end must differ")
+          .optional(),
       })
       .prefault({}),
     /**

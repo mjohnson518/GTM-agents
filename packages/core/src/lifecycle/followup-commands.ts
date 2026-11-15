@@ -164,7 +164,8 @@ export async function runFollowupCommand(deps: FollowupCommandDeps, command: Fol
   if (row.shown_digest !== digest) {
     // An approval covers exactly what was shown: show this version, and wait for a new command.
     const preview = followupPreview({ id: row.id, rule, who, enteredAt: row.entered_at, createdAt: row.created_at, to: row.recipient_email, subject: row.subject ?? "", body: row.body ?? "", notes: ["It changed since it was shown to you, or was never shown. This is the version an approval sends."] });
-    if (await tellOperator({ operator: deps.operator, chatId: deps.chatId, log: deps.log }, preview)) {
+    // The preview answers this command, so the outbox never holds it.
+    if (await tellOperator({ operator: deps.operator, chatId: deps.chatId, log: deps.log }, preview, "reply")) {
       await db.prepare("UPDATE lifecycle_followups SET shown_digest = ?2, updated_at = ?3 WHERE id = ?1 AND status = 'drafted'").bind(row.id, digest, at).run();
       return `Nothing was sent: review the version above, then send fu-approve-${row.id} again.`;
     }

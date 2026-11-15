@@ -1,6 +1,6 @@
 # The operator chat
 
-This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, timers the agent sets for itself, notes it keeps across sessions, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
+This page is for deployers who want to talk to their agent from a chat app: it covers creating the Telegram bot, the secrets, wiring and registering the webhook, the allowlist, the commands, approvals, sessions and taint, timers the agent sets for itself, notes it keeps across sessions, quiet hours and pacing for the notices the system sends you, and the flag that turns the agent on. Contributors writing another channel adapter should read [INTERFACES.md](INTERFACES.md#operatorchannel) for the port; the security reasoning behind sessions and taint is in [SECURITY-MODEL.md](SECURITY-MODEL.md).
 
 ## How a message is handled
 
@@ -22,7 +22,7 @@ CHAT_QUEUE -> the chat consumer, one delivery at a time
               that set it ([Timers](#timers))
 ```
 
-Nothing touches the database before the update is verified. The agent never sends email from chat: approving a draft marks it approved, and sending is a separate path with its own gates.
+Nothing touches the database before the update is verified. The agent never sends email from chat: approving a draft marks it approved, and sending is a separate path with its own gates. Replies to your messages always come at once; the notices the system starts itself (reports, sweeps, reminders) can wait out quiet hours with the outbox on ([Quiet hours and the outbox](#quiet-hours-and-the-outbox)).
 
 ### Messages sent in a row
 
@@ -95,7 +95,7 @@ export default createWorker(config, {
 });
 ```
 
-The same `operator` channel also delivers job failure pages and cron health pages. Add `@gtm-agents/adapters` to the worker's dependencies.
+The same `operator` channel also delivers job failure pages and cron health pages. Add `@gtm-agents/adapters` to the worker's dependencies. The template wraps the channel in the outbox, which holds notices for quiet hours once you turn it on ([Quiet hours and the outbox](#quiet-hours-and-the-outbox)).
 
 In `gtm.config.ts`, enable the adapters, give the strategist role a model, and price it. A model without a price is never called, because its cost could not be recorded:
 
@@ -164,6 +164,7 @@ npx gtm flags set operator:agent_enabled true
 | `/status` | The session's taint, how many messages it holds, drafts waiting for approval, today's chat spend, the strategist model |
 | `/notes`, `/notes forget <id>`, `/notes forget all` | The notes the agent saved for the deployment, with the taint each keeps, and forgetting them ([Notes](#notes)); works in the dashboard too |
 | `/timers`, `/timers cancel <id>`, `/timers cancel all` | The timers the agent set in this chat, with when each is due and the taint it carries, and cancelling them ([Timers](#timers)) |
+| `/outbox`, `/outbox send` | The notices held for quiet hours, the hourly limit or a Telegram error, with why each waits, and releasing them all to arrive with the next outbox run ([Quiet hours and the outbox](#quiet-hours-and-the-outbox)) |
 | `/help` (or `/start`) | What the agent can do and how sessions, taint and approvals work |
 
 The other capabilities add their own commands, documented with them. `/help` lists every one:
@@ -296,6 +297,59 @@ So `/clean` still starts a clean session: clean notes are clean, and nothing tai
 
 `/notes` lists every note with the taint it keeps, and `/notes forget <id>` or `/notes forget all` deletes them; both work whether the flag is on or not. Erasing a person deletes every note that names one of their addresses. While the flag is off, no note is read or saved.
 
+## Quiet hours and the outbox
+
+With `operator:outbox_enabled` on, the messages the system starts itself (reports and digests, sweep, batch and booking notices, reply reminders, a timer's reply) go through an outbox, so they can wait for a better moment and arrive together:
+
+- **Quiet hours.** During `operator.quietHours` in `gtm.config.ts`, notices are held. When the quiet hours end they arrive as one message per chat, oldest first, each with the time it was written.
+- **The hourly limit.** Once a chat has had `operator:outbox_hourly_max` notices (12 by default) in the current UTC hour, later ones that hour are held and arrive together at the next hour. Notices folded into one message count once. At 0, every notice arrives in one message an hour.
+- **Retries.** A notice Telegram refuses with a retryable error (rate limited, unavailable) is kept and tried again after about 5, 10, 20 and 40 minutes, then hourly. A notice is dropped a day after it was written and a page after a week, with an error in the logs. Any other error is reported to the code that sent it, as without the outbox.
+
+Some messages are never held:
+
+| Message | With the outbox on |
+|---|---|
+| Replies to your messages and commands, including the preview `fu-approve` shows of a changed lifecycle follow-up | Delivered at once, always |
+| Pages: job failure, escalation, cron health and dead-letter pages; delivery pages (circuit breaker, bounces and complaints, the deferred queue, liveness); a cold batch held at readiness RED; autonomy demotions and the autonomy watch's failures; the alert for an opt-out that could not be written | Delivered at once, silently (no sound) during quiet hours, and retried when Telegram refuses them |
+| Approval requests | Delivered at once, silently during quiet hours. An approval binds to exactly what you were shown, so a request is never held |
+| A message with buttons | Delivered at once |
+| Everything else | Held during quiet hours and over the hourly limit |
+
+To turn it on:
+
+1. Wrap the channel and register the delivery job. The template does both in `apps/worker/src/index.ts`. An entry written before the outbox existed changes its `operator` factory and adds the job:
+
+   ```ts
+   import { createOperatorOutboxJobs, withOperatorOutbox } from "@gtm-agents/core/operator";
+
+   const operator = (env: Env) =>
+     withOperatorOutbox(createTelegram(context(env, "operator-telegram")), { db: env.DB, flags: kvFlagReader(env.KV), quietHours: config.operator.quietHours });
+   const outbox = createOperatorOutboxJobs<Env>({ operator });
+   // jobs: [..., ...outbox]
+   ```
+
+   Pass the same wrapped `operator` to `createWorker` and to every job factory. The job always delivers through the channel inside the wrapper, never back through the outbox.
+2. Set quiet hours in `gtm.config.ts`, if you want them: whole hours in your own time zone, start inclusive and end exclusive. The window may cross midnight. Without them, notices are held only over the hourly limit.
+
+   ```ts
+   operator: {
+     allowedChatIds: ["123456789"],
+     allowedUserIds: ["123456789"],
+     quietHours: { start: 22, end: 7, timeZone: "America/New_York" },
+   },
+   ```
+
+3. Apply the migrations, which create `operator_outbox`, and turn the flag on:
+
+   ```bash
+   npx gtm migrate
+   npx gtm flags set operator:outbox_enabled true
+   ```
+
+A lifecycle follow-up's preview that the outbox holds does not count as shown: `fu-approve` then shows it to you first, as it does for one you never saw.
+
+`/outbox` lists what is held and why, and `/outbox send` releases all of it, quiet hours or not, to arrive with the next outbox run. The `operator_outbox` job runs every five minutes, makes no model call, and has no flag of its own, so turning the outbox off never strands a notice: anything still held goes out with the next run. The outbox never loses a notice to its own failures either: one that cannot be held or counted goes to Telegram at once. The table keeps a notice's text only while it waits. Delivered and dropped rows are deleted after two days, and erasing a person deletes every held notice that names one of their addresses. With the flag off, or unreadable, every message goes straight to Telegram; while it is unreadable the job keeps quiet hours for what is already held, and only a flag that reads off releases everything at once. The halt flag stops the job like any job, so held messages wait out a halt. Two things to know: a held notice is not ordered against one delivered at once (a notice sent in the minute a fold goes out can arrive first), and the hourly limit is counted per chat id as the sender passes it, so messages to the default chat and to the same chat named by id are counted apart.
+
 ## Approvals
 
 Every draft a turn creates comes back as an approval request showing the whole draft, with Approve and Reject buttons. Each button carries the draft's id and the digest of exactly the text you were shown.
@@ -316,6 +370,7 @@ Every draft a turn creates comes back as an approval request showing the whole d
 | Messages per chat | 30 a minute | Fixed: the `chat` category in `RATE_LIMITS` (`packages/core/src/security/rate-limiter.ts`) |
 | Timers fired per day, each one a chat turn | 20 | `operator:timers_daily_max` ([Timers](#timers)) |
 | Saved notes shown in each turn | 4,000 bytes | Fixed: `NOTES_PROMPT_MAX_BYTES` ([Notes](#notes)) |
+| Notices delivered on their own to one chat in one UTC hour, with the outbox on | 12 | `operator:outbox_hourly_max` ([Quiet hours and the outbox](#quiet-hours-and-the-outbox)) |
 | Page fetches | 40 an hour | Fixed: the `web` category in `RATE_LIMITS` |
 
 Every model call writes a row to the cost ledger with the turn, its run and the job `operator_chat`, priced from `models.pricing`. Each turn writes one row to `execution_runs` with trigger `chat`. A turn is never retried automatically: ask again instead.
@@ -333,6 +388,7 @@ Every model call writes a row to the cost ledger with the turn, its run and the 
 | "has no valid price in models.pricing" | Price the strategist model in `gtm.config.ts` |
 | "drafting is refused" | The session read a web page; send `/clean` and give the facts |
 | `/api/...` answers 503 | `GATEWAY_TOKEN` is unset |
+| A report or notice arrives hours late, or several arrive in one message | The outbox held them for quiet hours or the hourly limit; `/outbox` shows what is waiting |
 
 Every route under `/api/webhooks/` skips the bearer token and must verify its own signature. If you mount your own route there, verify the request before reading or writing anything.
 

@@ -136,6 +136,7 @@ export async function runReplyPipeline(deps: PipelineDeps): Promise<PipelineResu
         await deps.operator.notify({
           text: `An opt-out from ${senderLabel(row.sender_email)} could not be written yet [${row.id}]. It is retried every run until it lands; no reply goes to them meanwhile.`,
           ...(deps.approvalChatId ? { chatId: deps.approvalChatId } : {}),
+          kind: "page",
         });
       } catch {
         await releaseEffect(db, key, "opt_out_alert");

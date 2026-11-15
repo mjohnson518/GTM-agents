@@ -5,6 +5,7 @@
 //   /status  the session's taint and size, drafts waiting for approval, today's chat spend
 //   /timers  the timers the agent set in this chat; /timers cancel <id> or /timers cancel all
 //   /notes   the notes the agent saved for the deployment; /notes forget <id> or /notes forget all
+//   /outbox  notices held for quiet hours or the hourly limit; /outbox send releases them
 //   /help    what the agent can do and how sessions, taint and approvals work (also /start)
 //
 // One command does not start with "/": `batch-release-<id>-<code>` releases a cold batch that waits
@@ -65,6 +66,7 @@ import { startOfUtcDay } from "../shared/kv.ts";
 import { cancelSessionTimers } from "../agents/timers.ts";
 import { TIMERS_HELP_LINE, runTimersCommand } from "./timers.ts";
 import { NOTES_HELP_LINE, runNotesCommand } from "./notes.ts";
+import { OUTBOX_HELP_LINE, runOutboxCommand, type QuietHours } from "./outbox.ts";
 
 export { parseReleaseCommand } from "../outreach/release.ts";
 // Sequences: the follow-up release, resume and manual-touch commands.
@@ -114,6 +116,7 @@ export function helpText(agentName: string, domain = "your-prospect.example", mo
     "/status  session taint, drafts waiting for approval, today's chat spend",
     TIMERS_HELP_LINE,
     NOTES_HELP_LINE,
+    OUTBOX_HELP_LINE,
     "/help  this message",
     "batch-release-<id>-<code>  send a cold batch that waits for you (the batch message carries the exact command)",
     "sequence-release-<id>-<code>  send follow-ups that wait for you (the follow-up message carries the exact command)",
@@ -142,8 +145,10 @@ export interface CommandDeps {
   strategistModel: string | undefined;
   /** The optional modules' /help lines. */
   moduleHelpLines?: readonly string[];
-  /** Flags, so /timers and /notes can say whether timers and notes are on. */
+  /** Flags, so /timers, /notes and /outbox can say whether timers, notes and the outbox are on. */
   flags?: FlagReader;
+  /** operator.quietHours from gtm.config.ts, which /outbox shows. */
+  quietHours?: QuietHours | undefined;
   now?: () => Date;
 }
 
@@ -166,6 +171,8 @@ export async function runCommand(deps: CommandDeps, command: ParsedCommand, sess
     }
     case "notes":
       return runNotesCommand({ db: deps.db, ...(deps.flags ? { flags: deps.flags } : {}) }, command.args);
+    case "outbox":
+      return runOutboxCommand({ db: deps.db, ...(deps.flags ? { flags: deps.flags } : {}), quietHours: deps.quietHours, now }, command.args);
     case "timers":
       return runTimersCommand({ db: deps.db, ...(deps.flags ? { flags: deps.flags } : {}), now }, command.args, session);
     case "help":

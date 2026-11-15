@@ -10,14 +10,15 @@
 // cold_batch:enabled, real sends behind delivery:enabled, mailbox intake behind inbox:enabled,
 // reply triage and drafting behind the replies:* flags, follow-ups behind sequences:enabled, and
 // the scorecard and digests behind the ops:* flags, calendar sync behind convert:calendar_enabled,
-// product events and billing behind lifecycle:enabled and billing:enabled, and the timers the chat
-// agent sets for itself behind operator:timers_enabled.
+// product events and billing behind lifecycle:enabled and billing:enabled, the timers the chat
+// agent sets for itself behind operator:timers_enabled, and quiet hours and pacing for operator
+// notices behind operator:outbox_enabled.
 // Adapters are built per request or per job run, so a secret is read only when it is used.
 import { createWorker, kvFlagReader, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
 import { createExperimentJobs } from "@gtm-agents/core/experiments";
-import { createOperatorTimerJobs } from "@gtm-agents/core/operator";
+import { createOperatorOutboxJobs, createOperatorTimerJobs, withOperatorOutbox } from "@gtm-agents/core/operator";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
 import { createAutonomyJobs } from "@gtm-agents/core/autonomy/runtime";
 import { createInboxJobs } from "@gtm-agents/core/inbox";
@@ -45,7 +46,10 @@ import config from "../gtm.config.ts";
 export { FollowupAgent, OperatorGateway } from "@gtm-agents/core/durable-objects";
 
 const context = (env: Env, name: string) => createAdapterContext({ name, env: { ...env }, config });
-const operator = (env: Env) => createTelegram(context(env, "operator-telegram"));
+// The operator channel, through the outbox (docs/OPERATOR.md#quiet-hours-and-the-outbox): with
+// operator:outbox_enabled on, notices wait out operator.quietHours and the hourly limit, and are
+// retried when Telegram refuses them. Replies to your own messages are never held.
+const operator = (env: Env) => withOperatorOutbox(createTelegram(context(env, "operator-telegram")), { db: env.DB, flags: kvFlagReader(env.KV), quietHours: config.operator.quietHours });
 const model = (env: Env) => createModelGateway(context(env, "llm-gateway"));
 const email = (env: Env) => createResend(context(env, "email-resend"));
 // The warm mailbox: replies arrive here, reply drafts are mirrored here, and approved replies are sent
@@ -143,12 +147,16 @@ const learning = createLearningJobs<Env>({ model, operator });
 // The agent offers timer_set only when this job is registered.
 const timers = createOperatorTimerJobs<Env>();
 
+// The outbox's delivery: every five minutes, held notices that are due go out, folded together. It
+// has no flag, so anything held while the outbox was on still goes out after it is turned off.
+const outbox = createOperatorOutboxJobs<Env>({ operator });
+
 // Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
 const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, ...outbox, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},

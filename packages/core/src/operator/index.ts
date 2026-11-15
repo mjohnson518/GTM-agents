@@ -1,7 +1,7 @@
 // GTM-agents: the operator module's public surface: the operator webhook, the chat queue consumer,
-// commands, draft approvals and the allowlist. createWorker wires these up; docs/OPERATOR.md is the
+// commands, draft approvals, the allowlist and the outbox that paces notices. createWorker wires these up; docs/OPERATOR.md is the
 // deployer's guide.
-export { AGENT_DISABLED_TEXT, AGENT_FLAG, CHAT_BATCHING_FLAG, NOTES_FLAG, TIMERS_FLAG, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled, isNotesEnabled, isTimersEnabled } from "./access.ts";
+export { AGENT_DISABLED_TEXT, AGENT_FLAG, CHAT_BATCHING_FLAG, NOTES_FLAG, OUTBOX_FLAG, TIMERS_FLAG, isAgentEnabled, isAllowedOperator, isChatBatchingEnabled, isNotesEnabled, isOutboxEnabled, isTimersEnabled } from "./access.ts";
 export { APPROVAL_DIGEST_CHARS, approvalPayload, parseApprovalPayload, payloadMatchesDigest } from "./approval-payload.ts";
 export { APPROVAL_SUMMARY, approveShownDraft, draftPreview, handleApprovalCallback, rejectDraftById, requestDraftApproval } from "./approvals.ts";
 export type { ApprovalDeps, ApprovalOutcome, ApprovalRequestResult, DraftDecision } from "./approvals.ts";
@@ -25,4 +25,24 @@ export {
 } from "./timers.ts";
 export type { OperatorTimerJobOptions } from "./timers.ts";
 export { NOTES_HELP_LINE, runNotesCommand } from "./notes.ts";
+export {
+  OUTBOX_FOLD_MAX_CHARS,
+  OUTBOX_GIVE_UP_MS,
+  OUTBOX_PAGE_GIVE_UP_MS,
+  OUTBOX_HELP_LINE,
+  OUTBOX_HOURLY_MAX,
+  OUTBOX_HOURLY_MAX_FLAG,
+  OUTBOX_JOB,
+  OUTBOX_PER_RUN,
+  OUTBOX_SCHEDULE,
+  createOperatorOutboxJobs,
+  deliverHeldNotices,
+  foldNotices,
+  isHeldMessageId,
+  quietHoursEnd,
+  runOutboxCommand,
+  unwrapOutbox,
+  withOperatorOutbox,
+} from "./outbox.ts";
+export type { OperatorOutboxJobOptions, OutboxDeps, QuietHours } from "./outbox.ts";
 export { OPERATOR_UPDATE_EFFECT, OPERATOR_WEBHOOK_PATH, createOperatorWebhook, updateKey } from "./webhook.ts";

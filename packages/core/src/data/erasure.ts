@@ -7,11 +7,12 @@
 //      or emailed;
 //   2. deletes rows that hold one of their addresses without a contact link, matching case,
 //      surrounding spaces and the "Name <address>" form: candidates and their evidence, drafts and
-//      deferred sends, referrals naming them, operator chat messages that mention them, cached
-//      verification results, calendar events that hold one of their address hashes or are linked
-//      to their contact (calendar sync; a meeting that belongs to someone else loses only their
-//      attendee entry, hash, domain and contact id), and deal handoff briefs about them (linked
-//      through their contact's deals, or naming one of their addresses). Before that batch,
+//      deferred sends, referrals naming them, operator chat messages, timers, notes and held
+//      outbox notices that mention them, cached verification results, calendar events that hold
+//      one of their address hashes or are linked to their contact (calendar sync; a meeting that
+//      belongs to someone else loses only their attendee entry, hash, domain and contact id), and
+//      deal handoff briefs about them (linked through their contact's deals, or naming one of
+//      their addresses). Before that batch,
 //      inbound mail they sent or that names them (in its
 //      subject, preview or headers, or as a failed recipient of a delivery report) is deleted,
 //      each body from blob storage before its row (the bucket option is required when bodies
@@ -207,11 +208,12 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     db.prepare(`DELETE FROM deferred_sends WHERE ${addressIn("recipient_email")}`).bind(addresses),
     db.prepare(`DELETE FROM referrals WHERE ${addressIn("referee_email")}`).bind(addresses),
     // Operator chat history can quote an address; drop any message that mentions one of them, any
-    // timer whose note does (a deleted timer never fires: its queued message finds no row), and any
-    // saved note that does.
+    // timer whose note does (a deleted timer never fires: its queued message finds no row), any
+    // saved note that does, and any notice waiting in the operator outbox that does.
     db.prepare("DELETE FROM chat_messages WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(content), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM operator_timers WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(note), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM operator_notes WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(text), value) > 0)").bind(addresses),
+    db.prepare("DELETE FROM operator_outbox WHERE text IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(text), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM email_verifications WHERE email_sha256 IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([fields.email_sha256, ...hashes.map(([h]) => h)])),
     // Calendar sync: a meeting that belongs to someone else stays theirs and loses the person's
     // attendee entry and contact id; events linked to their contact or still holding one of their

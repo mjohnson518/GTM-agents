@@ -75,7 +75,7 @@ export function createOperatorWebhook<E extends Env>(options: OperatorAgentOptio
     if (!(await isAgentEnabled(flagsFromKv(env.KV)))) {
       try {
         if (update.type === "callback") await channel.acknowledgeCallback(update.callbackId, "The operator agent is turned off.");
-        else await channel.notify({ text: AGENT_DISABLED_TEXT, chatId: update.chatId });
+        else await channel.notify({ text: AGENT_DISABLED_TEXT, chatId: update.chatId, kind: "reply" });
       } catch (error) {
         log?.warn("disabled notice could not be sent", { error: sanitizeErrorMessage(error) });
       }
@@ -100,7 +100,7 @@ export function createOperatorWebhook<E extends Env>(options: OperatorAgentOptio
     const limit = await checkRateLimit(env.KV, "chat", update.chatId);
     if (!limit.allowed) {
       try {
-        await channel.notify({ text: `Too many messages. Try again in ${limit.retryAfterSeconds ?? 60} seconds.`, chatId: update.chatId });
+        await channel.notify({ text: `Too many messages. Try again in ${limit.retryAfterSeconds ?? 60} seconds.`, chatId: update.chatId, kind: "reply" });
       } catch {
         // Nothing else to do.
       }

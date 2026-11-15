@@ -32,6 +32,7 @@
 // it was edited first; an automatic send records auto_sent evidence for its class, and the commands
 // record the operator's decision (followup-evidence.ts). Offers record none.
 // A sweep never throws for one contact: a failure is logged and the next sweep tries again.
+import { isHeldMessageId } from "../operator/outbox.ts";
 import { readAutonomyLevel } from "../autonomy/store.ts";
 import type { ReviewSpend } from "../quality/reviewer.ts";
 import { loadBrain, type KVReader } from "../brain/load.ts";
@@ -168,12 +169,21 @@ export function followupPreview(input: { id: string; rule: FollowupRule; who: st
   ].join("\n");
 }
 
-/** Tell the operator something. Returns false when there is no channel or it failed (bookkeeping: never throws). */
-export async function tellOperator(deps: { operator?: OperatorChannel | undefined; chatId?: string | undefined; log?: JobLogger | undefined }, text: string): Promise<boolean> {
+/**
+ * Tell the operator something. Returns true only when the message was delivered: false when there is
+ * no channel, it failed, or the operator outbox held it for later (an approval binds to what was
+ * shown, so a held preview was not shown). `kind: "reply"` marks an answer to the operator's own
+ * command, which the outbox never holds. Bookkeeping: never throws.
+ */
+export async function tellOperator(
+  deps: { operator?: OperatorChannel | undefined; chatId?: string | undefined; log?: JobLogger | undefined },
+  text: string,
+  kind?: "reply",
+): Promise<boolean> {
   if (!deps.operator) return false;
   try {
-    await deps.operator.notify({ text, ...(deps.chatId ? { chatId: deps.chatId } : {}) });
-    return true;
+    const { messageId } = await deps.operator.notify({ text, ...(deps.chatId ? { chatId: deps.chatId } : {}), ...(kind ? { kind } : {}) });
+    return !isHeldMessageId(messageId);
   } catch (error) {
     deps.log?.warn("a lifecycle follow-up notice could not be sent", { error: sanitizeErrorMessage(error) });
     return false;
