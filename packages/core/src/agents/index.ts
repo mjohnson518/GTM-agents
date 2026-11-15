@@ -1,5 +1,6 @@
 // GTM-agents: the agents module's public surface: the hub agent's chat turn, its system prompt, the
-// chat sessions that carry taint and history across turns, the timers a turn can set and the notes it can save. Test doubles live in
+// chat sessions that carry taint and history across turns, the timers a turn can set, the notes it can save
+// and the decision lines that tell a session what the operator did with its drafts. Test doubles live in
 // "@gtm-agents/core/agents/testing".
 export { CHAT_JOB, DEFAULT_MAX_ROUNDS, DEFAULT_MAX_TOKENS, runHubTurn } from "./hub.ts";
 export type { AgentLogger, HubAgentDeps, TurnInput, TurnResult, TurnStop } from "./hub.ts";
@@ -11,10 +12,12 @@ export {
   appendTurn,
   clearSession,
   ensureSession,
+  isSystemMessage,
   loadSession,
   raiseSessionTaint,
   sessionKeyFor,
   shapeHistory,
+  systemMessageContent,
 } from "./sessions.ts";
 export type { HistoryMessage, SessionState } from "./sessions.ts";
 export {
@@ -59,3 +62,5 @@ export {
   readNotes,
 } from "./notes.ts";
 export type { NewNote, Note } from "./notes.ts";
+export { DECISION_LINES_FLAG, decisionLine, isDecisionLinesEnabled, noteDraftDecision, recordDraftOrigins, writeDecisionLine } from "./decisions.ts";
+export type { DecidedDraft, DraftDecisionKind } from "./decisions.ts";

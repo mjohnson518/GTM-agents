@@ -16,8 +16,9 @@
 // budgets, the turn ceiling and cost records run exactly as without streaming. chat.abort aborts the
 // turn's signal, which stops the model's stream and every further delta. A gateway that does not
 // stream, and every command, answers with one chat.delta carrying the whole reply, then chat.done.
-// History keeps only final replies, never streamed pieces.
-import { sessionKeyFor } from "../agents/sessions.ts";
+// History keeps only final replies, never streamed pieces, and chat.history leaves out the decision
+// lines core writes into the session for the model (agents/decisions.ts).
+import { SYSTEM_ROW_SQL, sessionKeyFor } from "../agents/sessions.ts";
 import { runHubTurn } from "../agents/hub.ts";
 import { parseAutonomyCommand } from "../autonomy/commands.ts";
 import { parseConvertCommand } from "../convert/commands.ts";
@@ -155,7 +156,8 @@ export const chatSend: Handler<"chat.send"> = async (p, ctx) => {
 
 export const chatHistory: Handler<"chat.history"> = async (p, ctx) => {
   const chatId = dashboardChatId(ctx.state.email);
-  const { results } = await ctx.env.DB.prepare("SELECT role, content, created_at FROM chat_messages WHERE session_key = ?1 ORDER BY id DESC LIMIT ?2")
+  // A line core wrote for the model (a decision line) is not something either side said here.
+  const { results } = await ctx.env.DB.prepare(`SELECT role, content, created_at FROM chat_messages WHERE session_key = ?1 AND NOT ${SYSTEM_ROW_SQL} ORDER BY id DESC LIMIT ?2`)
     .bind(sessionKeyFor(chatId), p.limit ?? 40)
     .all<{ role: string; content: string; created_at: string }>();
   const out: Array<{ role: "operator" | "agent"; text: string; at: string }> = [];

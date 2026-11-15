@@ -359,6 +359,30 @@ Every draft a turn creates comes back as an approval request showing the whole d
 - **Reject** marks the draft rejected.
 - A draft too long to show in one message is never shown truncated; the request fails and the draft stays pending.
 
+### Decisions in the session
+
+You decide on a draft outside any turn, with a button or in the dashboard, so by default the agent does not learn what you decided: ask it about the draft and it may still say the draft is waiting. With `operator:decision_lines_enabled` on, every approval or rejection of a draft that a chat turn created while the flag was on is written back into the session that created it, as one line:
+
+```bash
+npx gtm flags set operator:decision_lines_enabled true
+```
+
+```
+[Decision from the system: at 2026-11-15 12:40 UTC the operator approved draft dr_1a2b3c4d5e6f7a8b (warm_intro to jane@globex.example). Approving does not send it.]
+```
+
+- The next turn in that session sees the line in front of your message, and later turns see it in the history, where it happened. No model call is made when you decide: the agent reads the line the next time you write, or when a timer of its own fires.
+- The line goes to the session whose turn created the draft, wherever you tap. A draft written from the dashboard is approved in the operator chat, and its line goes back to your dashboard session, not to the chat's.
+- A session you cleared with `/clean` after the draft was created gets no line: that conversation is over.
+- Only drafts a turn created write a line. Replies drafted from inbound mail, meeting follow-ups and other drafts the system writes on its own never do, because their recipients came from mail and records the session never read.
+- The line carries no taint. Core writes it from the draft's row, and the recipient it names is one the same session already wrote, after the session's taint covered whatever it read to find it.
+- A line that cannot be written (for example, before migration 0034 is applied) is logged and skipped. The decision itself is never affected.
+- A decision made while the turn that created the draft is still running is written when that turn ends. Its line is stored before that turn's messages, so a later turn may read it in front of a reply that did not know about it yet.
+- Lines never count against the 40 messages of conversation a turn loads. A turn loads at most 20 of them; when more are waiting, the first line says how many earlier decisions are not shown.
+- The dashboard's chat history, its history search and `/status` count only what you and the agent said, not these lines.
+
+Turning the flag off stops new lines. Lines already written stay in the history until `/clean`.
+
 ## Costs and limits
 
 | Limit | Default | Change it with |
@@ -389,6 +413,7 @@ Every model call writes a row to the cost ledger with the turn, its run and the 
 | "drafting is refused" | The session read a web page; send `/clean` and give the facts |
 | `/api/...` answers 503 | `GATEWAY_TOKEN` is unset |
 | A report or notice arrives hours late, or several arrive in one message | The outbox held them for quiet hours or the hourly limit; `/outbox` shows what is waiting |
+| The agent says a draft is still waiting after you approved or rejected it | `operator:decision_lines_enabled` is off, the draft was created before it was turned on, or you sent `/clean` since ([Decisions in the session](#decisions-in-the-session)) |
 
 Every route under `/api/webhooks/` skips the bearer token and must verify its own signature. If you mount your own route there, verify the request before reading or writing anything.
 

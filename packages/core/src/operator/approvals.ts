@@ -16,7 +16,12 @@
 // Approving marks the draft approved. It never sends anything: sending is a separate path with its
 // own gates, and it verifies the approval digest again before relying on it. Each approve or reject
 // of a meeting draft is autonomy evidence for its class (autonomy/evidence.ts, recordDraftDecision).
+// With operator:decision_lines_enabled on, each approve or reject of a draft a chat turn created is
+// also written into that turn's session as one line (agents/decisions.ts), from a tap and from the
+// dashboard alike. That line is bookkeeping: it never changes or fails the decision.
+import { noteDraftDecision } from "../agents/decisions.ts";
 import { recordDraftDecision } from "../autonomy/evidence.ts";
+import type { FlagReader } from "../jobs/registry.ts";
 import { approveDraft, draftDigest, markShown, wasShown, type DraftContent, type DraftStatus, type ShownStore } from "../security/approval-digest.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { constantTimeEqual } from "../http/auth.ts";
@@ -28,9 +33,13 @@ export interface ApprovalDeps {
   /** Where shown records live: the KV namespace. */
   shown: ShownStore;
   operator: OperatorChannel;
+  /** Read for operator:decision_lines_enabled. Without it, no decision line is written. */
+  flags?: FlagReader;
   now?: () => Date;
   logger?: { warn(msg: string, data?: Record<string, unknown>): void };
 }
+
+type DecisionDeps = Pick<ApprovalDeps, "db" | "now" | "flags" | "logger">;
 
 interface DraftRow {
   id: string;
@@ -92,7 +101,7 @@ type Commit = { ok: true } | { ok: false; reason: string };
  * Mark a draft approved for `actor`, given the digest of its current content. The update is a
  * compare-and-set on the status and the content, so an edit that lands in between is not approved.
  */
-async function commitApproval(deps: Pick<ApprovalDeps, "db" | "now">, row: DraftRow, current: string, actor: string): Promise<Commit> {
+async function commitApproval(deps: DecisionDeps, row: DraftRow, current: string, actor: string): Promise<Commit> {
   const approval = await approveDraft({ ...contentOf(row), status: row.status, approved_digest: row.approved_digest }, current);
   if (!approval.ok) return { ok: false, reason: `The approval was refused: ${approval.reason}.` };
   const at = (deps.now?.() ?? new Date()).toISOString();
@@ -105,11 +114,12 @@ async function commitApproval(deps: Pick<ApprovalDeps, "db" | "now">, row: Draft
     .run();
   if ((result.meta.changes ?? 0) === 0) return { ok: false, reason: "That draft changed while it was being approved, so the approval was refused." };
   await recordDraftDecision(deps.db, row.id, "approved", deps.now?.() ?? new Date());
+  await noteDraftDecision(deps, row, "approved", deps.now?.() ?? new Date());
   return { ok: true };
 }
 
 /** Mark a draft rejected. A sent or already rejected draft is refused. */
-async function commitRejection(deps: Pick<ApprovalDeps, "db" | "now">, row: DraftRow): Promise<Commit> {
+async function commitRejection(deps: DecisionDeps, row: DraftRow): Promise<Commit> {
   if (row.status === "sent") return { ok: false, reason: "That draft was already sent and cannot be rejected." };
   if (row.status === "rejected") return { ok: false, reason: "That draft was already rejected." };
   const result = await deps.db
@@ -118,6 +128,7 @@ async function commitRejection(deps: Pick<ApprovalDeps, "db" | "now">, row: Draf
     .run();
   if ((result.meta.changes ?? 0) === 0) return { ok: false, reason: "That draft changed state and was not rejected." };
   await recordDraftDecision(deps.db, row.id, "rejected", deps.now?.() ?? new Date());
+  await noteDraftDecision(deps, row, "rejected", deps.now?.() ?? new Date());
   return { ok: true };
 }
 
@@ -130,7 +141,7 @@ export type DraftDecision = { ok: true; draftId: string } | { ok: false; code: "
  * content was shown (a gate: an unreadable record refuses); then the same compare-and-set approves
  * it. Approving never sends anything.
  */
-export async function approveShownDraft(deps: Pick<ApprovalDeps, "db" | "shown" | "now">, draftId: string, shownDigest: string, actor: string): Promise<DraftDecision> {
+export async function approveShownDraft(deps: Pick<ApprovalDeps, "db" | "shown" | "now" | "flags" | "logger">, draftId: string, shownDigest: string, actor: string): Promise<DraftDecision> {
   const row = await loadDraft(deps.db, draftId);
   if (!row) return { ok: false, code: "not_found", reason: "That draft no longer exists." };
   if (row.status === "approved") return { ok: false, code: "conflict", reason: "That draft is already approved." };
@@ -144,7 +155,7 @@ export async function approveShownDraft(deps: Pick<ApprovalDeps, "db" | "shown" 
 }
 
 /** Reject a draft by id (the dashboard's reject). Rejecting needs no digest: it can only stop a send. */
-export async function rejectDraftById(deps: Pick<ApprovalDeps, "db" | "now">, draftId: string): Promise<DraftDecision> {
+export async function rejectDraftById(deps: DecisionDeps, draftId: string): Promise<DraftDecision> {
   const row = await loadDraft(deps.db, draftId);
   if (!row) return { ok: false, code: "not_found", reason: "That draft no longer exists." };
   const rejected = await commitRejection(deps, row);

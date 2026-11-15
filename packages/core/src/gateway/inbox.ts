@@ -162,7 +162,7 @@ export const inboundDraftSend: Handler<"inbound.draftSend"> = async (p, ctx) => 
     // Already approved (from the chat, or an earlier attempt): the shown digest must still be that approval.
     if (draft.approved_digest !== p.shownDigest || current !== p.shownDigest) throw new RpcError("conflict", "this draft changed after it was shown; reload it and review it again");
   } else {
-    const approved = await approveShownDraft({ db: ctx.env.DB, shown: ctx.env.KV, now: ctx.now }, draft.id, p.shownDigest, ctx.actor);
+    const approved = await approveShownDraft({ db: ctx.env.DB, shown: ctx.env.KV, flags: ctx.flags, now: ctx.now }, draft.id, p.shownDigest, ctx.actor);
     if (!approved.ok) throw new RpcError(approved.code === "not_found" ? "not_found" : "conflict", approved.reason);
     ctx.audit.approved = true;
   }
@@ -217,7 +217,7 @@ export const draftsApprove: Handler<"drafts.approve"> = async (p, ctx) => {
   if (!row) throw new RpcError("not_found", "no such draft");
   const owner = OWN_APPROVAL_KINDS.get(row.kind);
   if (owner) throw new RpcError("invalid", owner);
-  const approved = await approveShownDraft({ db: ctx.env.DB, shown: ctx.env.KV, now: ctx.now }, p.draftId, p.shownDigest, ctx.actor);
+  const approved = await approveShownDraft({ db: ctx.env.DB, shown: ctx.env.KV, flags: ctx.flags, now: ctx.now }, p.draftId, p.shownDigest, ctx.actor);
   if (!approved.ok) throw new RpcError(approved.code === "not_found" ? "not_found" : "conflict", approved.reason);
   return { status: "approved", message: "Approved. Nothing was sent." };
 };
@@ -229,7 +229,7 @@ export const draftsReject: Handler<"drafts.reject"> = async (p, ctx) => {
   // Rejecting one of these also closes the owning module's record, so it is done there.
   const owner = OWN_APPROVAL_KINDS.get(row.kind);
   if (owner) throw new RpcError("invalid", owner);
-  const rejected = await rejectDraftById({ db: ctx.env.DB, now: ctx.now }, p.draftId);
+  const rejected = await rejectDraftById({ db: ctx.env.DB, flags: ctx.flags, now: ctx.now }, p.draftId);
   if (!rejected.ok) throw new RpcError(rejected.code === "not_found" ? "not_found" : "conflict", rejected.reason);
   return { ok: true };
 };

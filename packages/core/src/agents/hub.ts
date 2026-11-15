@@ -28,6 +28,10 @@
 // With deps.notes, the turn offers note_save and notes_read, and loads the saved notes in front of the
 // operator's message: notes saved with no taint as trusted text, every other note by id only
 // (agents/notes.ts). Notes are context, so a read that fails leaves them out and the turn goes on.
+// Lines core wrote into the session since its last reply (decision lines, agents/decisions.ts) go
+// in front of the operator's message too. With operator:decision_lines_enabled on, a turn that
+// created drafts records where each came from once its taint is recorded, so the operator's
+// approval or rejection of one is written back into this session.
 import { loadBrain } from "../brain/load.ts";
 import type { BrainSlice } from "../brain/assemble.ts";
 import { checkBudget, checkRunCeiling, checkTurnCeiling, readBudgetSettings } from "../budget/gate.ts";
@@ -50,6 +54,7 @@ import { listNotes, notesPrefix } from "./notes.ts";
 import { minuteUtc } from "./timers.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { appendTurn, loadSession, raiseSessionTaint, type SessionState } from "./sessions.ts";
+import { isDecisionLinesEnabled, recordDraftOrigins } from "./decisions.ts";
 
 /** The job name chat turns record their runs and costs under, so `budget:job:operator_chat:daily_cents` caps them. */
 export const CHAT_JOB = "operator_chat";
@@ -346,8 +351,9 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
     logger: { warn: (msg: string, data?: Record<string, unknown>) => log.warn(msg, data) },
   };
 
-  // Notes core adds in front of the operator's message, never stored in the history: what the
-  // session refuses, and, on a turn that can set timers, the time, so "tomorrow at 9" is not a guess.
+  // Notes core adds in front of the operator's message. The decision lines written since the last
+  // reply are already stored, before this message; the rest are never stored: what the session
+  // refuses, and, on a turn that can set timers, the time, so "tomorrow at 9" is not a guess.
   let saved: string | null = null;
   if (deps.notes) {
     try {
@@ -358,6 +364,7 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
     }
   }
   const notes = [
+    ...state.pending,
     ...(deps.timers ? [`[Time from the system: it is now ${minuteUtc(now().toISOString())}.]`] : []),
     ...[saved, sessionNote(registry, tools, startTaint)].filter((n): n is string => n !== null),
   ];
@@ -526,6 +533,18 @@ export async function runHubTurn(deps: HubAgentDeps, input: TurnInput): Promise<
       historySaved = await appendTurn(deps.db, { sessionKey: input.sessionKey, clearedAt: state.clearedAt, turnId, user: input.text, assistant: finalReply }, now());
     } catch (error) {
       log.warn("chat history could not be written", { sessionKey: input.sessionKey, error: sanitizeErrorMessage(error) });
+    }
+  }
+  // Bookkeeping, and only under the recorded taint: a decision line names the draft's recipient,
+  // which this turn may have taken from a record it read, so it may only reach a session whose
+  // taint already covers that read. The cleared_at recorded is the one this turn loaded.
+  if (taintRecorded && drafts.length > 0) {
+    try {
+      if (await isDecisionLinesEnabled(deps.flags)) {
+        await recordDraftOrigins(deps.db, { sessionKey: input.sessionKey, clearedAt: state.clearedAt, turnId, draftIds: drafts.map((d) => d.id), since: started }, now());
+      }
+    } catch (error) {
+      log.warn("draft origins could not be recorded; decisions on these drafts will not reach the session", { turnId, error: sanitizeErrorMessage(error) });
     }
   }
 

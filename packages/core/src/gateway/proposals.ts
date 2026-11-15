@@ -14,6 +14,7 @@
 // exact detail text; approving re-reads the proposal and refuses when the digest no longer matches.
 import { confirmProposal, dismissProposal, loadProposal as loadAutonomyProposal, openProposals, type Proposal as AutonomyProposal } from "../autonomy/proposals.ts";
 import { servedTemplates } from "../experiments/jobs.ts";
+import { SYSTEM_ROW_SQL } from "../agents/sessions.ts";
 import { approveProposal, loadProposal as loadExperimentProposal, pendingProposals, rejectProposal, type ExperimentProposal } from "../experiments/proposals.ts";
 import { constantTimeEqual } from "../http/auth.ts";
 import { canonicalJson } from "../security/approval-digest.ts";
@@ -214,7 +215,7 @@ export const learningHistorySearch: Handler<"learning.historySearch"> = async (p
   const like = `%${needle.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
   const since = new Date(ctx.now().getTime() - 90 * 86_400_000).toISOString();
   const { results } = await ctx.env.DB.prepare(
-    "SELECT session_key, content, created_at FROM chat_messages WHERE created_at >= ?1 AND lower(content) LIKE ?2 ESCAPE '\\' ORDER BY id DESC LIMIT ?3",
+    `SELECT session_key, content, created_at FROM chat_messages WHERE created_at >= ?1 AND lower(content) LIKE ?2 ESCAPE '\\' AND NOT ${SYSTEM_ROW_SQL} ORDER BY id DESC LIMIT ?3`,
   )
     .bind(since, like, limit)
     .all<{ session_key: string; content: string; created_at: string }>();

@@ -12,6 +12,10 @@ import type { ConnectionState, GatewayContext } from "../src/gateway/context.ts"
 import { MAX_FRAME_BYTES, handleFrame } from "../src/gateway/dispatch.ts";
 import type { ServerEvent } from "../src/gateway/protocol.ts";
 import { createJobRegistry } from "../src/jobs/registry.ts";
+import { sessionKeyFor } from "../src/agents/sessions.ts";
+import { approvalPayload } from "../src/operator/approval-payload.ts";
+import { handleApprovalCallback } from "../src/operator/approvals.ts";
+import { dashboardChatId } from "../src/gateway/chat.ts";
 import type { ModelGateway } from "../src/ports/model.ts";
 import type { OperatorChannel } from "../src/ports/operator.ts";
 import { acmeConfig } from "./fixtures.ts";
@@ -165,8 +169,11 @@ function harness(model: ModelGateway, email = `ops+${crypto.randomUUID().slice(0
 const spaced = (ms: number, extra: ScriptedStreamOptions = {}): ScriptedStreamOptions => ({ chunkChars: 4, between: () => sleep(ms), ...extra });
 
 describe("drafts a dashboard turn saves", () => {
-  const drafting = () =>
-    scriptedModel([toolStep({ name: "drafts_create", input: { recipient_email: "jane@globex.example", subject: "Flaky builds", body: "Hi Jane,\n\nA short note.\n\nAvery" } }), { text: "Saved a draft for Jane." }]);
+  const draftSteps: ScriptStep[] = [
+    toolStep({ name: "drafts_create", input: { recipient_email: "jane@globex.example", subject: "Flaky builds", body: "Hi Jane,\n\nA short note.\n\nAvery" } }),
+    { text: "Saved a draft for Jane." },
+  ];
+  const drafting = () => scriptedModel(draftSteps);
 
   it("go to the operator chat for approval, bound to their digest, and nothing is sent", async () => {
     const operator = recordingOperator();
@@ -178,6 +185,58 @@ describe("drafts a dashboard turn saves", () => {
     expect(operator.approvals).toHaveLength(1);
     expect(operator.approvals[0]).toMatchObject({ chatId: "1001", kind: "send" });
     expect(operator.approvals[0]?.digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("with operator:decision_lines_enabled on, have the decision written into the dashboard session that made them, never into the chat that approved them", async () => {
+    const operator = recordingOperator();
+    const email = `ops+${crypto.randomUUID().slice(0, 8)}@acme.example`;
+    const model = scriptedModel([...draftSteps, { text: "It was approved." }]);
+    const h = harness(model, email, { operator: operator.channel, chatIds: ["1001"] });
+    h.kv.map.set("operator:decision_lines_enabled", "true");
+    await h.call("chat.send", { text: "Draft a note to Jane at Globex." });
+    await h.settle();
+    const approval = operator.approvals[0];
+    if (!approval) throw new Error("no approval request");
+    const tap = { type: "callback" as const, chatId: "1001", userId: "1001", action: "approve", payload: approvalPayload(approval.approvalId, approval.digest), messageId: "1", callbackId: crypto.randomUUID() };
+    const decided = await handleApprovalCallback({ db: env.DB, shown: h.kv, operator: operator.channel, flags: { get: (k) => h.kv.get(k) } }, tap);
+    expect(decided.outcome).toBe("approved");
+    const lines = async (key: string) =>
+      (await env.DB.prepare("SELECT content FROM chat_messages WHERE session_key = ?1").bind(key).all<{ content: string }>()).results.filter((r) => r.content.includes('"from":"system"'));
+    expect(await lines(sessionKeyFor(dashboardChatId(email)))).toHaveLength(1);
+    expect(await lines(sessionKeyFor("1001"))).toHaveLength(0);
+    // The dashboard's history shows what was said, not the line core wrote for the model; the next turn sees it.
+    const history = await h.call<Array<{ role: string; text: string }>>("chat.history", {});
+    expect(history.result?.map((m) => m.role)).toEqual(["operator", "agent"]);
+    await h.call("chat.send", { text: "Is it approved?" });
+    await h.settle();
+    const content = model.requests.at(-1)?.messages.at(-1)?.content;
+    const next = typeof content === "string" ? content : JSON.stringify(content);
+    expect(next.startsWith("[Decision from the system: at ")).toBe(true);
+    expect(next).toContain(`the operator approved draft ${approval.approvalId} (warm_intro to jane@globex.example). Approving does not send it.]`);
+    expect(next.endsWith("]\n\nIs it approved?")).toBe(true);
+  });
+
+  it("have an approval or rejection in the dashboard's drafts view written back into the dashboard session", async () => {
+    const operator = recordingOperator();
+    const email = `ops+${crypto.randomUUID().slice(0, 8)}@acme.example`;
+    const h = harness(scriptedModel([...draftSteps, ...draftSteps]), email, { operator: operator.channel, chatIds: ["1001"] });
+    h.kv.map.set("operator:decision_lines_enabled", "true");
+    for (let i = 0; i < 2; i += 1) {
+      await h.call("chat.send", { text: "Draft a note to Jane at Globex." });
+      await h.settle();
+    }
+    const [first, second] = operator.approvals.map((a) => a.approvalId);
+    const listed = await h.call<{ items: Array<{ id: string; digest: string }> }>("drafts.list", { status: "pending_approval", kind: "warm_intro" });
+    const shown = listed.result?.items.find((d) => d.id === first);
+    if (!shown || !second) throw new Error("drafts not listed");
+    expect((await h.call("drafts.approve", { draftId: first, shownDigest: shown.digest })).error).toBeUndefined();
+    expect((await h.call("drafts.reject", { draftId: second })).error).toBeUndefined();
+    const { results } = await env.DB.prepare("SELECT content FROM chat_messages WHERE session_key = ?1 ORDER BY id").bind(sessionKeyFor(dashboardChatId(email))).all<{ content: string }>();
+    const lines = results.map((r) => JSON.parse(r.content) as { text: string; from?: string }).filter((m) => m.from === "system");
+    expect(lines.map((m) => m.text.replace(/ at .+? UTC/, ""))).toEqual([
+      `[Decision from the system: the operator approved draft ${first} (warm_intro to jane@globex.example). Approving does not send it.]`,
+      `[Decision from the system: the operator rejected draft ${second} (warm_intro to jane@globex.example). It will not be sent.]`,
+    ]);
   });
 
   it("stay pending, and the dashboard says so, when no operator chat is configured", async () => {

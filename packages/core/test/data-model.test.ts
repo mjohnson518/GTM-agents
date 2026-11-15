@@ -28,6 +28,8 @@ import {
   type Warmth,
 } from "../src/data/index.ts";
 import { TAINT_LEVELS } from "../src/ports/types.ts";
+import { decisionLine } from "../src/agents/decisions.ts";
+import { systemMessageContent } from "../src/agents/sessions.ts";
 
 const DIGEST = "a".repeat(64);
 const randomHex = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -169,6 +171,7 @@ describe("the schema", () => {
     const row = await env.DB.prepare("SELECT email FROM contacts WHERE id = ?1").bind(id).first<{ email: string }>();
     const email = row?.email ?? "";
     const sendId = uid("send");
+    const chatDraft = uid("dr");
     await env.DB.batch([
       env.DB.prepare("INSERT INTO contact_tags (contact_id, tag) VALUES (?1, 'pilot')").bind(id),
       env.DB.prepare("INSERT INTO candidates (id, source, email, first_name, promoted_contact_id) VALUES (?1, 'test', ?2, 'Jane', ?3)").bind(uid("cand"), email.toUpperCase(), id),
@@ -178,6 +181,12 @@ describe("the schema", () => {
       env.DB.prepare("INSERT INTO meetings (id, contact_id, summary) VALUES (?1, ?2, 'notes')").bind(uid("m"), id),
       env.DB.prepare("INSERT OR IGNORE INTO chat_sessions (session_key, chat_id) VALUES ('erasure-test', 'chat-1')"),
       env.DB.prepare("INSERT INTO chat_messages (session_key, role, content) VALUES ('erasure-test', 'user', ?1)").bind(JSON.stringify({ text: `draft a note to ${email}` })),
+      // A draft a chat turn created, its origin, and the decision line written about it.
+      env.DB.prepare("INSERT INTO drafts (id, kind, recipient_email, body) VALUES (?1, 'warm_intro', ?2, 'Hello')").bind(chatDraft, email),
+      env.DB.prepare("INSERT INTO chat_draft_origins (draft_id, session_key) VALUES (?1, 'erasure-test')").bind(chatDraft),
+      env.DB.prepare("INSERT INTO chat_messages (session_key, role, content) VALUES ('erasure-test', 'user', ?1)").bind(
+        systemMessageContent(decisionLine("approved", { id: chatDraft, kind: "warm_intro", recipient_email: email }, new Date("2026-11-15T12:40:00.000Z"))),
+      ),
       env.DB.prepare("INSERT INTO operator_timers (id, session_key, chat_id, user_id, note, taint, due_at) VALUES (?1, 'erasure-test', 'chat-1', 'chat-1', ?2, 'metadata', '2026-11-20T09:00:00.000Z')").bind(uid("tmr"), `Check whether ${email.toUpperCase()} replied.`),
       env.DB.prepare("INSERT INTO operator_notes (id, text, taint) VALUES (?1, ?2, 'metadata')").bind(uid("note"), `${email} is the champion.`),
       env.DB.prepare("INSERT INTO operator_outbox (id, kind, text, status, reason, release_at) VALUES (?1, 'notice', ?2, 'held', 'quiet_hours', '2026-11-20T07:00:00.000Z')").bind(uid("ob"), `Reply from ${email.toUpperCase()} is waiting.`),
@@ -196,6 +205,7 @@ describe("the schema", () => {
     }
     expect(await env.DB.prepare("SELECT contact_id FROM outreach_sends WHERE id = ?1").bind(sendId).first()).toEqual({ contact_id: null });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE instr(lower(content), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM chat_draft_origins WHERE draft_id = ?1").bind(chatDraft).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_timers WHERE instr(lower(note), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_notes WHERE instr(lower(text), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_outbox WHERE instr(lower(text), ?1) > 0").bind(email).first()).toEqual({ n: 0 });

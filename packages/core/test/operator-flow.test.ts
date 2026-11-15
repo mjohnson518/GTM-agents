@@ -232,6 +232,30 @@ describe("the operator flow", () => {
     expect(history?.n).toBe(4);
   });
 
+  it("with operator:decision_lines_enabled on, tells the next turn about an approval tap, without a model call at the tap", async () => {
+    const h = harness({}, {
+      flags: { "operator:decision_lines_enabled": "true" },
+      script: [
+        toolStep({ name: "drafts_create", input: { recipient_email: "jane@acme.example", subject: "Setup in under an hour", body: "Hi Jane,\n\nSetup takes under an hour.\n\nAvery" } }),
+        { text: "The draft is ready for your approval." },
+        { text: "You approved it; it has not been sent." },
+      ],
+    });
+    await h.say("Draft a short intro to jane@acme.example.");
+    const approval = h.operator.approvals[0];
+    if (!approval) throw new Error("no approval request");
+    const calls = h.model.requests.length;
+    const tap: OperatorUpdate = { type: "callback", chatId: h.OPERATOR, userId: h.OPERATOR, action: "approve", payload: approvalPayload(approval.approvalId, approval.digest), messageId: "m9", callbackId: `cb-${approval.approvalId}` };
+    expect((await h.post(tap)).status).toBe(200);
+    expect(h.model.requests).toHaveLength(calls);
+    await h.say("Did I approve the Jane draft?");
+    const content = h.model.requests.at(-1)?.messages.at(-1)?.content;
+    const latest = typeof content === "string" ? content : JSON.stringify(content);
+    expect(latest.startsWith("[Decision from the system: at ")).toBe(true);
+    expect(latest).toContain(`the operator approved draft ${approval.approvalId} (warm_intro to jane@acme.example). Approving does not send it.]\n\nDid I approve the Jane draft?`);
+    expect(h.model.remaining()).toBe(0);
+  });
+
   it("with operator:notes_enabled on, keeps a note across /clean and shows it in the next turn", async () => {
     const h = harness({}, {
       flags: { "operator:notes_enabled": "true" },

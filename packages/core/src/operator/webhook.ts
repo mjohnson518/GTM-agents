@@ -84,7 +84,10 @@ export function createOperatorWebhook<E extends Env>(options: OperatorAgentOptio
 
     if (update.type === "callback") {
       try {
-        await handleApprovalCallback({ db: env.DB, shown: env.KV, operator: channel, ...(options.now ? { now: options.now } : {}), ...(log ? { logger: log } : {}) }, update);
+        await handleApprovalCallback(
+          { db: env.DB, shown: env.KV, operator: channel, flags: flagsFromKv(env.KV), ...(options.now ? { now: options.now } : {}), ...(log ? { logger: log } : {}) },
+          update,
+        );
       } catch (error) {
         log?.error("approval callback failed", { error: sanitizeErrorMessage(error) });
         try {

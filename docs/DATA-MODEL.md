@@ -131,7 +131,7 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 
 ### Chat, delivery and outreach (0014 to 0016)
 
-- `chat_sessions` and `chat_messages` (0014): operator chat history and the session's taint, which persists until `/clean`.
+- `chat_sessions` and `chat_messages` (0014): operator chat history and the session's taint, which persists until `/clean`. A message core wrote into the history (a decision line, 0034) is stored as `role = 'user'` with `"from": "system"` in its content, so it can be told apart from what the operator wrote.
 - `deferred_send_items` (0015): the items waiting in the deferred queue, with a deduplication key that is released when an item leaves the queue.
 - `approval_manifests` (0016): the manifest each manual cold batch is released against.
 
@@ -186,6 +186,10 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 ### Operator outbox (0033)
 
 - `operator_outbox`: notices to the operator while `operator:outbox_enabled` is on ([OPERATOR.md](OPERATOR.md#quiet-hours-and-the-outbox)). A notice delivered at once leaves a row with no text (`sent`), which the hourly limit counts. A notice held for quiet hours or the limit, or one the channel refused, keeps its text while it waits: `status` runs `held`, `sending` (claimed by a delivery run with a compare-and-set) and `sent`, when the text is cleared, or ends at `dropped` a day after it was written. `reason` says why it waited, `release_at` when it is due, and `delivery_id` names the message it went out in, so notices folded into one message count once. Sent and dropped rows are deleted after two days.
+
+### Chat draft origins (0034)
+
+- `chat_draft_origins`: one row per draft a hub turn created while `operator:decision_lines_enabled` is on ([OPERATOR.md](OPERATOR.md#decisions-in-the-session)). It records the session and turn that created the draft and the session's `cleared_at` as that turn loaded it. Approving or rejecting the draft writes one decision line into that session's `chat_messages`, in a single statement that also checks the session's `cleared_at` still matches, so a session cleared since gets nothing. A draft with no row here never writes a line. The row holds no address: it is deleted with its draft (`ON DELETE CASCADE`), so erasing a person removes it, and the decision line, which names the recipient, goes with the person's chat messages.
 
 ## What is not in core
 

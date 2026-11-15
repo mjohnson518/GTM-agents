@@ -11,10 +11,23 @@
 // read, and history without its taint would carry that text into turns that believe they are clean.
 // clearSession is the only way taint goes down: the operator's /clean, which deletes the history
 // and resets the taint in one batch.
+//
+// Core can also write a line of its own into a session's history: a decision line, when the
+// operator approves or rejects a draft a turn created (agents/decisions.ts). It is stored on the
+// operator's side and marked as the system's (systemMessageContent). Lines written since the last
+// reply are not a message waiting for an answer: loadSession hands them to the next turn (pending),
+// which shows them in front of the operator's message, and later turns see them joined to it.
 import { TAINT_LEVELS, maxTaintLevel, toTaintLevel, type TaintLevel } from "../security/taint.ts";
 
 /** How many stored messages a turn loads as history. */
 export const HISTORY_LIMIT = 40;
+/**
+ * How many lines core wrote (decision lines) a turn loads at most, beyond HISTORY_LIMIT: they never
+ * count against the conversation's own window. Older ones are counted and named, never silently lost.
+ */
+export const SYSTEM_LINES_LIMIT = 20;
+/** A stored message core wrote, in SQL: on the operator's side, marked as the system's. */
+export const SYSTEM_ROW_SQL = "(role = 'user' AND json_extract(content, '$.from') IS 'system')";
 /** The longest stored message, in characters. Longer text is cut at the end. */
 export const STORED_MESSAGE_MAX_CHARS = 8000;
 
@@ -30,8 +43,10 @@ export interface SessionState {
   /** When the session was last cleared, or null. Turns pass it back so a clean session stays clean. */
   clearedAt: string | null;
   history: HistoryMessage[];
-  /** Messages stored for this session, which may be more than the history a turn loads. */
+  /** Messages the operator and the agent wrote in this session (not core's lines), which may be more than a turn loads. */
   messageCount: number;
+  /** Lines core wrote since the last reply (decision lines), oldest first, for the next turn to show. */
+  pending: string[];
 }
 
 /** The session key for a chat. One session per chat. */
@@ -51,14 +66,29 @@ export async function ensureSession(db: D1Database, sessionKey: string, chatId: 
     .run();
 }
 
-function decodeText(content: string): string | null {
+/** What the `from` field of a stored message says when core wrote it. */
+const FROM_SYSTEM = "system";
+
+/** The stored content of a line core writes into a session's history. */
+export function systemMessageContent(text: string): string {
+  return JSON.stringify({ text: clip(text), from: FROM_SYSTEM });
+}
+
+function decodeRow(content: string): { text: string; system: boolean } | null {
   try {
     const parsed = JSON.parse(content) as unknown;
-    if (parsed && typeof parsed === "object" && typeof (parsed as { text?: unknown }).text === "string") return (parsed as { text: string }).text;
+    if (parsed && typeof parsed === "object" && typeof (parsed as { text?: unknown }).text === "string") {
+      return { text: (parsed as { text: string }).text, system: (parsed as { from?: unknown }).from === FROM_SYSTEM };
+    }
   } catch {
     // A row that does not decode is skipped rather than guessed at.
   }
   return null;
+}
+
+/** True when a stored message's content is a line core wrote, not the operator's or the agent's. */
+export function isSystemMessage(content: string): boolean {
+  return decodeRow(content)?.system === true;
 }
 
 /**
@@ -88,28 +118,49 @@ export async function loadSession(db: D1Database, sessionKey: string, chatId: st
   // turn finishing in between cannot hand this turn its tainted reply under the old, lower taint.
   const [sessionRows, historyRows, countRows] = await db.batch([
     db.prepare("SELECT session_key, chat_id, taint, cleared_at FROM chat_sessions WHERE session_key = ?1").bind(sessionKey),
+    // The last HISTORY_LIMIT messages the operator and the agent wrote, and at most
+    // SYSTEM_LINES_LIMIT lines core wrote since the oldest of them, so decisions never crowd out the
+    // conversation.
     db
-      .prepare("SELECT role, content FROM (SELECT id, role, content FROM chat_messages WHERE session_key = ?1 ORDER BY id DESC LIMIT ?2) ORDER BY id ASC")
-      .bind(sessionKey, HISTORY_LIMIT),
-    db.prepare("SELECT COUNT(*) AS n FROM chat_messages WHERE session_key = ?1").bind(sessionKey),
+      .prepare(
+        `WITH said AS (SELECT id FROM chat_messages WHERE session_key = ?1 AND NOT ${SYSTEM_ROW_SQL} ORDER BY id DESC LIMIT ?2),
+              lines AS (SELECT id FROM chat_messages WHERE session_key = ?1 AND ${SYSTEM_ROW_SQL} AND id > COALESCE((SELECT MIN(id) FROM said), 0) ORDER BY id DESC LIMIT ?3)
+         SELECT role, content FROM chat_messages WHERE id IN (SELECT id FROM said UNION ALL SELECT id FROM lines) ORDER BY id ASC`,
+      )
+      .bind(sessionKey, HISTORY_LIMIT, SYSTEM_LINES_LIMIT),
+    // Messages the operator and the agent wrote, and the lines written since the last of them.
+    db
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM chat_messages WHERE session_key = ?1 AND NOT ${SYSTEM_ROW_SQL}) AS n,
+                (SELECT COUNT(*) FROM chat_messages WHERE session_key = ?1 AND ${SYSTEM_ROW_SQL}
+                   AND id > COALESCE((SELECT MAX(id) FROM chat_messages WHERE session_key = ?1 AND NOT ${SYSTEM_ROW_SQL}), 0)) AS waiting`,
+      )
+      .bind(sessionKey),
   ]);
   const row = (sessionRows?.results as Array<{ session_key: string; chat_id: string; taint: string; cleared_at: string | null }> | undefined)?.[0];
   if (!row) throw new Error("the chat session could not be read");
   const results = (historyRows?.results ?? []) as Array<{ role: string; content: string }>;
-  const count = (countRows?.results as Array<{ n: number }> | undefined)?.[0];
-  const rows: HistoryMessage[] = [];
+  const count = (countRows?.results as Array<{ n: number; waiting: number }> | undefined)?.[0];
+  const rows: Array<HistoryMessage & { system: boolean }> = [];
   for (const r of results) {
-    const text = decodeText(r.content);
-    if (text !== null && (r.role === "user" || r.role === "assistant")) rows.push({ role: r.role, text });
+    const decoded = decodeRow(r.content);
+    if (decoded !== null && (r.role === "user" || r.role === "assistant")) rows.push({ role: r.role, text: decoded.text, system: decoded.system && r.role === "user" });
   }
+  // Lines core wrote after the last reply go to this turn, not into a history that would drop them.
+  let cut = rows.length;
+  while (cut > 0 && rows[cut - 1]?.system === true) cut -= 1;
+  const pending = rows.slice(cut).map((r) => r.text);
+  const unshown = Number(count?.waiting ?? 0) - pending.length;
+  if (unshown > 0) pending.unshift(`[Decision from the system: ${unshown} earlier ${unshown === 1 ? "decision" : "decisions"} on drafts ${unshown === 1 ? "is" : "are"} not shown here. Do not say a draft is still waiting unless the operator confirms it.]`);
   return {
     sessionKey: row.session_key,
     chatId: row.chat_id,
     // A stored value that is not a known level reads as full, so corruption only makes things stricter.
     taint: toTaintLevel(row.taint),
     clearedAt: row.cleared_at,
-    history: shapeHistory(rows),
+    history: shapeHistory(rows.slice(0, cut).map(({ role, text }) => ({ role, text }))),
     messageCount: Number(count?.n ?? 0),
+    pending,
   };
 }
 
