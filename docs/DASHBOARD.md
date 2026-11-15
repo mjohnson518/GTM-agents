@@ -57,6 +57,7 @@ Every action runs through the module that owns it, with the same gates, digests 
 | Inbound | Mail, its triage, its reply draft | Done, ignore, archive (through the reply commands' code, so drafts, reminders and evidence close the same way); approve, reject or send a reply draft |
 | Proposals | Autonomy level proposals, experiment proposals, learnings | Approve (autonomy needs its confirm code), reject. Rejecting an autonomy proposal dismisses it, as `autonomy-dismiss-<id>` does in the operator chat: no level changes, and it can never be confirmed afterwards |
 | Learning | The learnings document, pending learning proposals, a search of the last 90 days of operator chat history | Approve or reject, search |
+| Product and ICP | What the brain serves for `product` and `icp`, the latest draft (the pages read, what was left out and why), and an editor per component | Draft from your site with AI or from pasted text, edit, save, check against the brain's rules and byte budgets, approve against the exact diff, copy a served file ([TARGETING.md](TARGETING.md)) |
 | Contacts | Search, details, history, a plain summary, who to look at next | Edit first name, last name, job title and notes only |
 | Agents | Model roles and their models; every registered job with its schedule, flag and last run | |
 | Chat | The hub agent, in a session of its own per operator | Send, abort |
@@ -64,6 +65,8 @@ Every action runs through the module that owns it, with the same gates, digests 
 | Link triage | The link-intake module's state, or that it is not installed | Refresh |
 | Settings | Redacted configuration, the cron schedule, capabilities, flags, the security audit | Set or unset a flag, run the audit |
 | Changelog | The deployment's `CHANGELOG.md`, release by release | Search, filter by area |
+
+**Product and ICP.** `targeting.get` and `targeting.validate` only read. `targeting.draft`, `targeting.save`, `targeting.discard` and `targeting.propose` run only while `targeting:enabled` is on, and `targeting.draft` is listed in the capabilities only when a model gateway is wired. A draft finishes after the response; the view polls `targeting.get` until it is ready or failed. `targeting.propose` stores an ordinary brain proposal and returns the detail and digest the Proposals view shows, and the view approves it with `proposals.approve`, so approving needs the learning module's dashboard source (`learningDashboard()`, which the template wires). Nothing a draft holds is served until that approval ([TARGETING.md](TARGETING.md)).
 
 **Drafts.** The gateway's `drafts.approve` approves a draft (nothing is sent) and `drafts.reject` drops it. A draft of kind `lifecycle` (a lifecycle follow-up, or mail an optional module sends to product users, such as the ship module's "it is live" notes) is approved or dropped in the operator chat instead, with the command shown when it was drafted (`fu-approve-<id>` or `fu-reject-<id>` for a follow-up), which checks the contact again and closes the module's record; the dashboard refuses both for one.
 

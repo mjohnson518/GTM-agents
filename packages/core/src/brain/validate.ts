@@ -2,7 +2,7 @@
 // span files (references, URLs, prices), the per-task byte budgets, and the lock file.
 import type { Issue } from "../shared/frontmatter.ts";
 import { componentCost, renderComponent, sliceOverhead } from "./assemble.ts";
-import { COMPONENT_IDS, LOCK_FILE, TASK_SPECS, tasksReading, type ComponentId } from "./components.ts";
+import { COMPONENT_IDS, LOCK_FILE, budgetFor, tasksReading, type ComponentId } from "./components.ts";
 import { sha256Hex, type BrainLock } from "./lock.ts";
 import { parseBrainFile, type ParsedBrainFile } from "./parse.ts";
 import { PRICE_COMPONENT, REFERENCES, URL_FIELDS } from "./schema.ts";
@@ -26,7 +26,7 @@ export interface ValidateOptions {
 }
 
 const URL_PATTERN = /\bhttps?:\/\/|\bwww\./i;
-const PRICE_PATTERN = /[$\u20ac\u00a3\u00a5]\s?\d|\b\d[\d,.]*\s?(?:usd|eur|gbp|dollars?|euros?|pounds?)\b/i;
+export const PRICE_PATTERN = /[$\u20ac\u00a3\u00a5]\s?\d|\b\d[\d,.]*\s?(?:usd|eur|gbp|dollars?|euros?|pounds?)\b/i;
 
 export async function validateBrain(files: BrainFileInput[], options: ValidateOptions = {}): Promise<BrainValidation> {
   const issues: Issue[] = [];
@@ -135,7 +135,7 @@ function checkBudgets(approved: ParsedBrainFile[], issues: Issue[]): void {
     const block = renderComponent(component, p.frontmatter?.version ?? 1, p.items);
     const cost = componentCost(block);
     const tasks = tasksReading(component);
-    const fitting = tasks.filter((t) => sliceOverhead(t) + cost <= TASK_SPECS[t].budgetBytes);
+    const fitting = tasks.filter((t) => sliceOverhead(t) + cost <= budgetFor(t, component));
     if (fitting.length === 0) {
       issues.push({ severity: "error", file: p.file, line: 0, message: `component is ${cost} bytes and fits no task that reads it (${tasks.join(", ")}); shorten it` });
     } else if (fitting.length < tasks.length) {

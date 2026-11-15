@@ -15,7 +15,7 @@
 // scenarios scored is incomplete and never counts as a baseline. A drop of more than
 // REGRESSION_DROP from the previous complete weekly run is a regression.
 import { assembleSlice, renderComponent } from "../brain/assemble.ts";
-import { TASK_SPECS, type BrainTask, type ComponentId } from "../brain/components.ts";
+import { taskComponents, type BrainTask, type ComponentId } from "../brain/components.ts";
 import { brainVersion } from "../brain/lock.ts";
 import { parseBrainFile } from "../brain/parse.ts";
 import { contentRuleIssues } from "../brain/validate.ts";
@@ -147,7 +147,7 @@ export async function sliceText(kv: BrainKv | undefined, task: BrainTask, overri
     if (!kv) return assembleSlice(task, "unlocked", new Map()).text;
     const served = await readServedBrain(kv);
     const servable = new Map<ComponentId, string>();
-    for (const component of TASK_SPECS[task].components) {
+    for (const component of taskComponents(task)) {
       const content = override && override.component === component ? override.content : served.files.get(`${component}.md`);
       if (!content) continue;
       const parsed = parseBrainFile(`${component}.md`, content);

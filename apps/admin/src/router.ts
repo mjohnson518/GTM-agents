@@ -8,6 +8,7 @@ export const VIEWS = [
   { name: "inbound", label: "Inbound" },
   { name: "proposals", label: "Proposals" },
   { name: "learning", label: "Learning" },
+  { name: "targeting", label: "Product and ICP" },
   { name: "contacts", label: "Contacts" },
   { name: "agents", label: "Agents" },
   { name: "chat", label: "Chat" },

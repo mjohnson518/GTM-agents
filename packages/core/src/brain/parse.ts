@@ -27,7 +27,7 @@ export function parseBrainFile(file: string, content: string): ParsedBrainFile {
   const issues: Issue[] = [];
   const expected = file.replace(/\.md$/, "");
   const component = isComponentId(expected) ? expected : undefined;
-  if (!component) issues.push({ severity: "error", file, line: 0, message: `"${file}" is not a brain component; see docs/BRAIN-SCHEMA.md for the fourteen file names` });
+  if (!component) issues.push({ severity: "error", file, line: 0, message: `"${file}" is not a brain component; see docs/BRAIN-SCHEMA.md for the fifteen file names` });
 
   checkDashes(file, content, issues);
   const doc = parseFrontmatter(file, content, issues);

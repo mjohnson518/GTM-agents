@@ -6,10 +6,10 @@ import { LitElement, css, html, nothing } from "lit";
 import type { SystemStatus } from "@gtm-agents/core/gateway/protocol";
 import { GatewayClient, browserProbe, browserSocketFactory, socketUrl } from "./rpc.ts";
 import type { ConnectionState, Session } from "./rpc.ts";
-import { VIEWS, parseRoute } from "./router.ts";
+import { VIEWS, parseRoute, routeHash } from "./router.ts";
 import type { Route } from "./router.ts";
 import { pageStyles, sharedStyles } from "./styles.ts";
-import "./ui/dialog.ts";
+import { confirmAction } from "./ui/dialog.ts";
 import "./views/overview.ts";
 import "./views/cockpit.ts";
 import "./views/pipeline.ts";
@@ -21,6 +21,7 @@ import "./views/activity.ts";
 import "./views/settings.ts";
 import "./views/misc.ts";
 import "./views/contacts.ts";
+import "./views/targeting.ts";
 
 if (pageStyles.styleSheet) document.adoptedStyleSheets = [...document.adoptedStyleSheets, pageStyles.styleSheet];
 
@@ -150,7 +151,22 @@ export class GtmAdmin extends LitElement {
   #off: Array<() => void> = [];
   #routeChanged = false;
   #onHash = () => {
-    this.route = parseRoute(location.hash);
+    const next = parseRoute(location.hash);
+    // A view with unsaved edits (the Product and ICP editor) asks before the route changes.
+    // The view itself, not the connection banner that sits before it while reconnecting.
+    const children = Array.from(this.renderRoot.querySelector("main")?.children ?? []) as Array<Element & { dirty?: boolean }>;
+    if (children.some((el) => el.dirty === true) && next.view !== this.route.view) {
+      const back = routeHash(this.route);
+      history.replaceState(null, "", back);
+      void confirmAction({ title: "Leave this page", body: html`<p>You have unsaved edits. Leave without saving them?</p>`, confirmLabel: "Leave", danger: true }).then((answer) => {
+        if (!answer.confirmed) return;
+        this.route = next;
+        this.#routeChanged = true;
+        history.replaceState(null, "", routeHash(next));
+      });
+      return;
+    }
+    this.route = next;
     this.#routeChanged = true;
   };
   #onOnline = () => this.client.retryNow();
@@ -225,6 +241,8 @@ export class GtmAdmin extends LitElement {
         return html`<gtm-proposals .client=${client} .session=${session}></gtm-proposals>`;
       case "learning":
         return html`<gtm-learning .client=${client} .session=${session}></gtm-learning>`;
+      case "targeting":
+        return html`<gtm-targeting .client=${client} .session=${session}></gtm-targeting>`;
       case "contacts":
         return html`<gtm-contacts .client=${client} .session=${session} .contactId=${r.id ?? null}></gtm-contacts>`;
       case "agents":

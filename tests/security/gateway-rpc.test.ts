@@ -146,6 +146,10 @@ describe("mutations", () => {
     "proposals.approve": { id: "experiment:missing", shownDigest: Z },
     "proposals.reject": { id: "experiment:missing" },
     "flags.set": { key: "cold_batch:enabled", value: "false" },
+    "targeting.draft": { url: "https://acme.example" },
+    "targeting.save": { component: "product", items: [{ id: "summary", fields: { kind: "summary", text: "Finds flaky tests." } }] },
+    "targeting.discard": { draftId: "td-missing" },
+    "targeting.propose": { component: "product", items: [{ id: "summary", fields: { kind: "summary", text: "Finds flaky tests." } }] },
   };
 
   it("every mutating method writes an audit row, whatever its outcome", async () => {

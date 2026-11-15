@@ -6,8 +6,14 @@
 //             template:file:<id>, templates:lock). Files go first and the locks last, in a second
 //             call: the loader serves a file only when its bytes hash to the lock, so an upload that
 //             stops halfway is never served half-written;
-//   diff      compares the local locks with the uploaded ones and names what differs.
-import { existsSync, statSync, writeFileSync } from "node:fs";
+//   diff      compares the local locks with the uploaded ones and names what differs;
+//   pull      writes the brain the deployment serves into the local folder, so a component approved
+//             in the dashboard (the Product and ICP page, an approved brain proposal) is not lost.
+// An upload first reads the deployed brain and stops when a component it serves is at a newer
+// version than the local file, or is not in the local folder at all: uploading would silently undo
+// an approval made in the deployment. `gtm brain pull` brings those in; `--force` uploads anyway.
+// A deployed brain that cannot be read stops the upload too.
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -15,8 +21,11 @@ import {
   LOCK_FILE,
   brainFileKey,
   computeLock,
+  isComponentId,
+  parseBrainFile,
   parseLock,
   serializeLock,
+  sha256Hex,
   validateBrain,
   type BrainFileInput,
   type BrainLock,
@@ -35,13 +44,15 @@ export interface BrainOptions {
 
 const USAGE = `Usage:
   gtm brain validate [dir] [--templates <dir>] [--domain <domain>] [--write-lock]
-  gtm brain upload   [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production] [--dry-run] [--yes]
-  gtm brain diff     [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production]`;
+  gtm brain upload   [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production] [--dry-run] [--yes] [--force]
+  gtm brain diff     [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production]
+  gtm brain pull     [dir] [--config <dir>] [--env staging|production] [--yes]`;
 
 export async function brainCommand(args: string[], io: Io, options: BrainOptions = {}): Promise<number> {
   const [sub, ...rest] = args;
   if (sub === "validate") return validate(rest, io);
   if (sub === "upload" || sub === "diff") return remote(sub, rest, io, options.runner ?? spawnRunner);
+  if (sub === "pull") return pull(rest, io, options.runner ?? spawnRunner);
   io.err(USAGE);
   return EXIT.usage;
 }
@@ -227,6 +238,53 @@ export async function remoteDiff(wrangler: Wrangler, env: string | undefined, bu
   return diffs;
 }
 
+/** A component file the deployment serves: its bytes match the deployed lock. */
+export interface ServedFile {
+  name: string;
+  content: string;
+  version: number;
+}
+
+function versionOf(name: string, content: string): number {
+  const fm = parseBrainFile(name, content).frontmatter as { version?: number } | undefined;
+  return typeof fm?.version === "number" ? fm.version : 0;
+}
+
+/** The brain the deployment serves: its lock and every file whose bytes match it. Throws when KV cannot be read. */
+export async function servedBrain(wrangler: Wrangler, env: string | undefined): Promise<{ lock: BrainLock | null; files: ServedFile[]; unverified: string[] }> {
+  const lock = parseLock((await kvBulkGet(wrangler, [BRAIN_LOCK_KEY], env)).get(BRAIN_LOCK_KEY) ?? null);
+  if (!lock) return { lock: null, files: [], unverified: [] };
+  const names = Object.keys(lock.files).filter((n) => isComponentId(n.replace(/\.md$/, "")));
+  const values = await kvBulkGet(wrangler, names.map((n) => brainFileKey(n.replace(/\.md$/, "") as ComponentId)), env);
+  const files: ServedFile[] = [];
+  const unverified: string[] = [];
+  for (const name of names) {
+    const content = values.get(brainFileKey(name.replace(/\.md$/, "") as ComponentId)) ?? null;
+    if (content !== null && (await sha256Hex(content)) === lock.files[name]) files.push({ name, content, version: versionOf(name, content) });
+    else unverified.push(name);
+  }
+  return { lock, files, unverified };
+}
+
+/**
+ * What an upload of `local` would undo in the deployment: served components that are newer, missing
+ * locally, or at the same version with other content (a local edit that reused the served number).
+ */
+export function wouldUndo(local: readonly BrainFileInput[], served: readonly ServedFile[]): Array<{ name: string; served: number; local: number | null }> {
+  const byName = new Map(local.map((f) => [f.name, f]));
+  const out: Array<{ name: string; served: number; local: number | null }> = [];
+  for (const s of served) {
+    const mine = byName.get(s.name);
+    if (!mine) {
+      out.push({ name: s.name, served: s.version, local: null });
+      continue;
+    }
+    const v = versionOf(mine.name, mine.content);
+    if (s.version > v || (s.version === v && s.content !== mine.content)) out.push({ name: s.name, served: s.version, local: v });
+  }
+  return out;
+}
+
 export function printDiffs(io: Io, diffs: LockDiff[]): void {
   for (const d of diffs) {
     if (!differs(d)) {
@@ -252,7 +310,7 @@ async function remote(sub: "upload" | "diff", args: string[], io: Io, runner: Co
         domain: { type: "string" },
         config: { type: "string" },
         env: { type: "string" },
-        ...(sub === "upload" ? { "dry-run": { type: "boolean" as const, default: false }, yes: { type: "boolean" as const, default: false } } : {}),
+        ...(sub === "upload" ? { "dry-run": { type: "boolean" as const, default: false }, yes: { type: "boolean" as const, default: false }, force: { type: "boolean" as const, default: false } } : {}),
       },
     });
   } catch (err) {
@@ -309,6 +367,33 @@ async function remote(sub: "upload" | "diff", args: string[], io: Io, runner: Co
     }
   }
 
+  // Never silently undo a component approved in the deployment (the dashboard writes the brain too).
+  if (bundle.brain) {
+    let undo: ReturnType<typeof wouldUndo>;
+    try {
+      const deployed = await servedBrain(wrangler, env);
+      if (deployed.unverified.length > 0 && (parsed.values as { force?: boolean }).force !== true) {
+        io.err(`${name}: the deployed ${deployed.unverified.join(", ")} do not match the deployed lock (an upload or an approval may still be settling), so they cannot be checked; nothing was uploaded. Wait a minute and retry, or rerun with --force.`);
+        return EXIT.failed;
+      }
+      undo = wouldUndo(bundle.brain.files, deployed.files);
+    } catch (err) {
+      if ((parsed.values as { force?: boolean }).force !== true) {
+        io.err(`${name}: the deployed brain could not be read (${(err as Error).message}), so it cannot be checked for newer components; nothing was uploaded. Rerun with --force to upload anyway.`);
+        return EXIT.failed;
+      }
+      undo = [];
+    }
+    if (undo.length > 0) {
+      for (const u of undo) io.err(`  ${u.name}: the deployment serves version ${u.served}, ${u.local === null ? "and the local folder has no such file" : u.local === u.served ? "and the local file is the same version with other content" : `the local file is version ${u.local}`}`);
+      if ((parsed.values as { force?: boolean }).force !== true) {
+        io.err(`${name}: uploading would undo ${undo.length} component(s) approved in the deployment; nothing was uploaded. Run gtm brain pull first, or rerun with --force to replace them.`);
+        return EXIT.failed;
+      }
+      io.err(`${name}: --force: replacing ${undo.length} component(s) the deployment holds at a newer version`);
+    }
+  }
+
   const stop = await confirmProductionWrite(io, env, (parsed.values as { yes?: boolean }).yes === true, name, `upload ${files.length} file(s) and ${locks.length} lock(s) to KV`);
   if (stop !== null) return stop;
   try {
@@ -328,5 +413,71 @@ async function remote(sub: "upload" | "diff", args: string[], io: Io, runner: Co
     ...(bundle.templates ? [`${bundle.templates.files.length} approved template(s)`] : []),
   ];
   io.out(`${name}: uploaded ${parts.join(" and ")} to ${envLabel(env)}. KV can take up to a minute to reach every location; until then a location serves the previous version or holds a changed file back, never a mix.`);
+  return EXIT.ok;
+}
+
+/** `gtm brain pull`: write the deployed brain's served files and its lock into the local folder. */
+async function pull(args: string[], io: Io, runner: CommandRunner): Promise<number> {
+  const name = "gtm brain pull";
+  let parsed;
+  try {
+    parsed = parseArgs({ args, allowPositionals: true, options: { config: { type: "string" }, env: { type: "string" }, yes: { type: "boolean", default: false } } });
+  } catch (err) {
+    io.err(`${name}: ${(err as Error).message}`);
+    io.err(USAGE);
+    return EXIT.usage;
+  }
+  const loc = locateBrain(io.cwd, parsed.positionals[0], undefined);
+  if (!existsSync(loc.brainDir) || !statSync(loc.brainDir).isDirectory()) {
+    io.err(`${name}: ${loc.brainDir} is not a directory`);
+    return EXIT.usage;
+  }
+  const deployDir = parsed.values.config ? resolve(io.cwd, parsed.values.config) : loc.configDir;
+  const env = wranglerEnv(parsed.values.env);
+  if (!findWranglerConfig(deployDir)) {
+    io.err(`${name}: no wrangler.jsonc in ${relative(io.cwd, deployDir) || "."}; pass --config <deployment dir>`);
+    return EXIT.usage;
+  }
+  const notReady = kvReadiness(deployDir, env);
+  if (notReady) {
+    io.err(`${name}: ${notReady}`);
+    return EXIT.failed;
+  }
+  let served: Awaited<ReturnType<typeof servedBrain>>;
+  try {
+    served = await servedBrain(wranglerAt(runner, deployDir), env);
+  } catch (err) {
+    io.err(`${name}: ${(err as Error).message}`);
+    return EXIT.failed;
+  }
+  if (!served.lock) {
+    io.out(`${name}: ${envLabel(env)} serves no brain yet; nothing was written`);
+    return EXIT.ok;
+  }
+  if (served.unverified.length > 0) {
+    io.err(`${name}: the deployed ${served.unverified.join(", ")} do not match the deployed lock (an upload or an approval may still be settling); nothing was written. Wait a minute and retry.`);
+    return EXIT.failed;
+  }
+  const changes = served.files.filter((f) => {
+    const path = join(loc.brainDir, f.name);
+    return !existsSync(path) || readFileSync(path, "utf8") !== f.content;
+  });
+  const overwrites = changes.filter((f) => existsSync(join(loc.brainDir, f.name)));
+  if (overwrites.length > 0 && parsed.values.yes !== true) {
+    for (const f of overwrites) io.err(`  ${f.name} differs from the deployed version ${f.version}`);
+    io.err(`${name}: ${overwrites.length} local file(s) would be replaced; nothing was written. Rerun with --yes to replace them with what the deployment serves.`);
+    return EXIT.failed;
+  }
+  for (const f of changes) writeFileSync(join(loc.brainDir, f.name), f.content);
+  writeFileSync(join(loc.brainDir, LOCK_FILE), serializeLock(served.lock));
+  const local = new Set(served.files.map((f) => f.name));
+  const extra = readFlatDir(loc.brainDir).filter((f) => f.name.endsWith(".md") && !/^readme\.md$/i.test(f.name) && !local.has(f.name)).map((f) => f.name);
+  io.out(`${name}: wrote ${changes.length} changed file(s) and the lock (version ${served.lock.hash.slice(0, 12)}) from ${envLabel(env)}`);
+  if (extra.length > 0) {
+    io.out(`${name}: left as they are, and not in the deployed lock: ${extra.join(", ")}`);
+    const check = await validateBrain(readFlatDir(loc.brainDir).filter((f) => f.name.endsWith(".md") || f.name === LOCK_FILE));
+    const errors = check.issues.filter((i) => i.severity === "error");
+    if (errors.length > 0) io.out(`${name}: the folder does not validate with the deployed lock (${errors.length} error(s)); delete those files, or approve them and run gtm brain validate --write-lock`);
+  }
   return EXIT.ok;
 }

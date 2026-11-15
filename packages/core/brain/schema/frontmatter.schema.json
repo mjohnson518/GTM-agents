@@ -6,6 +6,7 @@
     "component": {
       "type": "string",
       "enum": [
+        "product",
         "market-profile",
         "personas",
         "icp",

@@ -16,6 +16,15 @@ const isoDay = z.string().regex(/^\d{4}-\d{2}-\d{2}(T[0-9:.]+Z)?$/, "use an ISO 
 export const INBOUND_STATUSES = ["new", "notified", "draft_created", "responded", "ignored", "archived"] as const;
 export const PROPOSAL_SOURCES = ["autonomy", "experiment", "learning", "brain", "copy", "self_review"] as const;
 
+// A brain item from the Product and ICP editor: a kebab-case id and single-line fields. The server
+// renders and validates the file; these bounds only keep a request small.
+const brainItem = z.strictObject({
+  id: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "item ids are kebab-case").max(64),
+  fields: z.record(z.string().regex(/^[a-z][a-z_]{0,31}$/, "field names are lowercase"), z.string().max(400)).refine((f) => Object.keys(f).length <= 8, "at most 8 fields"),
+});
+const targetingComponent = z.enum(["product", "icp"]);
+const targetingItems = z.array(brainItem).max(40);
+
 export const PARAMS = {
   connect: z.strictObject({ protocolVersion: z.number().int().min(1).max(1000) }),
   status: none,
@@ -60,6 +69,13 @@ export const PARAMS = {
   "proposals.list": z.strictObject({ source: z.enum(PROPOSAL_SOURCES).optional() }),
   "proposals.approve": z.strictObject({ id, shownDigest: digest, confirmCode: z.string().regex(/^[A-Za-z0-9]{1,16}$/).optional() }),
   "proposals.reject": z.strictObject({ id, reason: shortText(300).optional() }),
+
+  "targeting.get": none,
+  "targeting.draft": z.strictObject({ url: z.string().trim().min(1).max(2000).optional(), text: z.string().max(24_000).optional() }),
+  "targeting.validate": z.strictObject({ component: targetingComponent, items: targetingItems }),
+  "targeting.save": z.strictObject({ component: targetingComponent, items: targetingItems, draftId: id.optional() }),
+  "targeting.discard": z.strictObject({ draftId: id }),
+  "targeting.propose": z.strictObject({ component: targetingComponent, items: targetingItems, confirmRemoved: z.array(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64)).max(40).optional() }),
 
   "agents.list": none,
   "agents.status": none,

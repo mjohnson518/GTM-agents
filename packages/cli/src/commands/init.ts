@@ -141,7 +141,8 @@ function rewrite(file: string, content: string, name: string): string {
       .replace('"bucket_name": "gtm-agent-bucket"', `"bucket_name": "${name}-bucket"`);
   }
   if (file.endsWith("README.md")) {
-    return content.replace("[docs/BRAIN-SCHEMA.md](../../../docs/BRAIN-SCHEMA.md)", "`docs/BRAIN-SCHEMA.md` in the GTM-agents repository");
+    // Links into this repository's docs do not resolve in a new project: name the page instead.
+    return content.replace(/\[docs\/([A-Z][A-Z-]*\.md)\]\(\.\.\/\.\.\/\.\.\/docs\/\1(?:#[a-z0-9-]+)?\)/g, "`docs/$1` in the GTM-agents repository");
   }
   return content;
 }

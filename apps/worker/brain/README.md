@@ -9,4 +9,6 @@ The folder starts empty. That is valid: tasks are told which components are unkn
 3. When it is right, set `status: approved` and run `npx gtm brain validate --write-lock`.
 4. Run `npx gtm brain upload` (with `--env staging` for staging) so the deployment serves it.
 
+The dashboard's Product and ICP page can draft `product.md` and `icp.md` from your website and approve them in the deployment ([docs/TARGETING.md](../../../docs/TARGETING.md)). After an approval there, run `npx gtm brain pull` so this folder holds what is served; `gtm brain upload` stops rather than undo it.
+
 `examples/brains/acme` in the GTM-agents repository is a complete example for a fictional company. This README is ignored by the validator.

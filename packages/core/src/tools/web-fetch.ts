@@ -148,52 +148,95 @@ export function fetchableUrl(raw: unknown): string {
   return check.url;
 }
 
-export function createWebFetchHandler(options: WebFetchOptions = {}): ToolHandler {
+/** One page read as text: the URL it was finally read from, its title and text, and its links. */
+export interface PublicPage {
+  url: string;
+  title: string;
+  text: string;
+  /** Bytes read from the body. */
+  bytes: number;
+  /** True when the body was longer than the cap and only its start was read. */
+  cut: boolean;
+  /** Absolute http(s) links found in an HTML page (at most 200), for a caller that reads more pages. */
+  links: string[];
+}
+
+const LINKS_MAX = 200;
+
+function linksOf(html: string, base: string): string[] {
+  const out = new Set<string>();
+  for (const m of html.matchAll(/\bhref\s*=\s*["']([^"'#\s]{1,500})/gi)) {
+    if (out.size >= LINKS_MAX) break;
+    try {
+      const u = new URL(decodeEntities(m[1] ?? ""), base);
+      if (u.protocol === "https:" || u.protocol === "http:") {
+        u.hash = "";
+        out.add(u.toString());
+      }
+    } catch {
+      // A link that does not parse is skipped.
+    }
+  }
+  return [...out];
+}
+
+/**
+ * Fetch one public page with every rule web_fetch applies: the normalized URL only, redirects
+ * followed by hand with every hop validated, a byte cap, text/html and text/plain only, HTML reduced
+ * to text. Throws an Error whose message says why a page was refused.
+ */
+export async function fetchPublicPage(rawUrl: unknown, options: WebFetchOptions & { signal?: AbortSignal } = {}): Promise<PublicPage> {
   const doFetch = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
   const maxRedirects = options.maxRedirects ?? WEB_FETCH_MAX_REDIRECTS;
   const maxBytes = options.maxBytes ?? WEB_FETCH_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? WEB_FETCH_TIMEOUT_MS;
+  let url = fetchableUrl(rawUrl);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+  let response: Response | null = null;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    response = await doFetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal,
+      headers: { accept: "text/html, text/plain;q=0.9", ...(options.userAgent ? { "user-agent": options.userAgent } : {}) },
+    });
+    if (response.status < 300 || response.status >= 400) break;
+    const location = response.headers.get("location");
+    await response.body?.cancel().catch(() => undefined);
+    if (!location) throw new Error(`the page answered HTTP ${response.status} without a Location header`);
+    if (hop === maxRedirects) throw new Error(`the page redirected more than ${maxRedirects} times`);
+    let next: string;
+    try {
+      next = new URL(location, url).toString();
+    } catch {
+      throw new Error("the page redirected to a location that does not parse");
+    }
+    const check = validateUrl(next);
+    if (!check.ok) throw new Error(`the page redirected to a refused address: ${check.reason}`);
+    url = check.url;
+    response = null;
+  }
+  if (!response) throw new Error("the page could not be fetched");
+  if (response.status < 200 || response.status >= 300) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`the page answered HTTP ${response.status}`);
+  }
+  const type = mediaType(response.headers.get("content-type"));
+  if (!ACCEPTED_TYPES.includes(type)) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`the page is ${type || "of an unknown type"}; only text/html and text/plain are read`);
+  }
+  const { bytes, cut } = await readCapped(response.body, maxBytes);
+  const raw = new TextDecoder("utf-8").decode(bytes);
+  const page = type === "text/html" ? htmlToText(raw) : { title: "", text: raw.trim() };
+  return { url, title: page.title, text: page.text, bytes: bytes.byteLength, cut, links: type === "text/html" ? linksOf(raw, url) : [] };
+}
+
+export function createWebFetchHandler(options: WebFetchOptions = {}): ToolHandler {
+  const maxBytes = options.maxBytes ?? WEB_FETCH_MAX_BYTES;
   return async (input, ctx) => {
-    let url = fetchableUrl(input.url);
-    const signal = ctx.signal ? AbortSignal.any([ctx.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
-    let response: Response | null = null;
-    for (let hop = 0; hop <= maxRedirects; hop++) {
-      response = await doFetch(url, {
-        method: "GET",
-        redirect: "manual",
-        signal,
-        headers: { accept: "text/html, text/plain;q=0.9", ...(options.userAgent ? { "user-agent": options.userAgent } : {}) },
-      });
-      if (response.status < 300 || response.status >= 400) break;
-      const location = response.headers.get("location");
-      await response.body?.cancel().catch(() => undefined);
-      if (!location) throw new Error(`the page answered HTTP ${response.status} without a Location header`);
-      if (hop === maxRedirects) throw new Error(`the page redirected more than ${maxRedirects} times`);
-      let next: string;
-      try {
-        next = new URL(location, url).toString();
-      } catch {
-        throw new Error("the page redirected to a location that does not parse");
-      }
-      const check = validateUrl(next);
-      if (!check.ok) throw new Error(`the page redirected to a refused address: ${check.reason}`);
-      url = check.url;
-      response = null;
-    }
-    if (!response) throw new Error("the page could not be fetched");
-    if (response.status < 200 || response.status >= 300) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`the page answered HTTP ${response.status}`);
-    }
-    const type = mediaType(response.headers.get("content-type"));
-    if (!ACCEPTED_TYPES.includes(type)) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`the page is ${type || "of an unknown type"}; only text/html and text/plain are read`);
-    }
-    const { bytes, cut } = await readCapped(response.body, maxBytes);
-    const raw = new TextDecoder("utf-8").decode(bytes);
-    const page = type === "text/html" ? htmlToText(raw) : { title: "", text: raw.trim() };
-    const header = [`Page: ${url}`, ...(page.title ? [`Title: ${page.title}`] : []), ...(cut ? [`(only the first ${Math.round(maxBytes / 1024)} KB were read)`] : [])];
+    const page = await fetchPublicPage(input.url, { ...options, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+    const header = [`Page: ${page.url}`, ...(page.title ? [`Title: ${page.title}`] : []), ...(page.cut ? [`(only the first ${Math.round(maxBytes / 1024)} KB were read)`] : [])];
     return `${header.join("\n")}\n\n${page.text || "[the page has no readable text]"}`;
   };
 }

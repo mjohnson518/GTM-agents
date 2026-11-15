@@ -1,0 +1,29 @@
+{
+  "title": "GTM-agents brain item: product",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "summary",
+        "problem",
+        "capability",
+        "outcome",
+        "use_case",
+        "differentiator",
+        "not_for"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "required": [
+    "kind",
+    "text"
+  ],
+  "additionalProperties": false
+}

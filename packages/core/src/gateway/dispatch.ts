@@ -57,6 +57,7 @@ import {
 } from "./ops.ts";
 import { parseParams } from "./params.ts";
 import { learningHistorySearch, learningList, proposalsApprove, proposalsList, proposalsReject } from "./proposals.ts";
+import { targetingDiscard, targetingDraft, targetingGet, targetingPropose, targetingSave, targetingValidate } from "./targeting.ts";
 import { MUTATING_METHODS, PRE_CONNECT_METHODS, PROTOCOL_VERSION, type MethodName, type RpcErrorCode } from "./protocol.ts";
 
 export const MAX_FRAME_BYTES = 64 * 1024;
@@ -81,6 +82,7 @@ const connect: Handler<"connect"> = (p, ctx) => {
     if (m === "inbound.draftSend") return wiring.inbox !== undefined;
     if (m === "linkTriage.status") return wiring.config.modules.linkIntake.enabled && wiring.extensions.linkTriage !== undefined;
     if (m === "fitness.trend") return wiring.extensions.fitness !== undefined;
+    if (m === "targeting.draft") return wiring.model !== undefined;
     return true;
   });
   return Promise.resolve({
@@ -140,6 +142,12 @@ export const HANDLERS: Handlers = {
   "learning.historySearch": learningHistorySearch,
   "linkTriage.status": linkTriageStatus,
   "changelog.list": changelogList,
+  "targeting.get": targetingGet,
+  "targeting.draft": targetingDraft,
+  "targeting.validate": targetingValidate,
+  "targeting.save": targetingSave,
+  "targeting.discard": targetingDiscard,
+  "targeting.propose": targetingPropose,
 };
 
 export interface FrameOutcome {

@@ -64,9 +64,24 @@ export function assembleSlice(task: BrainTask, version: string, servable: Readon
       used += cost;
     }
   }
+  // Optional components come after, within their own allowance, so they never crowd out the others.
+  // Their reserve covers a missing line that also names them, so a dropped one never overruns.
+  const reserveAll = byteLength(`\n\n${missingLine([...spec.components, ...(spec.optional ?? [])])}`);
+  const droppedOptional: ComponentId[] = [];
+  for (const component of spec.optional ?? []) {
+    const block = servable.get(component);
+    if (block === undefined) continue;
+    const cost = byteLength(`\n\n${block}`);
+    if (used + cost + reserveAll <= spec.budgetBytes + (spec.optionalBytes ?? 0)) {
+      included.push(component);
+      blocks.push(block);
+      used += cost;
+    } else droppedOptional.push(component);
+  }
 
   // Even when nothing is served, the slice names what is missing, so a model never fills gaps from memory.
-  const missing = spec.components.filter((c) => !included.includes(c));
+  // An optional component is named only when it is served but did not fit.
+  const missing = [...spec.components.filter((c) => !included.includes(c)), ...droppedOptional];
   const text = [header, ...blocks, ...(missing.length ? [missingLine(missing)] : [])].join("\n\n");
   return { task, version, text, included, missing, bytes: byteLength(text) };
 }

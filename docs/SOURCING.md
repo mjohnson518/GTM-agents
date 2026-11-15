@@ -16,6 +16,20 @@ Every weekday the discovery cycle searches with the queries in your brain, store
 
 What to look for never comes from code. Queries come from the brain's `keyword-portfolio` component and from rows you add to `discovery_queries`; who fits comes from `personas`; hard stops come from the `never` items of `icp` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)). Selling a different product means editing the brain, not this code.
 
+## What the brain steers
+
+Each approved component steers a different part of sourcing and judging. Write them in the brain folder, or draft and approve `product` and `icp` on the dashboard's Product and ICP page ([TARGETING.md](TARGETING.md)).
+
+| Component | What it steers |
+|---|---|
+| `keyword-portfolio` | The search queries the discovery cycle runs |
+| `personas` | Who at an account fits: the title keywords the person-fit classifier matches |
+| `icp` | The hard stops (`never` items exclude domains, accounts and titles before anything is spent), the model fit score and so the fit gate in front of paid enrichment and promotion, and the agent's planning |
+| `product` | The model fit score and the chat agent's planning, after `icp`. The template writers never read it |
+| `signals`, `hiring` | Which buying signals and hiring patterns count, and how much |
+
+Sourcing needs `personas`, `icp` and `keyword-portfolio` approved; with any of them missing or unreadable, the discovery cycle does nothing rather than search without its hard stops. Fit scoring needs `icp`.
+
 ## Turning it on
 
 1. Enable `data-exa` and `data-hunter` in `gtm.config.ts` (`adapters`), and set their secrets:

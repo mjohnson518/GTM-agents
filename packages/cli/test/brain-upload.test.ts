@@ -25,7 +25,7 @@ describe("gtm brain upload", () => {
     const dir = await setUpDeployment(account, { brain: true });
     const { code, text } = await brain(dir, account, ["upload", "--yes"]);
     expect(code).toBe(0);
-    expect(text).toMatch(/uploaded brain version [0-9a-f]{12} \(14 component\(s\)\) and 10 approved template\(s\)/);
+    expect(text).toMatch(/uploaded brain version [0-9a-f]{12} \(15 component\(s\)\) and 10 approved template\(s\)/);
 
     const puts = account.callsTo("kv", "bulk", "put");
     expect(puts).toHaveLength(2);

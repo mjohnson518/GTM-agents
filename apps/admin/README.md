@@ -16,6 +16,7 @@ The dashboard holds no credentials of its own. Cloudflare Access sits in front o
 | Inbound | Totals, the email list, reply drafts | Archive, ignore, mark done, send or approve a draft, reject a draft |
 | Proposals | Pending proposals from every source | Approve or reject; two-step proposals need their confirm code |
 | Learning | The learnings document, pending learning proposals, a search of operator chat history | Approve or reject, search |
+| Product and ICP | What the brain serves for `product` and `icp`, the latest AI draft (pages read, items left out and why), an editor per component | Draft from your site or pasted text, edit, save, check, approve against the exact diff, copy a served file ([docs/TARGETING.md](../../docs/TARGETING.md)) |
 | Contacts | The contact base, who to contact next, search by text and warmth; a contact's record, activity and summary | Edit first name, last name, job title and notes |
 | Agents | Agents grouped by role with model and tool count; every job with its schedule, flag and last run | |
 | Chat | A streaming conversation with the hub agent | Send, abort |
@@ -83,7 +84,7 @@ Colors are CSS variables on the document root, with a dark set chosen by the sys
 npx vitest run --project admin
 ```
 
-The tests run in Node and cover the parts that hold logic: the RPC client (handshake, request ids, timeouts, events, reconnect, the not-configured and not-allowed outcomes), state reducers (activity feed, streaming chat, kanban grouping, flag rules), routes, formatting and URL checks, and the page hygiene scan. The Lit views render that state and are exercised against a running Worker.
+The tests run in Node and cover the parts that hold logic: the RPC client (handshake, request ids, timeouts, events, reconnect, the not-configured and not-allowed outcomes), state reducers (activity feed, streaming chat, kanban grouping, flag rules, the Product and ICP editor, whose unsaved edits survive a reconnect), routes, formatting and URL checks, and the page hygiene scan. The Lit views render that state and are exercised against a running Worker.
 
 ## Adding a view
 

@@ -36,6 +36,10 @@ export const frontmatterSchema = z.strictObject({
 export type BrainFrontmatter = z.output<typeof frontmatterSchema>;
 
 export const COMPONENT_SCHEMAS = {
+  product: z.strictObject({
+    kind: z.enum(["summary", "problem", "capability", "outcome", "use_case", "differentiator", "not_for"]),
+    text,
+  }),
   "market-profile": z.strictObject({
     kind: z.enum(["category", "segment", "trend", "buyer_behavior", "timing", "size"]),
     text,

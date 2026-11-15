@@ -39,7 +39,7 @@ export interface BrainItemInput {
 
 const ITEM_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const FIELD_KEY = /^[a-z][a-z_]{0,31}$/;
-const TITLES: Partial<Record<ComponentId, string>> = { "message-pillars": "Message pillars", voice: "Voice", "market-profile": "Market profile", icp: "ICP", "keyword-portfolio": "Keyword portfolio" };
+const TITLES: Partial<Record<ComponentId, string>> = { product: "Product", "message-pillars": "Message pillars", voice: "Voice", "market-profile": "Market profile", icp: "ICP", "keyword-portfolio": "Keyword portfolio" };
 
 /** A component file in the brain's format. Field values are single lines. */
 export function renderBrainFile(args: { component: ComponentId; version: number; updated: string; owner?: string | null; items: readonly BrainItemInput[] }): string {
@@ -146,6 +146,9 @@ export async function applyBrainEdit(deps: BrainEditDeps, edit: { component: Com
   }
   const name = `${edit.component}.md`;
   const current = served.files.get(name) ?? null;
+  // Listed in the lock but not verifiable (a half-finished upload, a hand edit, KV still settling):
+  // what is served cannot be known, so nothing is replaced on top of it.
+  if (current === null && served.lock?.files[name] !== undefined) return { ok: false, stale: true, reason: `the served ${edit.component} does not match the brain's lock, so it cannot be replaced safely; upload the brain again or wait a minute, then review again` };
   const currentSha = current === null ? null : await sha256Hex(current);
   if (currentSha !== edit.baseSha256) return { ok: false, stale: true, reason: `${edit.component} changed since this was proposed` };
   // Serialize brain writes made against the same lock, for an hour at most.

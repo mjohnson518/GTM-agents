@@ -28,6 +28,7 @@ This page is the index of the reference docs, for deployers, contributors and th
 | [EXPERIMENTS.md](EXPERIMENTS.md) | Prove what works: allocation, assignment, experiment types, pre-registration, conclusion rules, the copy-change gate and the self-review |
 | [AUTONOMY.md](AUTONOMY.md) | Decide how much the agent does on its own: levels, evidence, promotion and demotion, the writer registry and evals, automatic replies |
 | [LEARNING.md](LEARNING.md) | Let the system propose improvements: each learning loop, its guardrail and how you approve its proposals |
+| [TARGETING.md](TARGETING.md) | Describe your product and your ideal customer from your own site: the dashboard's Product and ICP page, its AI draft, editing, approval and keeping your brain folder in step |
 | [DASHBOARD.md](DASHBOARD.md) | Run the day from the operator dashboard: Cloudflare Access setup, the views and what each can do, and the security model |
 | [SHIP.md](SHIP.md) | Turn product feedback into reviewed pull requests with the optional ship module: themes, specs, the sandboxed build, the path policy and "it is live" notes |
 

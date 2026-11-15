@@ -15,6 +15,7 @@ This page is for adopters judging whether the system's structure fits them, and 
 | [ADR-009](#adr-009-source-first-typescript-on-node-24) | Source-first TypeScript on Node 24 | Accepted |
 | [ADR-010](#adr-010-brain-and-template-files-are-strict-markdown) | Brain and template files are strict Markdown | Accepted |
 | [ADR-011](#adr-011-linkedin-and-x-touches-stay-manual) | LinkedIn and X touches stay manual | Accepted |
+| [ADR-012](#adr-012-brain-text-drafted-from-the-operators-own-site) | Brain text drafted from the operator's own site | Accepted |
 
 ---
 
@@ -191,4 +192,19 @@ A build step per package means stale output, source maps and a slower loop for e
 - Email is the only automated channel. Social touches cost the operator a few minutes a day.
 - No account restriction risk comes from this system, and no deployment holds credentials that could take over a person's social account.
 - Tools that automate social outreach can still be used beside the system, outside it; nothing they send is measured here.
+
+## ADR-012: Brain text drafted from the operator's own site
+
+**Context.** The brain was the operator's own words, and no text came from the web. Writing a product description and an ideal customer profile from nothing is the slowest step for a new deployment, and most of what they need is on the operator's own website. A model can draft them in a minute, but the site is untrusted text, and so is anything a model writes from it.
+
+**Decision.**
+- The dashboard's Product and ICP page may draft `product` and `icp` items from the operator's own site, or from text they paste, with one model call. The site reaches the model only fenced in the user turn, under a fixed rubric.
+- Every drafted item is filtered in code: no links, prices, dashes, customer names or instructions, no run of 12 or more words copied from the site, and no `never` item. Hard stops are written by a person.
+- A draft is stored apart from the brain and never served. It becomes brain text only through an ordinary brain proposal the operator makes and approves against the exact file and its diff, with every brain rule applied again.
+- `product` is a new, optional component read only by the `fit` and `strategist` slices. The template writers never read it; `facts` stays the only thing they state. Through the strategist slice it can shape a one-off draft the chat agent writes, which a person approves like every chat draft.
+
+**Consequences.**
+- The brain can now hold text a model wrote from a web page, after a person approved it. The approval is the boundary, as it is for every brain change; the page marks each item stated or inferred and lists what was dropped, so the review is real.
+- A dashboard approval makes the deployment's brain newer than the deployer's files. `gtm brain pull` brings it back, and `gtm brain upload` stops rather than undo it.
+- Nothing drafts on a schedule, and drafts are capped per day and budgeted like any model call.
 

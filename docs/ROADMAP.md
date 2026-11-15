@@ -22,6 +22,7 @@ This page is for adopters deciding whether the toolkit does what they need, and 
 | 12. Self-improvement | Done (every loop behind its own `learning:*` flag; proposals only, except `brain_edit` at level 2) |
 | 13. Ship loop (module) | Done (the optional ship module, behind the `ship:*` flags; not yet run against a live repository) |
 | 14. Dashboard | Done (behind Cloudflare Access and `admin:enabled`) |
+| 15. Product and ICP | Done (the dashboard page behind `targeting:enabled`, AI drafts behind `targeting:draft_enabled`; nothing drafted is served until a person approves it) |
 
 **What exists today** ([CHANGELOG.md](../CHANGELOG.md) lists each release item by item):
 - **Foundation:** the workspace and its package boundaries; the repository checks (placeholders, secrets, migration order, house rules, conflict copies, doc links, licenses), run by the pre-commit hook and by CI; the engineering contract (`CLAUDE.md`) and the contributing, security, acceptable-use and conduct policies; `createWorker`, configuration, the job registry with one per-minute cron trigger, the port interfaces, and the brain and template engines; the worker template, which bundles from placeholders; `examples/brains/acme`, a complete, locked example brain with a three-step template sequence.
@@ -61,6 +62,7 @@ Nothing runs until you turn it on: every capability above is off by default behi
 | 12 | Self-improvement | Daily retrospective, agent review, learnings proposals, voice profile, edit mining, brain diff proposals | The system proposes better copy and a person approves it |
 | 13 | Ship loop (module) | Feedback themes, specs, the sandboxed coding agent, path policy, pull requests, deploy detection | A feature request becomes a pull request a person reviews |
 | 14 | Dashboard | The WebSocket gateway and the full admin views | The operator runs the day from two screens |
+| 15 | Product and ICP | The `product` brain component, the dashboard page that drafts it and the ICP from the operator's site, approval through the brain proposal path, `gtm brain pull` and the upload guard | A hostile site can add no hard stop and reach no system prompt, and a drafted item reaches a prompt only after a person approves the exact file (`tests/security/targeting.test.ts`) |
 
 ## Principles that hold at every milestone
 

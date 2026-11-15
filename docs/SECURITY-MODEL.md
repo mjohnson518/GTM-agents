@@ -207,6 +207,20 @@ Notes (`note_save`, `notes_read`, [OPERATOR.md](OPERATOR.md#notes)) are the one 
 
 `tests/security/decision-lines.test.ts` proves the destination, clean and no-origin rules.
 
+## The Product and ICP draft
+
+The dashboard's Product and ICP page drafts `product` and `icp` items from the operator's own site with a model ([TARGETING.md](TARGETING.md)). The site is untrusted text, and the model's answer about it is untrusted too, so the path is held to the same rules as a tool that reads a web page, and the brain's own approval rules do the rest:
+
+- **Reading:** the site is read with `web_fetch`'s rules (`fetchPublicPage`): a validated URL, every redirect hop validated, 512 KB, HTML and plain text only, at most three more pages on the same registrable domain. Only each page's URL, title, size and hash are stored.
+- **Prompting:** the system prompt is a fixed rubric in code. The site's text, and text the operator pastes in its place, goes only into the user turn, through `sanitizeToolOutput` like any page `web_fetch` reads (capped, injection patterns redacted, fenced as untrusted), and the rubric says instructions inside it are data.
+- **Filtering:** every drafted item is checked in code before anyone sees it: links, dashes, prices, customer names, injection patterns, a run of 12 or more words copied from the site, the brain's schema and limits, and every `never` item, are dropped with a reason. A page cannot write a hard stop.
+- **Serving:** a draft is a row in `targeting_drafts` that no loader reads. The only way an item reaches a prompt is a brain proposal the operator makes (`proposedBy: operator:<email>`), approved with the digest of its exact detail through `proposals.approve` and `approveLearningProposal`, then `applyBrainEdit`, which validates the whole brain and re-locks it. Such a proposal is not autonomy evidence and never applies on its own. The served ICP's `never` items are carried into the editor unchanged.
+- **Gates:** `targeting:enabled` and `targeting:draft_enabled` read fail closed; the daily cap reads 0 when unreadable; the model, its price and the budget are checked before the call, and the cost is recorded after it. Nothing runs on a schedule.
+- **Reaching prospects:** `product` is read only by the `fit` and `strategist` slices. The template writers (cold mail, sequences, replies, lifecycle follow-ups) never read it; `facts` stays the only thing they state. The strategist slice is the chat agent's reference data, so approved product text can shape a one-off draft that agent writes, which waits for the operator's approval like every chat draft.
+- **Hard stops:** an ICP proposal that leaves out a hard stop the brain serves is refused unless the operator confirmed removing that one, and the editor puts back any hard stop added since a draft was made. A component listed in the lock whose served bytes do not match it is neither drafted against, proposed over nor replaced (`applyBrainEdit` refuses), because what it holds cannot be shown.
+
+`tests/security/targeting.test.ts` proves the gates, that a hostile page shapes nothing but the list of dropped items, and that nothing is served before a person approves the exact file.
+
 ## The effects ledger
 
 Work can run more than once for the same event: a queue retry, a backstop sweep, a job rerun, or a handler that failed halfway. Every side effect outside the database (an email, a page, a webhook call) is claimed first:

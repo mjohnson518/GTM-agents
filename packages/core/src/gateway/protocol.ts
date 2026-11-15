@@ -162,6 +162,76 @@ export interface Methods {
   "learning.historySearch": { params: { q: string; limit?: number }; result: Array<{ sessionKey: string; at: string; snippet: string }> };
   "linkTriage.status": { params: Record<string, never>; result: { installed: boolean; detail?: Record<string, unknown> } };
   "changelog.list": { params: { q?: string; area?: string }; result: Array<{ version: string; date: string; area: string; text: string }> };
+
+  "targeting.get": { params: Record<string, never>; result: TargetingState };
+  "targeting.draft": { params: { url?: string; text?: string }; result: { draftId: string } };
+  "targeting.validate": { params: { component: TargetingComponentName; items: TargetingItem[] }; result: TargetingCheck };
+  "targeting.save": { params: { component: TargetingComponentName; items: TargetingItem[]; draftId?: string }; result: { draftId: string } };
+  "targeting.discard": { params: { draftId: string }; result: { ok: true } };
+  "targeting.propose": { params: { component: TargetingComponentName; items: TargetingItem[]; confirmRemoved?: string[] }; result: { proposalId: string; detail: string; digest: string; created: boolean } };
+}
+
+/** The brain components the Product and ICP page edits. */
+export type TargetingComponentName = "product" | "icp";
+
+/** One brain item as the editor holds it: its id and its fields as single-line strings. */
+export interface TargetingItem {
+  id: string;
+  fields: Record<string, string>;
+}
+
+export interface TargetingServedComponent {
+  content: string | null;
+  sha256: string | null;
+  version: number;
+  updated: string | null;
+  items: TargetingItem[];
+}
+
+/** A drafted item. Its text came from the operator's site through a model: render it as text. */
+export interface TargetingDraftItem {
+  id: string;
+  kind: string;
+  text: string;
+  basis: "stated" | "inferred";
+  figures: boolean;
+}
+
+export interface TargetingState {
+  flags: { enabled: boolean; draft: boolean; dailyMax: number; usedToday: number | null; defaultDailyMax: number };
+  /** False when no model gateway is wired, so drafts cannot run whatever the flags say. */
+  draftAvailable: boolean;
+  /** False when the Worker does not wire learningDashboard(), so a proposal could not be approved here. */
+  approvable: boolean;
+  company: { name: string; url: string; description: string };
+  served: { brainVersion: string; product: TargetingServedComponent; icp: TargetingServedComponent } | null;
+  servedError?: string;
+  draft: {
+    id: string;
+    status: "running" | "ready" | "failed" | "discarded";
+    source: "url" | "text" | "manual";
+    url: string | null;
+    reason: string | null;
+    pages: Array<{ url: string; title: string; bytes: number }>;
+    skipped: Array<{ url: string; reason: string }>;
+    draft: { product: TargetingDraftItem[]; icp: TargetingDraftItem[] } | null;
+    dropped: Array<{ component: TargetingComponentName; kind: string; reason: string; preview?: string }>;
+    working: { product?: TargetingItem[]; icp?: TargetingItem[] } | null;
+    startedAt: string;
+    finishedAt: string | null;
+    updatedAt: string;
+  } | null;
+}
+
+export interface TargetingCheck {
+  /** Ids of hard stops the brain serves now that this file leaves out; proposing needs them confirmed. */
+  removedHardStops: string[];
+  content: string;
+  sha256: string;
+  baseSha256: string | null;
+  previousContent: string | null;
+  budgets: Array<{ task: string; bytes: number; room: number }>;
+  issues: Array<{ severity: "error" | "warning"; message: string }>;
 }
 
 export type MethodName = keyof Methods;
@@ -190,4 +260,8 @@ export const MUTATING_METHODS: readonly MethodName[] = Object.freeze([
   "proposals.approve",
   "proposals.reject",
   "flags.set",
+  "targeting.draft",
+  "targeting.save",
+  "targeting.discard",
+  "targeting.propose",
 ]);

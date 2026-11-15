@@ -191,6 +191,10 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 
 - `chat_draft_origins`: one row per draft a hub turn created while `operator:decision_lines_enabled` is on ([OPERATOR.md](OPERATOR.md#decisions-in-the-session)). It records the session and turn that created the draft and the session's `cleared_at` as that turn loaded it. Approving or rejecting the draft writes one decision line into that session's `chat_messages`, in a single statement that also checks the session's `cleared_at` still matches, so a session cleared since gets nothing. A draft with no row here never writes a line. The row holds no address: it is deleted with its draft (`ON DELETE CASCADE`), so erasing a person removes it, and the decision line, which names the recipient, goes with the person's chat messages.
 
+### Targeting drafts (0035)
+
+- `targeting_drafts`: drafts from the dashboard's Product and ICP page, and the operator's saved edits ([TARGETING.md](TARGETING.md)). `status` runs `running` (the site is read and the model answers; a row still running after five minutes reads as failed), then `ready` or `failed`, and any row may end `discarded`; every move out of `running` is a compare-and-set. `source` is `url`, `text` (pasted) or `manual` (edits saved without a draft). `pages` holds each page's URL, title, size and SHA-256, never its text; `draft` holds the items that passed every filter, `dropped` what was left out and why, and `working` the editor's saved items per component. Nothing reads these rows to serve the brain: only an approved brain proposal changes `product` or `icp`. A draft holds no contact data, so erasure has nothing to delete here.
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

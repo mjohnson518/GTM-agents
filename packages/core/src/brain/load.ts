@@ -6,7 +6,7 @@
 // prices outside commercial). Anything else is named as missing. The loader never throws: on any
 // error the slice carries no brain content and names every component as missing.
 import { assembleSlice, renderComponent, type BrainSlice } from "./assemble.ts";
-import { TASK_SPECS, type BrainTask, type ComponentId } from "./components.ts";
+import { TASK_SPECS, taskComponents, type BrainTask, type ComponentId } from "./components.ts";
 import { brainVersion, parseLock, sha256Hex } from "./lock.ts";
 import { parseBrainFile } from "./parse.ts";
 import { contentRuleIssues } from "./validate.ts";
@@ -24,12 +24,11 @@ export async function loadBrain(env: { KV: KVReader }, task: BrainTask): Promise
     if (!Object.hasOwn(TASK_SPECS, task)) {
       return { task, version: "unlocked", text: "", included: [], missing: [], bytes: 0 };
     }
-    const spec = TASK_SPECS[task];
     const lock = parseLock(await env.KV.get(BRAIN_LOCK_KEY).catch(() => null));
     if (!lock) return assembleSlice(task, brainVersion(null), new Map());
     const servable = new Map<ComponentId, string>();
     await Promise.all(
-      spec.components.map(async (component) => {
+      taskComponents(task).map(async (component) => {
         const expected = lock.files[`${component}.md`];
         if (!expected) return;
         const content = await env.KV.get(brainFileKey(component));

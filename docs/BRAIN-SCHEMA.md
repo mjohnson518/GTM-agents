@@ -62,14 +62,15 @@ Anything between the title and the first item is a note for humans. It is never 
 - URLs are allowed only in the `url` fields of `facts` and `commercial`, and must be `https`.
 - Prices and currency amounts are allowed only in `commercial`.
 - No em dashes or en dashes.
-- No text copied from the web or from inbound email, and no customer names. The brain is the operator's own words.
+- No text copied from the web or from inbound email, and no customer names. The brain is the operator's own words, or words they approved: the dashboard's Product and ICP page can draft `product` and `icp` items from the operator's own site with a model, refuses any item that copies the site word for word, and serves nothing until a person approves the exact file ([TARGETING.md](TARGETING.md), [ADR-012](DECISIONS.md#adr-012-brain-text-drafted-from-the-operators-own-site)).
 
 ## Components
 
-The brain has fourteen components: twelve typed lists, plus `facts` (the only facts a prospect-facing writer may state) and `commercial` (plans and prices, never shown to a prospect-facing writer).
+The brain has fifteen components: thirteen typed lists, plus `facts` (the only facts a prospect-facing writer may state) and `commercial` (plans and prices, never shown to a prospect-facing writer).
 
 | Component | Holds | Read by tasks |
 |---|---|---|
+| `product` | What the product or service is, the problem, capabilities, outcomes, use cases, differentiators and who it is not for (optional) | fit, strategist |
 | `market-profile` | The category, segments, trends and buying behavior | strategist |
 | `personas` | Buying roles, with the title keywords that identify them | outreach, strategist, account |
 | `icp` | Who you sell to, why now, must-haves, hard exclusions, triggers | fit, sourcing, strategist |
@@ -88,6 +89,10 @@ The brain has fourteen components: twelve typed lists, plus `facts` (the only fa
 ### Fields by component
 
 Fields marked * are required.
+
+**`product`**
+- `kind`*: one of `summary`, `problem`, `capability`, `outcome`, `use_case`, `differentiator`, `not_for`
+- `text`*
 
 **`market-profile`**
 - `kind`*: one of `category`, `segment`, `trend`, `buyer_behavior`, `timing`, `size`
@@ -187,16 +192,16 @@ Each task gets a fixed slice of the brain, under a byte budget:
 
 | Task | Budget | Components, in priority order |
 |---|---|---|
-| `fit` | 2 KB | icp |
+| `fit` | 2 KB, plus 1.5 KB for product | icp, then product |
 | `sourcing` | 4 KB | icp, signals, hiring, keyword-portfolio |
 | `judge` | 4 KB | voice, facts, message-pillars |
 | `account` | 4 KB | personas, influencers |
 | `outreach` | 6 KB | personas, message-pillars, voice, facts |
-| `strategist` | 6 KB | market-profile, icp, personas, message-pillars, competitors, commercial |
+| `strategist` | 6 KB, plus 1.5 KB for product | market-profile, icp, personas, message-pillars, competitors, commercial, then product |
 | `close` | 6 KB | facts, commercial |
 | `replies` | 8 KB | facts, objections, competitors, voice, stack |
 
-Components are added whole, in priority order, while they fit. A component is never cut mid-item. A component that is missing, unapproved, unlocked or too large for the remaining budget is named at the end of the slice:
+Components are added whole, in priority order, while they fit. A component is never cut mid-item. `product` is optional: it comes after a task's other components, within its own allowance on top of the task's budget, so it never crowds them out, and a brain without it is never told it is missing; a deployment that never writes one gets exactly the slices it got before the component existed. The template writers' slices (`outreach`, `judge`, `replies`, `close`) never include it: `facts` stays the only thing they state. The chat agent's `strategist` slice does, so it can shape a one-off draft that agent writes, which waits for the operator's approval. A component that is missing, unapproved, unlocked or too large for the remaining budget is named at the end of the slice:
 
 ```
 Missing from the brain for this task: competitors, stack. Do not fill these in from memory; say what is unknown.
@@ -313,7 +318,7 @@ npx gtm brain validate --write-lock    # validate, then write brain/brain.lock.j
 `--templates <dir>` names another templates folder, and `--domain <domain>` sets the company domain for the template link check (otherwise it comes from `gtm.config.ts`).
 
 **Errors** (non-zero exit):
-- a file name that is not one of the fourteen components, or a file in the brain folder that is not Markdown (`README.md` and the lock file excepted);
+- a file name that is not one of the fifteen components, or a file in the brain folder that is not Markdown (`README.md` and the lock file excepted);
 - invalid frontmatter;
 - an unknown field or a missing required field;
 - a wrong enum value, an out-of-range number or a malformed date;

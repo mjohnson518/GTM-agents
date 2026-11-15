@@ -59,7 +59,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/, ship/ (the ship module wired in)
 docs/                QUICKSTART, ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, TARGETING, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -174,6 +174,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How signal sources find dated reasons to write | [docs/SIGNALS.md](docs/SIGNALS.md) |
 | How experiments are allocated, pre-registered and concluded | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) |
 | How the operator dashboard is secured and what it can do | [docs/DASHBOARD.md](docs/DASHBOARD.md) |
+| How the product description and the ICP are drafted from the operator's site and approved | [docs/TARGETING.md](docs/TARGETING.md) |
 | How the learning loops propose and apply improvements | [docs/LEARNING.md](docs/LEARNING.md) |
 | How the optional ship module turns feedback into a pull request | [docs/SHIP.md](docs/SHIP.md) |
 | How to get from nothing to a first staging deployment | [docs/QUICKSTART.md](docs/QUICKSTART.md) |
