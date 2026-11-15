@@ -144,8 +144,9 @@ const learning = createLearningJobs<Env>({ model, operator });
 
 // Timers: later chat turns the agent sets for itself (docs/OPERATOR.md#timers). Every minute, behind
 // operator:timers_enabled, due timers go to the chat queue; the model runs only in the chat consumer.
-// The agent offers timer_set only when this job is registered.
-const timers = createOperatorTimerJobs<Env>();
+// The agent offers timer_set only when this job is registered. A timer that expires without running
+// (more than six hours late) is reported to its chat through the operator channel.
+const timers = createOperatorTimerJobs<Env>({ operator });
 
 // The outbox's delivery: every five minutes, held notices that are due go out, folded together. It
 // has no flag, so anything held while the outbox was on still goes out after it is turned off.

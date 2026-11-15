@@ -5,16 +5,17 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { runHubTurn, type HubAgentDeps } from "../src/agents/hub.ts";
-import { ensureSession, sessionKeyFor } from "../src/agents/sessions.ts";
+import { clearSession, ensureSession, sessionKeyFor } from "../src/agents/sessions.ts";
 import { memoryKv, recordingOperator, recordingQueue, scriptedModel } from "../src/agents/testing.ts";
-import { TIMER_PENDING_MAX, insertTimer, loadTimer, newTimerId, timerTurnText, type Timer, type TimerStatus } from "../src/agents/timers.ts";
+import { TIMER_PENDING_MAX, insertTimer, loadTimer, minuteUtc, newTimerId, timerTurnText, type Timer, type TimerStatus } from "../src/agents/timers.ts";
 import { defineConfig } from "../src/config/index.ts";
 import type { ChatMessage, Env } from "../src/env.ts";
 import { findFlag } from "../src/flags/registry.ts";
 import type { JobContext } from "../src/jobs/registry.ts";
 import { processChatRun } from "../src/operator/chat.ts";
 import { runCommand } from "../src/operator/commands.ts";
-import { TIMERS_JOB, createOperatorTimerJobs, queueDueTimers, timerQueueMessage } from "../src/operator/timers.ts";
+import { EXPIRED_LISTED_MAX, TIMERS_JOB, createOperatorTimerJobs, expiryNotice, queueDueTimers, timerQueueMessage } from "../src/operator/timers.ts";
+import type { OperatorChannel } from "../src/ports/operator.ts";
 import type { TaintLevel } from "../src/security/taint.ts";
 import { createTimerSetHandler, resolveTimerDue } from "../src/tools/timer-set.ts";
 import { acmeConfig } from "./fixtures.ts";
@@ -45,15 +46,19 @@ async function seed(args: { chatId: string; due: Date; taint?: TaintLevel; note?
   return row;
 }
 
-function jobWorld(flags: Record<string, string> = {}) {
+function jobWorld(flags: Record<string, string> = {}, setup: { allowed?: string[]; operator?: OperatorChannel } = {}) {
   const kv = memoryKv({ "operator:agent_enabled": "true", "operator:timers_enabled": "true", ...flags });
   const queue = recordingQueue<ChatMessage>();
   const testEnv = { ...(env as unknown as Env), KV: kv as unknown as KVNamespace, CHAT_QUEUE: queue as unknown as Queue<ChatMessage> };
+  const allowed = setup.allowed ?? [];
+  const config = defineConfig({ ...acmeConfig, operator: { allowedChatIds: allowed, allowedUserIds: allowed } });
+  const warnings: string[] = [];
+  const log = { ...quiet, warn: (msg: string) => void warnings.push(msg) };
   const run = (now: Date, maxRows = 10) => {
-    const ctx: JobContext<Env> = { env: testEnv, config: defineConfig(acmeConfig), job: TIMERS_JOB, now, signal: new AbortController().signal, ceilings: { maxDurationMs: 30_000, maxRows }, flags: { get: (k) => kv.get(k) }, log: quiet };
-    return queueDueTimers(ctx);
+    const ctx: JobContext<Env> = { env: testEnv, config, job: TIMERS_JOB, now, signal: new AbortController().signal, ceilings: { maxDurationMs: 30_000, maxRows }, flags: { get: (k) => kv.get(k) }, log };
+    return queueDueTimers(ctx, setup.operator ? () => setup.operator : undefined);
   };
-  return { kv, queue, testEnv, run };
+  return { kv, queue, testEnv, run, warnings };
 }
 
 const statusOf = async (id: string) => (await loadTimer(env.DB, id))?.status;
@@ -185,6 +190,54 @@ describe("the operator_timers job", () => {
     expect(await statusOf(onTime.id)).toBe("queued");
   });
 
+  it("tells each chat that may still use the agent which of its timers expired, once", async () => {
+    const operator = recordingOperator();
+    const [a, b, gone] = [nextChat(), nextChat(), nextChat()];
+    const w = jobWorld({}, { allowed: [a, b], operator: operator.channel });
+    const now = day(7);
+    const late = await seed({ chatId: a, due: new Date(now.getTime() - 7 * 3_600_000), note: "Check whether Jane replied.\nThen draft a nudge." });
+    const lost = await seed({ chatId: a, due: new Date(now.getTime() - 9 * 3_600_000), status: "queued", queuedAt: new Date(now.getTime() - 8 * 3_600_000) });
+    const other = await seed({ chatId: b, due: new Date(now.getTime() - 7 * 3_600_000) });
+    const unannounced = await seed({ chatId: gone, due: new Date(now.getTime() - 7 * 3_600_000) });
+    await w.run(now);
+    for (const t of [late, lost, other, unannounced]) expect(await statusOf(t.id)).toBe("expired");
+    expect(operator.messages.map((m) => [m.chatId, m.kind])).toEqual([
+      [a, "notice"],
+      [b, "notice"],
+    ]);
+    const toA = operator.messages[0]?.text ?? "";
+    expect(toA).toContain("2 timers expired without running:");
+    expect(toA).toContain(`- ${late.id}, due ${minuteUtc(late.dueAt)}: more than 6 hours past due`);
+    expect(toA).toContain("Note: Check whether Jane replied.");
+    expect(toA).not.toContain("Then draft a nudge.");
+    expect(toA).toContain(`- ${lost.id}, due ${minuteUtc(lost.dueAt)}: its message never reached the chat`);
+    expect(operator.messages[1]?.text).toContain(`A timer expired without running:\n- ${other.id}`);
+    // A later run expires nothing more and says nothing more.
+    await w.run(day(7, 1));
+    expect(operator.messages).toHaveLength(2);
+  });
+
+  it("still expires timers when there is no channel to report them through, or it fails", async () => {
+    const chatId = nextChat();
+    const silent = jobWorld({}, { allowed: [chatId] });
+    const quietTimer = await seed({ chatId, due: new Date(day(8).getTime() - 7 * 3_600_000) });
+    await silent.run(day(8));
+    expect(await statusOf(quietTimer.id)).toBe("expired");
+    const failing: OperatorChannel = { ...recordingOperator().channel, notify: () => Promise.reject(new Error("telegram down")) };
+    const w = jobWorld({}, { allowed: [chatId], operator: failing });
+    const t = await seed({ chatId, due: new Date(day(9).getTime() - 7 * 3_600_000) });
+    expect(await w.run(day(9))).toMatchObject({ rows: 0 });
+    expect(await statusOf(t.id)).toBe("expired");
+    expect(w.warnings).toContain("the notice about expired timers could not be sent");
+  });
+
+  it("names at most ten timers in one notice and counts the rest", () => {
+    const timers = Array.from({ length: EXPIRED_LISTED_MAX + 2 }, (_, i) => ({ id: `tm_${i}`, dueAt: day(10).toISOString(), reason: "late", note: "Check." }));
+    const text = expiryNotice(timers);
+    expect(text.split("\n").filter((l) => l.startsWith("- tm_"))).toHaveLength(EXPIRED_LISTED_MAX);
+    expect(text).toContain("- and 2 more");
+  });
+
   it("puts a timer back to waiting when the chat queue does not take its message", async () => {
     const w = jobWorld();
     const t = await seed({ chatId: nextChat(), due: day(6) });
@@ -226,6 +279,34 @@ describe("/timers and /clean", () => {
     expect(await command(chatId, "timers", "cancel all")).toBe("Cancelled 1 timer.");
     expect(await Promise.all([statusOf(a.id), statusOf(b.id), statusOf(theirs.id)])).toEqual(["cancelled", "cancelled", "pending"]);
     expect(await command(chatId, "timers", "delete everything")).toContain("/timers cancel <id>");
+  });
+
+  it("still starts a clean session when its timers cannot be cancelled, and the timers never fire into it", async () => {
+    const chatId = nextChat();
+    const t = await seed({ chatId, due: day(17), status: "queued", queuedAt: day(17) });
+    const refusing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return (sql: string) => {
+            if (sql.includes("UPDATE operator_timers") && sql.includes("session_key")) throw new Error("D1 unavailable");
+            return target.prepare(sql);
+          };
+        }
+        const value = Reflect.get(target, key) as unknown;
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const reply = await runCommand({ db: refusing, agentName: "Avery", strategistModel: undefined }, { name: "clean", args: "" }, { sessionKey: t.sessionKey, chatId });
+    expect(reply).toBe("Started a clean session. This chat's history and taint are cleared.");
+    expect(await statusOf(t.id)).toBe("queued");
+    // Its turn checks the session was not cleared since it was set, so it is cancelled instead.
+    const kv = memoryKv({ "operator:agent_enabled": "true", "operator:timers_enabled": "true" });
+    const operator = recordingOperator();
+    const never = scriptedModel([]);
+    const config = defineConfig({ ...acmeConfig, operator: { allowedChatIds: [chatId], allowedUserIds: [chatId] } });
+    await processChatRun({ config, operator: () => operator.channel, model: () => never }, { ...(env as unknown as Env), KV: kv as unknown as KVNamespace }, [timerQueueMessage(t)]);
+    expect(await loadTimer(env.DB, t.id)).toMatchObject({ status: "cancelled", reason: "session cleared" });
+    expect(never.requests).toHaveLength(0);
   });
 
   it("cancels the session's waiting timers on /clean, and says so", async () => {
@@ -299,11 +380,59 @@ describe("the chat consumer, for a timer that can no longer fire", () => {
     }
   });
 
-  it("expires it when no model gateway is configured", async () => {
+  it("expires it when no model gateway is configured, and tells its chat", async () => {
     const t = await seed({ chatId: nextChat(), due: day(14), status: "queued", queuedAt: day(14) });
-    await deliver(t, { withModel: false });
+    const operator = await deliver(t, { withModel: false });
     expect(await loadTimer(env.DB, t.id)).toMatchObject({ status: "expired", reason: "no model gateway" });
     expect(model.requests).toHaveLength(0);
+    expect(operator.messages).toHaveLength(1);
+    expect(operator.messages[0]).toMatchObject({ chatId: t.chatId, kind: "notice" });
+    expect(operator.messages[0]?.text).toContain(`- ${t.id}, due ${minuteUtc(t.dueAt)}: no model gateway is configured`);
+  });
+
+  it("cancels a timer whose session is cleared after it fired but before its turn loads the session", async () => {
+    const t = await seed({ chatId: nextChat(), due: day(16), status: "queued", queuedAt: day(16) });
+    // A /clean that lands between the move to fired and the turn: the turn must not run in the clean session.
+    const racing = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === "prepare") {
+          return (sql: string) => {
+            const stmt = target.prepare(sql);
+            if (!sql.startsWith("UPDATE operator_timers SET status = ?1")) return stmt;
+            return new Proxy(stmt, {
+              get(s, k) {
+                if (k !== "bind") return Reflect.get(s, k) as unknown;
+                return (...values: unknown[]) => {
+                  const bound = s.bind(...values);
+                  // Only the move from waiting to fired, not the later bookkeeping update.
+                  if (values[0] !== "fired" || !values.includes("queued")) return bound;
+                  return new Proxy(bound, {
+                    get(b, m) {
+                      if (m !== "run") return Reflect.get(b, m) as unknown;
+                      return async () => {
+                        const result = await b.run();
+                        await clearSession(target, t.sessionKey, t.chatId);
+                        return result;
+                      };
+                    },
+                  });
+                };
+              },
+            });
+          };
+        }
+        const value = Reflect.get(target, key) as unknown;
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+    const kv = memoryKv({ "operator:agent_enabled": "true", "operator:timers_enabled": "true" });
+    const operator = recordingOperator();
+    const config = defineConfig({ ...acmeConfig, operator: { allowedChatIds: [t.chatId], allowedUserIds: [t.chatId] } });
+    const never = scriptedModel([]);
+    await processChatRun({ config, operator: () => operator.channel, model: () => never }, { ...(env as unknown as Env), DB: racing, KV: kv as unknown as KVNamespace }, [timerQueueMessage(t)]);
+    expect(await loadTimer(env.DB, t.id)).toMatchObject({ status: "cancelled", reason: "session cleared" });
+    expect(never.requests).toHaveLength(0);
+    expect(operator.messages).toEqual([]);
   });
 
   it("drops the message of a timer already settled", async () => {

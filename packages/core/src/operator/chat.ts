@@ -71,6 +71,7 @@ import { AGENT_DISABLED_TEXT, isAgentEnabled, isAllowedOperator, isChatBatchingE
 import { loadTimer, minuteUtc, timerEffectKey, timerTurnText, transitionTimer, type TimerStatus } from "../agents/timers.ts";
 import { requestDraftApproval } from "./approvals.ts";
 import { parseCommand, parseReleaseCommand, runCommand, runReleaseCommand } from "./commands.ts";
+import { expiryNotice } from "./timers.ts";
 // Sequences: follow-up release, resume and manual-touch commands, and the send function for steps.
 import type { EmailProvider } from "../ports/email.ts";
 import { senderDepsFromEnv } from "../sending/jobs.ts";
@@ -682,8 +683,9 @@ export async function processChatRun<E extends Env>(options: OperatorAgentOption
  * else comes from its row. A timer fires at most once: it moves to fired with a compare-and-set and
  * is claimed in the effects ledger before its turn. One that can no longer fire is settled without a
  * turn: cancelled when its operator is no longer allowed or its session was cleared since it was set,
- * expired when no model gateway is configured, and back to pending while the agent or timers are off
- * (it fires once both are on again, or expires if that comes too late).
+ * expired when no model gateway is configured (and its chat is told), and back to pending while the
+ * agent or timers are off (it fires once both are on again, or expires if that comes too late, when
+ * the operator_timers job tells the chat).
  */
 async function processTimerRun<E extends Env>(options: OperatorAgentOptions<E>, env: E, timerId: string, channel: OperatorChannel, log: AgentLogger): Promise<void> {
   const clock = () => options.now?.() ?? new Date();
@@ -738,8 +740,15 @@ async function processTimerRun<E extends Env>(options: OperatorAgentOptions<E>, 
       model = undefined;
     }
     if (!model) {
-      await settle("expired", "no model gateway");
-      log.warn("a timer expired because no model gateway is configured", { timerId: timer.id });
+      if (await settle("expired", "no model gateway")) {
+        log.warn("a timer expired because no model gateway is configured", { timerId: timer.id });
+        // Its chat may still use the agent (checked above), so it hears why the timer did not run.
+        try {
+          await channel.notify({ text: expiryNotice([{ ...timer, reason: "no model gateway" }]), chatId: timer.chatId, kind: "notice" });
+        } catch (error) {
+          log.warn("the notice about an expired timer could not be sent", { timerId: timer.id, error: sanitizeErrorMessage(error) });
+        }
+      }
       return;
     }
     if (!(await transitionTimer(env.DB, timer.id, ["pending", "queued"], "fired", { firedAt: clock().toISOString() }, clock()))) return;

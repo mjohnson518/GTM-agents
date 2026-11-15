@@ -12,13 +12,16 @@ export type { CommandDeps, ParsedCommand, ReleaseCommandDeps } from "./commands.
 export { BUILT_IN_COMMAND_NAMES, matchModuleCommand, moduleHelpLines } from "./module-commands.ts";
 export type { MatchedModuleCommand, ModuleCommand, ModuleCommandContext, ModuleCommandHandler } from "./module-commands.ts";
 export {
+  EXPIRED_LISTED_MAX,
   TIMERS_DAILY_MAX,
   TIMERS_DAILY_MAX_FLAG,
   TIMERS_HELP_LINE,
   TIMERS_JOB,
   TIMERS_PER_RUN,
   TIMERS_SCHEDULE,
+  announceExpiredTimers,
   createOperatorTimerJobs,
+  expiryNotice,
   queueDueTimers,
   runTimersCommand,
   timerQueueMessage,

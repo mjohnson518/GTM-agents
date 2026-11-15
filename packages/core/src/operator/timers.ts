@@ -3,7 +3,10 @@
 // tools/timer-set.ts, and the turn a timer starts runs in the chat consumer (chat.ts).
 //
 // The job runs every minute behind operator:timers_enabled and never calls a model. Each run:
-//   1. expires timers more than six hours late, and queued ones whose message never arrived;
+//   1. expires timers more than six hours late, and queued ones whose message never arrived, and
+//      tells each chat that still may use the agent which of its timers expired (one notice per
+//      chat, through the operator channel; bookkeeping, so a notice that fails is logged and the
+//      run goes on). The chat consumer tells the chat the same way when it expires a timer itself;
 //   2. stops there while the operator agent is off, so nothing fires into a disabled agent;
 //   3. reads the daily cap (operator:timers_daily_max). It is a bound, so a value that cannot be read
 //      is 0 and nothing fires;
@@ -16,11 +19,13 @@
 // a timer's message arrive in does not matter: the timer's turn checks the session was not cleared
 // since the timer was set.
 import { TIMER_PENDING_MAX, cancelSessionTimers, cancelTimer, dueTimers, expireLateTimers, listOpenTimers, minuteUtc, timerEffectKey, timersQueuedOn, transitionTimer } from "../agents/timers.ts";
+import type { Timer } from "../agents/timers.ts";
 import type { ChatMessage, Env } from "../env.ts";
 import type { FlagReader, JobContext, JobDefinition, JobResult } from "../jobs/registry.ts";
+import type { OperatorChannel } from "../ports/operator.ts";
 import { sanitizeErrorMessage } from "../security/sanitize.ts";
 import { readCap } from "../sending/flags.ts";
-import { TIMERS_FLAG, isAgentEnabled, isTimersEnabled } from "./access.ts";
+import { TIMERS_FLAG, isAgentEnabled, isAllowedOperator, isTimersEnabled } from "./access.ts";
 
 export const TIMERS_JOB = "operator_timers";
 export const TIMERS_SCHEDULE = "* * * * *";
@@ -29,11 +34,61 @@ export const TIMERS_DAILY_MAX = { default: 20, max: 200 } as const;
 /** Timers one run queues at most. */
 export const TIMERS_PER_RUN = 10;
 
-export interface OperatorTimerJobOptions {
+export interface OperatorTimerJobOptions<E extends Env = Env> {
   /** Defaults to every minute. */
   schedule?: string;
   /** Timers one run queues at most. Defaults to TIMERS_PER_RUN. */
   maxPerRun?: number;
+  /** The operator channel expired timers are reported through. Without it, they expire unannounced. */
+  operator?: (env: E) => OperatorChannel | undefined;
+}
+
+/** The most timers one expiry notice names; the rest are counted. */
+export const EXPIRED_LISTED_MAX = 10;
+
+const EXPIRY_REASONS: Record<string, string> = {
+  late: "more than 6 hours past due when timers could next fire (the agent or timers were off, or the Worker was not running)",
+  "not delivered": "its message never reached the chat",
+  "no model gateway": "no model gateway is configured",
+};
+
+/**
+ * What the operator reads about timers that expired without running, all from one chat. The note's
+ * first line is shown as /timers shows it: to the operator only, never to the model.
+ */
+export function expiryNotice(timers: readonly Pick<Timer, "id" | "dueAt" | "reason" | "note">[]): string {
+  const line = (t: (typeof timers)[number]) => `- ${t.id}, due ${minuteUtc(t.dueAt)}: ${EXPIRY_REASONS[t.reason ?? ""] ?? "it could no longer fire"}. Note: ${firstLine(t.note)}`;
+  const shown = timers.slice(0, EXPIRED_LISTED_MAX);
+  const more = timers.length - shown.length;
+  return [
+    timers.length === 1 ? "A timer expired without running:" : `${timers.length} timers expired without running:`,
+    ...shown.map(line),
+    ...(more > 0 ? [`- and ${more} more; /timers lists only those still waiting.`] : []),
+    "Nothing was run for them. Ask again for any that still matter.",
+  ].join("\n");
+}
+
+/**
+ * Tell each chat which of its timers expired. Bookkeeping: never throws; a chat no longer allowed
+ * is not told, and a notice that cannot be sent is logged.
+ */
+export async function announceExpiredTimers<E extends Env>(ctx: Pick<JobContext<E>, "env" | "config" | "log">, operator: OperatorChannel | undefined, timers: readonly Timer[]): Promise<number> {
+  if (!operator || timers.length === 0) return 0;
+  const byChat = new Map<string, Timer[]>();
+  for (const t of timers) {
+    if (!isAllowedOperator(ctx.config.operator, t.chatId, t.userId)) continue;
+    byChat.set(t.chatId, [...(byChat.get(t.chatId) ?? []), t]);
+  }
+  let told = 0;
+  for (const [chatId, list] of byChat) {
+    try {
+      await operator.notify({ text: expiryNotice(list), chatId, kind: "notice" });
+      told += 1;
+    } catch (error) {
+      ctx.log.warn("the notice about expired timers could not be sent", { chatId, count: list.length, error: sanitizeErrorMessage(error) });
+    }
+  }
+  return told;
 }
 
 /** The message that starts a timer's turn. The consumer reads everything else from the timer's row. */
@@ -42,10 +97,20 @@ export function timerQueueMessage(timer: { id: string; chatId: string; userId: s
 }
 
 /** One run of the operator_timers job. Throws on a database error, so the run is recorded as failed. */
-export async function queueDueTimers<E extends Env>(ctx: JobContext<E>): Promise<JobResult> {
+export async function queueDueTimers<E extends Env>(ctx: JobContext<E>, operator?: (env: E) => OperatorChannel | undefined): Promise<JobResult> {
   const db = ctx.env.DB;
   const now = ctx.now;
-  const expired = await expireLateTimers(db, now);
+  const expiredTimers = await expireLateTimers(db, now);
+  const expired = expiredTimers.length;
+  if (expired > 0) {
+    let channel: OperatorChannel | undefined;
+    try {
+      channel = operator?.(ctx.env);
+    } catch {
+      channel = undefined;
+    }
+    await announceExpiredTimers(ctx, channel, expiredTimers);
+  }
   if (!(await isAgentEnabled(ctx.flags))) return { summary: `operator agent off; expired=${expired}`, rows: 0 };
   const cap = await readCap(ctx.flags, TIMERS_DAILY_MAX_FLAG, TIMERS_DAILY_MAX);
   const used = await timersQueuedOn(db, now);
@@ -70,8 +135,11 @@ export async function queueDueTimers<E extends Env>(ctx: JobContext<E>): Promise
   return { summary: `queued=${queued} expired=${expired}`, rows: queued };
 }
 
-/** The operator_timers job. Add it to the Worker's jobs: without it the agent never offers timer_set. It runs only while operator:timers_enabled is on. */
-export function createOperatorTimerJobs<E extends Env = Env>(options: OperatorTimerJobOptions = {}): Array<JobDefinition<E>> {
+/**
+ * The operator_timers job. Add it to the Worker's jobs: without it the agent never offers timer_set.
+ * It runs only while operator:timers_enabled is on. Pass `operator` so timers that expire are reported.
+ */
+export function createOperatorTimerJobs<E extends Env = Env>(options: OperatorTimerJobOptions<E> = {}): Array<JobDefinition<E>> {
   return [
     {
       name: TIMERS_JOB,
@@ -79,7 +147,7 @@ export function createOperatorTimerJobs<E extends Env = Env>(options: OperatorTi
       flag: TIMERS_FLAG,
       ceilings: { maxDurationMs: 30_000, maxRows: Math.max(1, Math.floor(options.maxPerRun ?? TIMERS_PER_RUN)) },
       rerunnable: true,
-      run: (ctx) => queueDueTimers(ctx),
+      run: (ctx) => queueDueTimers(ctx, options.operator),
     },
   ];
 }

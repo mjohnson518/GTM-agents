@@ -198,16 +198,17 @@ export async function cancelSessionTimers(db: D1Database, sessionKey: string, re
 /**
  * Expire what can no longer fire on time: pending timers more than TIMER_LATE_MS past due, and
  * queued ones whose message has not arrived within TIMER_LATE_MS (a delivery that was lost).
- * Returns how many expired. Throws on a database error.
+ * Returns the timers it expired, each exactly once (the update is a compare-and-set on the status),
+ * so the caller can tell the operator. Throws on a database error.
  */
-export async function expireLateTimers(db: D1Database, now: Date): Promise<number> {
+export async function expireLateTimers(db: D1Database, now: Date): Promise<Timer[]> {
   const at = now.toISOString();
   const cutoff = new Date(now.getTime() - TIMER_LATE_MS).toISOString();
-  const [late, lost] = await db.batch([
-    db.prepare("UPDATE operator_timers SET status = 'expired', reason = 'late', updated_at = ?1 WHERE status = 'pending' AND due_at < ?2").bind(at, cutoff),
-    db.prepare("UPDATE operator_timers SET status = 'expired', reason = 'not delivered', updated_at = ?1 WHERE status = 'queued' AND queued_at < ?2").bind(at, cutoff),
+  const [late, lost] = await db.batch<TimerRecord>([
+    db.prepare(`UPDATE operator_timers SET status = 'expired', reason = 'late', updated_at = ?1 WHERE status = 'pending' AND due_at < ?2 RETURNING ${COLUMNS}`).bind(at, cutoff),
+    db.prepare(`UPDATE operator_timers SET status = 'expired', reason = 'not delivered', updated_at = ?1 WHERE status = 'queued' AND queued_at < ?2 RETURNING ${COLUMNS}`).bind(at, cutoff),
   ]);
-  return (late?.meta.changes ?? 0) + (lost?.meta.changes ?? 0);
+  return [...(late?.results ?? []), ...(lost?.results ?? [])].map(toTimer);
 }
 
 /** Pending timers that are due, soonest first. Throws on a database error. */

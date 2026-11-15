@@ -234,7 +234,7 @@ With `operator:timers_enabled` on, the agent can set a timer for itself. Ask "ch
 
 To turn timers on:
 
-1. Make sure the Worker registers the timer job. The template does (`createOperatorTimerJobs` in `apps/worker/src/index.ts`); an entry written before timers existed adds `...createOperatorTimerJobs<Env>()` from `@gtm-agents/core/operator` to its `jobs`. Without the job the agent never offers `timer_set`, whatever the flag says.
+1. Make sure the Worker registers the timer job. The template does (`createOperatorTimerJobs` in `apps/worker/src/index.ts`); an entry written before timers existed adds `...createOperatorTimerJobs<Env>({ operator })` from `@gtm-agents/core/operator` to its `jobs`, passing the same `operator` channel factory the other jobs take, so timers that expire are reported. Without the job the agent never offers `timer_set`, whatever the flag says.
 2. Apply the migrations (`npx gtm migrate`), which create `operator_timers`.
 3. Turn the flag on:
 
@@ -271,7 +271,7 @@ Timers follow the session's taint:
 | Late | A timer more than 6 hours late (the agent was off, an outage) expires instead of firing, and so does one queued whose message never arrived |
 | Spend | A timer's turn is a chat turn: `chat:turn_max_cents` and `budget:job:operator_chat:daily_cents` apply |
 
-What stops a timer: `/timers cancel <id>`, `/timers cancel all` and `/clean`. While `operator:agent_enabled` is off nothing fires, and timers wait until they become too late. While `operator:timers_enabled` is off, `timer_set` is not offered and nothing fires, but `/timers` still lists and cancels. A timer whose operator was removed from the allowlist is cancelled when it comes due, and the halt flag stops the job like any job. A timer that expires or is cancelled by the system is not announced; it leaves `/timers`. The job leaves a run row every minute, a skipped one while the flag is off; `ops:retention_enabled` deletes skipped rows after 7 days.
+What stops a timer: `/timers cancel <id>`, `/timers cancel all` and `/clean`. While `operator:agent_enabled` is off nothing fires, and timers wait until they become too late. While `operator:timers_enabled` is off, `timer_set` is not offered and nothing fires, but `/timers` still lists and cancels. A timer whose operator was removed from the allowlist is cancelled when it comes due, and the halt flag stops the job like any job. A timer that expires without running is reported to its chat as a notice: its id, when it was due, why it expired (too late, its message never arrived, or no model gateway is configured) and the first line of its note, so you can ask again if it still matters. One notice per chat covers every timer that expired at once, and like any notice it waits out quiet hours with the outbox on. A timer the system cancels (its operator was removed, or its session was cleared) is not announced; it leaves `/timers`. The job leaves a run row every minute, a skipped one while the flag is off; `ops:retention_enabled` deletes skipped rows after 7 days.
 
 ## Notes
 
