@@ -1,14 +1,14 @@
 // GTM-agents: `gtm doctor`, a health report for a deployment: bindings, the per-minute cron trigger,
-// the jobs queue, configuration, adapter manifests, required secrets, webhook registration, the email footer and
+// the jobs and chat queues, configuration, adapter manifests, required secrets, webhook registration, the email footer and
 // unsubscribe secret, the halt flag and kill switch, and every feature flag. Offline by default;
 // --remote also asks Cloudflare (through Wrangler) for the deployed secrets and the stop flags'
-// values (the halt and both kill-switch keys), and resolves the sending domain's SPF, DKIM and DMARC
+// values (the halt and both kill-switch keys) and operator:chat_batching, and resolves the sending domain's SPF, DKIM and DMARC
 // records over DNS over HTTPS (lib/dns.ts).
 import { relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { REQUIRED_BINDINGS, type GtmConfig } from "@gtm-agents/core/config";
 import { FLAGS } from "@gtm-agents/core/flags";
-import { SCHEDULER_CRON, normalizeCron } from "@gtm-agents/core/jobs";
+import { SCHEDULER_CRON, isFlagOn, normalizeCron } from "@gtm-agents/core/jobs";
 import type { AdapterManifest } from "@gtm-agents/core/ports";
 import { dnsChecks, type DnsFetch } from "../lib/dns.ts";
 import { EXIT, spawnRunner, type CommandRunner, type Io } from "../lib/io.ts";
@@ -111,12 +111,49 @@ export function jobsQueueCheck(config: Record<string, unknown>): Check {
   return { status: "PASS", name: "jobs queue", detail: `due jobs go to ${name} once scheduler:queue_enabled is on, one job per consumer invocation, with dead-letter queue ${dlq}` };
 }
 
+/** The flag that lets messages sent in a row share one turn (docs/OPERATOR.md#messages-sent-in-a-row). */
+export const CHAT_BATCHING_FLAG = "operator:chat_batching";
+/** What Cloudflare uses for a consumer's max_batch_size when wrangler.jsonc leaves it out. */
+const QUEUE_DEFAULT_BATCH_SIZE = 10;
+
+/**
+ * The chat queue check. The webhook puts each operator message on the queue CHAT_QUEUE sends to, and
+ * its consumer answers it; without the binding, a message is answered inside its webhook request,
+ * which suits local development. One delivery at a time keeps a chat's turns in order, and
+ * operator:chat_batching merges messages only when a delivery can hold more than one. `batching` is
+ * the flag's deployed value when it was read (--remote): a flag that is on while every delivery
+ * holds one message does nothing, which is a warning.
+ */
+export function chatQueueCheck(config: Record<string, unknown>, batching?: boolean): Check {
+  const queues = asObject(config.queues);
+  const producer = asArray(queues.producers).find((p) => p.binding === "CHAT_QUEUE");
+  if (!producer) {
+    return { status: "INFO", name: "chat queue", detail: "no CHAT_QUEUE binding, so each operator message is answered inside its webhook request; fine for local development, add it for a deployment" };
+  }
+  const name = typeof producer.queue === "string" ? producer.queue : "";
+  const consumer = asArray(queues.consumers).find((c) => c.queue === name);
+  if (!consumer) return { status: "FAIL", name: "chat queue", detail: `CHAT_QUEUE sends to ${name}, but no consumer reads it, so no operator message would ever be answered; add a consumer for it` };
+  const size = typeof consumer.max_batch_size === "number" ? consumer.max_batch_size : QUEUE_DEFAULT_BATCH_SIZE;
+  const problems: string[] = [];
+  if (consumer.max_concurrency !== 1) {
+    const now = typeof consumer.max_concurrency === "number" ? `it is ${consumer.max_concurrency}` : "unset, Cloudflare runs several at once when the queue backs up";
+    problems.push(`set max_concurrency to 1 (${now}), so one delivery runs at a time and a chat's turns stay in order`);
+  }
+  if (batching === true && size <= 1) problems.push(`${CHAT_BATCHING_FLAG} is on, but max_batch_size is 1, so messages are never delivered together and never share a turn; raise it (3 to 5) or turn the flag off`);
+  if (problems.length) return { status: "WARN", name: "chat queue", detail: `${name}: ${problems.join("; ")}` };
+  const flag = batching === undefined ? ` (pass --remote to read ${CHAT_BATCHING_FLAG})` : "";
+  if (size <= 1) return { status: "PASS", name: "chat queue", detail: `${name}: one message per delivery, so each gets its own turn; ${CHAT_BATCHING_FLAG} has no effect until max_batch_size is above 1${flag}` };
+  const merging = batching === false ? `${CHAT_BATCHING_FLAG} is off, so each is still its own turn` : `with ${CHAT_BATCHING_FLAG} on, adjacent messages for the model share a turn${flag}`;
+  return { status: "PASS", name: "chat queue", detail: `${name}: up to ${size} messages per delivery, put in the order they were sent; ${merging}; runs a delivery could not start in time go back to the queue` };
+}
+
 async function runChecks(dir: string, env: string | undefined, remote: boolean, deps: Required<DoctorOptions>): Promise<Check[]> {
   const checks: Check[] = [];
   const wrangler: Wrangler = wranglerAt(deps.runner, dir);
 
-  // Wrangler configuration.
+  // Wrangler configuration. The chat queue check is re-run with the flag's value under --remote.
   let loaded: LoadedWranglerConfig | undefined;
+  let chatQueue: { index: number; config: Record<string, unknown> } | undefined;
   try {
     loaded = loadWranglerConfig(dir, env);
   } catch (err) {
@@ -131,6 +168,7 @@ async function runChecks(dir: string, env: string | undefined, remote: boolean, 
     );
     checks.push(triggerCheck(cronTriggers(loaded.config, loaded.root)));
     checks.push(jobsQueueCheck(loaded.config));
+    chatQueue = { index: checks.push(chatQueueCheck(loaded.config)) - 1, config: loaded.config };
     const unmigrated = unmigratedClasses(loaded.config, loaded.root);
     if (unmigrated.length) checks.push({ status: "FAIL", name: "durable objects", detail: `no migration creates: ${unmigrated.join(", ")}` });
     const orphans = queuesWithoutConsumers(loaded.config);
@@ -217,10 +255,12 @@ async function runChecks(dir: string, env: string | undefined, remote: boolean, 
   if (remote) {
     let values: Map<string, string | null> | undefined;
     try {
-      values = await kvBulkGet(wrangler, STOP_FLAGS.map((f) => f.key), env);
+      values = await kvBulkGet(wrangler, [...STOP_FLAGS.map((f) => f.key), CHAT_BATCHING_FLAG], env);
     } catch {
       values = undefined;
     }
+    const batching = values?.get(CHAT_BATCHING_FLAG);
+    if (chatQueue && batching !== undefined) checks[chatQueue.index] = chatQueueCheck(chatQueue.config, isFlagOn(batching));
     for (const f of STOP_FLAGS) {
       const value = values?.get(f.key);
       if (values === undefined || value === undefined) {

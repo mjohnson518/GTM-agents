@@ -1,9 +1,11 @@
 // GTM-agents: the chat queue consumer: operator messages in, replies out.
 //
 // The webhook verifies, allowlists, deduplicates and enqueues; this consumer does the slow work off
-// the webhook path. It handles a delivered batch as runs, in delivery order (planChatRuns): every
-// message is its own run, except that with operator:chat_batching on, adjacent messages for the
-// model from the same operator in the same session share one run, up to CHAT_RUN_MAX_CHARS of text.
+// the webhook path. It puts each chat's messages of a delivery in the order they were sent
+// (orderByChat), then handles them as runs (planChatRuns): every message is its own run, except that
+// with operator:chat_batching on, adjacent messages for the model from the same operator in the same
+// session share one run, up to CHAT_RUN_MAX_CHARS of text. Runs share the invocation's wall time, so
+// once CHAT_DELIVERY_BUDGET_MS has passed no further run starts: the rest is sent back to CHAT_QUEUE.
 // A command always runs alone, so a run never crosses one (a /clean between two messages keeps them
 // apart). A merged run is one hub turn on the messages joined by a blank line, with one reply, one
 // turn ceiling and one run row. Which messages go to the model is decided by routeChatText, the
@@ -150,6 +152,11 @@ export interface OperatorAgentOptions<E extends Env = Env> {
    * timer would never fire or expire, so timer_set is offered only with it and operator:timers_enabled.
    */
   timers?: boolean;
+  /**
+   * How far into a chat queue delivery the consumer still starts a run. Defaults to
+   * CHAT_DELIVERY_BUDGET_MS; the runs it does not reach are sent back to CHAT_QUEUE.
+   */
+  deliveryBudgetMs?: number;
   now?: () => Date;
   logger?: AgentLogger;
 }
@@ -295,6 +302,42 @@ export function planChatRuns<T>(items: readonly T[], bodyOf: (item: T) => ChatMe
   }
   return runs;
 }
+
+/** The numeric form of a channel message id, or null when it has none (a timer's message). */
+function messageOrder(body: ChatMessage): number | null {
+  return body.timerId === undefined && body.messageId !== undefined && /^\d{1,15}$/.test(body.messageId) ? Number(body.messageId) : null;
+}
+
+/**
+ * Put each chat's messages in the order the operator sent them, by the message id the channel
+ * numbers per chat, in the places that chat's messages already hold in the delivery. A queue does
+ * not keep order, so two messages sent a second apart can arrive swapped, and a /clean must stay
+ * between the messages it was sent between. A message with no numeric id (a timer's) keeps its
+ * place, and other chats' messages keep theirs. Equal ids keep their delivery order.
+ */
+export function orderByChat<T>(items: readonly T[], bodyOf: (item: T) => ChatMessage): T[] {
+  const out = [...items];
+  const slots = new Map<string, number[]>();
+  items.forEach((item, i) => {
+    if (messageOrder(bodyOf(item)) === null) return;
+    const chat = bodyOf(item).chatId;
+    slots.set(chat, [...(slots.get(chat) ?? []), i]);
+  });
+  for (const indices of slots.values()) {
+    const sorted = indices.map((i) => items[i] as T).sort((a, b) => (messageOrder(bodyOf(a)) ?? 0) - (messageOrder(bodyOf(b)) ?? 0));
+    indices.forEach((slot, k) => {
+      out[slot] = sorted[k] as T;
+    });
+  }
+  return out;
+}
+
+/**
+ * How far into a chat queue delivery the consumer still starts a run: 10 of a queue invocation's 15
+ * minutes of wall time, leaving the rest to the run already going. The runs it does not reach are
+ * sent back to CHAT_QUEUE, unclaimed, to be answered in a later delivery.
+ */
+export const CHAT_DELIVERY_BUDGET_MS = 10 * 60_000;
 
 /** Handle one queued operator message. Never throws. */
 export async function processChatMessage<E extends Env>(options: OperatorAgentOptions<E>, env: E, message: ChatMessage): Promise<void> {
@@ -756,6 +799,7 @@ async function processTimerRun<E extends Env>(options: OperatorAgentOptions<E>, 
  */
 export function createChatConsumer<E extends Env>(options: OperatorAgentOptions<E>): (batch: MessageBatch, env: E, ctx: ExecutionContext) => Promise<void> {
   return async (batch, env) => {
+    const started = Date.now();
     const log = options.logger ?? quiet;
     const queued: Array<{ message: MessageBatch["messages"][number]; body: ChatMessage }> = [];
     for (const message of batch.messages) {
@@ -769,14 +813,26 @@ export function createChatConsumer<E extends Env>(options: OperatorAgentOptions<
     // but if it ever did, every message would still be handled, each as its own run.
     let runs: Array<typeof queued>;
     try {
-      const merge = queued.length > 1 && (await isChatBatchingEnabled(flagsFromKv(env.KV)));
+      const ordered = orderByChat(queued, (q) => q.body);
+      const merge = ordered.length > 1 && (await isChatBatchingEnabled(flagsFromKv(env.KV)));
       const joinable = merge ? (text: string) => routeChatText(options, text).kind === "turn" : () => false;
-      runs = planChatRuns(queued, (q) => q.body, joinable);
+      runs = planChatRuns(ordered, (q) => q.body, joinable);
     } catch (error) {
       log.warn("chat runs could not be planned; each message runs alone", { error: sanitizeErrorMessage(error) });
       runs = queued.map((q) => [q]);
     }
-    for (const run of runs) {
+    const budget = options.deliveryBudgetMs ?? CHAT_DELIVERY_BUDGET_MS;
+    for (const [i, run] of runs.entries()) {
+      // Every run of a delivery shares one invocation's wall time. Past the budget, the rest goes
+      // back to the queue rather than risk being cut off without a reply. Nothing in it was claimed
+      // yet, so a later delivery answers it once.
+      if (i > 0 && Date.now() - started >= budget) {
+        const rest = runs.slice(i).flat();
+        if (await sendBack(env, rest.map((q) => q.body), log)) {
+          for (const q of rest) q.message.ack();
+          return;
+        }
+      }
       try {
         await processChatRun(options, env, run.map((q) => q.body));
       } finally {
@@ -784,4 +840,17 @@ export function createChatConsumer<E extends Env>(options: OperatorAgentOptions<
       }
     }
   };
+}
+
+/** Send messages back to CHAT_QUEUE. False when there is no binding or it refused them: the caller runs them now. */
+async function sendBack<E extends Env>(env: E, bodies: readonly ChatMessage[], log: AgentLogger): Promise<boolean> {
+  if (!env.CHAT_QUEUE) return false;
+  try {
+    await env.CHAT_QUEUE.sendBatch(bodies.map((body) => ({ body })));
+    log.warn("a chat delivery reached its time budget; the messages it had not reached were sent back to the chat queue", { count: bodies.length });
+    return true;
+  } catch (error) {
+    log.error("messages past a chat delivery's time budget could not be sent back; running them now", { count: bodies.length, error: sanitizeErrorMessage(error) });
+    return false;
+  }
 }

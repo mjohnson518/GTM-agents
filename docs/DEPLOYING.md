@@ -521,7 +521,7 @@ Run each `npx wrangler secret put <NAME> --env staging` line setup printed: the 
 
 | Check | Expect |
 |---|---|
-| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, jobs queue, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, SPF, DKIM (once `sending.dkimSelector` is set), the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered". DMARC is a WARN while it is still `p=none` ([4.2](#42-the-domain-and-the-sending-subdomain)) |
+| `npx gtm doctor --remote --env staging` | PASS for bindings, cron trigger, jobs queue, chat queue, placeholders, `gtm.config.ts`, each enabled adapter, secrets ("all N required secrets are set"), footer and unsubscribe, SPF, DKIM (once `sending.dkimSelector` is set), the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: a reminder that "operator-telegram needs its webhook registered". DMARC is a WARN while it is still `p=none` ([4.2](#42-the-domain-and-the-sending-subdomain)) |
 | `curl -s https://agent-staging.acme.example/health` | `{"ok":true,"service":"gtm-agents"}` |
 | `curl -s -o /dev/null -w "%{http_code}\n" https://agent-staging.acme.example/api/ping` (any `/api/` path; this one does not exist) | `401` without a token (the bearer token is set). `503` means `GATEWAY_TOKEN` is unset |
 | The Worker's Cron Events in the Cloudflare dashboard | An invocation every minute |

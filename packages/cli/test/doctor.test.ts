@@ -2,7 +2,8 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { doctorCommand, jobsQueueCheck, triggerCheck } from "../src/commands/doctor.ts";
+import { CHAT_BATCHING_FLAG, chatQueueCheck, doctorCommand, jobsQueueCheck, triggerCheck } from "../src/commands/doctor.ts";
+import { FLAGS } from "@gtm-agents/core/flags";
 import type { DnsFetch } from "../src/lib/dns.ts";
 import type { CommandRunner } from "../src/lib/io.ts";
 import { ADAPTERS_DIR, makeDeployment, setUpDeployment } from "./deployment.ts";
@@ -139,6 +140,44 @@ describe("gtm doctor", () => {
     const unwatched = jobsQueueCheck({ queues: { producers, consumers: [{ queue: "acme-gtm-jobs", max_batch_size: 1, max_retries: 0, dead_letter_queue: "acme-gtm-jobs-dlq" }] } });
     expect(unwatched).toMatchObject({ status: "WARN" });
     expect(unwatched.detail).toContain("consumer for its dead-letter queue");
+  });
+
+  it("checks the chat queue: a consumer, one delivery at a time, and a batching flag that can take effect", () => {
+    expect(FLAGS.some((f) => f.key === CHAT_BATCHING_FLAG)).toBe(true);
+    const producers = [{ binding: "CHAT_QUEUE", queue: "acme-gtm-chat" }];
+    const withConsumer = (consumer: Record<string, unknown>) => ({ queues: { producers, consumers: [{ queue: "acme-gtm-chat", ...consumer }] } });
+    expect(chatQueueCheck({ queues: { producers: [] } })).toMatchObject({ status: "INFO" });
+    expect(chatQueueCheck({ queues: { producers, consumers: [] } })).toMatchObject({ status: "FAIL" });
+    const single = withConsumer({ max_batch_size: 1, max_concurrency: 1, max_retries: 0 });
+    expect(chatQueueCheck(single)).toMatchObject({ status: "PASS" });
+    expect(chatQueueCheck(single).detail).toContain("pass --remote to read operator:chat_batching");
+    expect(chatQueueCheck(single, false)).toMatchObject({ status: "PASS" });
+    const idle = chatQueueCheck(single, true);
+    expect(idle.status).toBe("WARN");
+    expect(idle.detail).toContain("operator:chat_batching is on, but max_batch_size is 1");
+    const batched = withConsumer({ max_batch_size: 5, max_concurrency: 1 });
+    expect(chatQueueCheck(batched, true)).toMatchObject({ status: "PASS" });
+    expect(chatQueueCheck(batched, true).detail).toContain("up to 5 messages per delivery");
+    expect(chatQueueCheck(batched, false).detail).toContain("operator:chat_batching is off");
+    // Unset, Cloudflare batches 10 and scales consumers out.
+    const defaults = chatQueueCheck(withConsumer({}), true);
+    expect(defaults.status).toBe("WARN");
+    expect(defaults.detail).toContain("set max_concurrency to 1 (unset");
+    expect(chatQueueCheck(withConsumer({ max_batch_size: 3, max_concurrency: 4 })).detail).toContain("(it is 4)");
+  });
+
+  it("passes the template's chat queue, and with --remote warns when batching is on but cannot merge anything", async () => {
+    const io = captureIo();
+    await doctorCommand(["--config", "apps/worker"], io, { runner: noRemote });
+    expect(io.text()).toMatch(/PASS\s+chat queue\s+\$\{CHAT_QUEUE_NAME\}: one message per delivery/);
+    const runner: CommandRunner = async (_cmd, args) => {
+      if (args.includes("secret")) return { code: 0, stdout: "[]", stderr: "" };
+      if (args.includes("bulk")) return bulkGet({ [CHAT_BATCHING_FLAG]: "true" }, args);
+      return { code: 1, stdout: "", stderr: "not expected" };
+    };
+    const remote = captureIo();
+    await doctorCommand(["--config", "apps/worker", "--remote"], remote, { runner, fetch: cleanDns });
+    expect(remote.text()).toMatch(/WARN\s+chat queue\s+\$\{CHAT_QUEUE_NAME\}: operator:chat_batching is on, but max_batch_size is 1/);
   });
 
   it("passes the template's jobs queue, in production and staging", async () => {

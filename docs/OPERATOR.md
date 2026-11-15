@@ -30,8 +30,9 @@ The chat consumer runs one delivery at a time (`max_concurrency: 1`), so whateve
 
 To let messages sent in a row share one turn, raise `max_batch_size` on the chat queue's consumer in `wrangler.jsonc` (3 to 5 is plenty), deploy, then turn on `operator:chat_batching`. Adjacent messages for the model in one delivery, from you in the same chat and session, then share one turn:
 
-- They are joined in delivery order, separated by a blank line, and the agent answers once. "Find contacts at acme.example", then "and at globex.example too", is one task with one reply.
-- A command is never joined. It runs on its own, in its place in the delivery: "summarize the pipeline", `/status`, "now list the open drafts" is a turn, the status, then a second turn. The queue delivers in order on a best-effort basis only, so when the order matters (a `/clean` between two tasks), wait for the reply before sending the next message.
+- They are joined in the order you sent them, separated by a blank line, and the agent answers once. "Find contacts at acme.example", then "and at globex.example too", is one task with one reply.
+- A command is never joined. It runs on its own, in its place: "summarize the pipeline", `/status`, "now list the open drafts" is a turn, the status, then a second turn.
+- The queue does not keep order, so before anything runs, each chat's messages in a delivery are put back in the order you sent them (by Telegram's message id). A `/clean` between two tasks stays between them. Messages that arrive in different deliveries are answered in the order they arrive, so when the order matters across a pause, wait for the reply before sending the next message.
 - Another person in a group chat, another chat, or a joined text over 8,000 characters (what the session history keeps of one message) starts a new turn.
 - The shared turn is one turn for every limit: one `chat:turn_max_cents` ceiling, one run row, at most `agent.maxRounds` model rounds.
 - Each message is still claimed on its own, so a redelivered message is never answered twice, whether it arrives alone or with others.
@@ -40,7 +41,9 @@ To let messages sent in a row share one turn, raise `max_batch_size` on the chat
 npx gtm flags set operator:chat_batching true
 ```
 
-The flag changes nothing while `max_batch_size` is 1. Keep `max_batch_timeout` at 0: a message that arrives while nothing is running is delivered at once, never held back to wait for others. Know the trade-off of a larger batch: every run in one delivery shares that invocation's 15-minute wall time, and the chat queue has no retries, so messages a stopped invocation had not reached are dropped without a reply. Commands are quick and merged messages are one turn, but several long tasks in separate sessions, or with the flag off, run one after another, which is why the template keeps 1. Off, or unreadable, every message is its own turn.
+The flag changes nothing while `max_batch_size` is 1; `npx gtm doctor --remote` warns when it is on but cannot merge anything, and when the consumer's `max_concurrency` is not 1. Keep `max_batch_timeout` at 0: a message that arrives while nothing is running is delivered at once, never held back to wait for others.
+
+Know the trade-off of a larger batch: every run in one delivery shares that invocation's 15-minute wall time. Commands are quick and merged messages are one turn, but several long tasks in separate sessions, or with the flag off, run one after another. So the consumer starts no run once 10 minutes of a delivery have passed: the messages it has not reached go back to the chat queue, unanswered and unclaimed, and a later delivery answers each of them once. They go to the back of the queue, so a message sent after them can be answered first. A single turn that itself runs past the invocation's limit is still cut off; `agent.maxRounds` and the turn ceiling bound it. That is why the template keeps 1. Off, or unreadable, every message is its own turn.
 
 ## 1. Create the bot
 

@@ -152,7 +152,7 @@ Strategist model: <your strategist model>
 npx gtm doctor --remote --env staging
 ```
 
-Expect PASS for the bindings, the cron trigger, the jobs queue, the placeholders, `gtm.config.ts`, both adapters, the secrets ("all 5 required secrets are set"), the footer and unsubscribe, and the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: the reminder to register its webhook. Doctor also prints every flag with its default; `npx gtm flags list --env staging` shows the deployed values.
+Expect PASS for the bindings, the cron trigger, the jobs queue, the chat queue, the placeholders, `gtm.config.ts`, both adapters, the secrets ("all 5 required secrets are set"), the footer and unsubscribe, and the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: the reminder to register its webhook. Doctor also prints every flag with its default; `npx gtm flags list --env staging` shows the deployed values.
 
 Every minute the cron trigger runs the jobs that are due, and with their flags off each leaves a `skipped` run row with the summary `flag off` ([step 6](DEPLOYING.md#step-6-verify)).
 
