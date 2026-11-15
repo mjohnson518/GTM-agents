@@ -113,6 +113,20 @@ export function sameItems(a: readonly TargetingItem[], b: readonly TargetingItem
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * True when the served file holds this item exactly: the same id and the same fields, as it would be
+ * sent. Where the item came from does not decide it: a drafted item is approved once its file is, and
+ * a served item the operator edited is not approved until its file is approved again.
+ */
+export function isApproved(item: EditorItem, served: readonly TargetingItem[]): boolean {
+  const mine = toItems([item])[0];
+  const theirs = served.find((s) => s.id === item.id);
+  if (!mine || !theirs) return false;
+  const a = Object.entries(mine.fields);
+  const b = Object.entries(theirs.fields).filter(([, v]) => v.trim() !== "");
+  return a.length === b.length && a.every(([k, v]) => theirs.fields[k]?.trim() === v);
+}
+
 /** Items grouped by kind, in the kinds' order; kinds with no items are left out. */
 export function grouped(component: TargetingComponent, list: readonly EditorItem[]): Array<{ kind: string; label: string; items: EditorItem[] }> {
   const known = KINDS[component];

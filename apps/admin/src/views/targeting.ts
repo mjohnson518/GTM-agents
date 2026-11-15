@@ -6,9 +6,9 @@
 // so every string is rendered as text. Unsaved edits survive a reconnect, and leaving the page with
 // them asks first.
 import { html, nothing } from "lit";
-import type { TargetingCheck, TargetingState } from "@gtm-agents/core/gateway/protocol";
+import type { TargetingCheck, TargetingItem, TargetingState } from "@gtm-agents/core/gateway/protocol";
 import { formatDateTime } from "../format.ts";
-import { KINDS, LIST_FIELDS, TEXT_MAX, addItem, fromItems, grouped, kindLabel, reloadEditor, removeItem, reviewDue, sameItems, toItems, updateItem, type EditorItem, type TargetingComponent } from "../targeting.ts";
+import { KINDS, LIST_FIELDS, TEXT_MAX, addItem, fromItems, grouped, isApproved, kindLabel, reloadEditor, removeItem, reviewDue, sameItems, toItems, updateItem, type EditorItem, type TargetingComponent } from "../targeting.ts";
 import { confirmAction } from "../ui/dialog.ts";
 import { GtmView, LOADING, describeError, section, settle } from "./base.ts";
 import type { Loadable } from "./base.ts";
@@ -281,7 +281,7 @@ export class GtmTargeting extends GtmView {
     </section>`;
   }
 
-  #renderItem(c: TargetingComponent, item: EditorItem, writable: boolean) {
+  #renderItem(c: TargetingComponent, item: EditorItem, writable: boolean, served: readonly TargetingItem[]) {
     const id = `t-${c}-${item.key}`;
     const over = item.text.length > TEXT_MAX;
     return html`<li class="stack">
@@ -293,7 +293,7 @@ export class GtmTargeting extends GtmView {
         </label>
         ${item.origin === "drafted" ? html`<span class="pill">Drafted from your site: ${item.basis === "stated" ? "stated" : "inferred"}</span>` : nothing}
         ${item.figures ? html`<span class="pill">States a figure: check it</span>` : nothing}
-        ${item.origin !== "served" ? html`<span class="pill">Not yet approved</span>` : nothing}
+        ${isApproved(item, served) ? nothing : html`<span class="pill">Not yet approved</span>`}
         ${writable ? html`<button type="button" @click=${() => this.#edit(c, (l) => removeItem(l, item.key))}>Remove</button>` : nothing}
       </div>
       <label for="${id}" class="visually-hidden">${kindLabel(c, item.kind)} text</label>
@@ -327,7 +327,7 @@ export class GtmTargeting extends GtmView {
       ${this.#dirty(c) ? html`<p class="small">Unsaved changes.</p>` : nothing}
       ${grouped(c, editor.items).map(
         (g) => html`<h3>${g.label}</h3>
-          <ul class="plain stack">${g.items.map((item) => this.#renderItem(c, item, writable))}</ul>`,
+          <ul class="plain stack">${g.items.map((item) => this.#renderItem(c, item, writable, served?.items ?? []))}</ul>`,
       )}
       ${editor.items.length === 0 ? html`<p class="muted">No items yet.</p>` : nothing}
       ${writable

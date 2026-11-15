@@ -2,7 +2,7 @@
 // editor starts from, grouping by kind, the review hint, and the route. Every item is synthetic.
 import { describe, expect, it } from "vitest";
 import type { TargetingItem, TargetingState } from "@gtm-agents/core/gateway/protocol";
-import { addItem, baseline, fromItems, grouped, reloadEditor, removeItem, reviewDue, sameItems, toItems, updateItem } from "../src/targeting.ts";
+import { addItem, baseline, type EditorItem, fromItems, grouped, isApproved, reloadEditor, removeItem, reviewDue, sameItems, toItems, updateItem } from "../src/targeting.ts";
 import { parseRoute, routeHash } from "../src/router.ts";
 
 const served: TargetingItem[] = [
@@ -47,6 +47,34 @@ describe("the editor", () => {
     const edited = updateItem(list, list[0]?.key ?? "", { text: "Platform teams at software companies with large suites." });
     expect(edited[0]).toMatchObject({ origin: "added" });
     expect(edited[0]?.basis).toBeUndefined();
+  });
+
+  it("calls an item approved only while the served file holds it exactly, wherever it came from", () => {
+    const at = (list: readonly EditorItem[], i: number): EditorItem => {
+      const item = list[i];
+      if (!item) throw new Error(`no item ${i}`);
+      return item;
+    };
+    // A drafted item that has since been approved: still drafted from the site, and now approved.
+    const drafted = [{ id: "who-1", kind: "who", text: "Platform teams at software companies.", basis: "stated" as const, figures: false }];
+    const nowServed: TargetingItem[] = [{ id: "who-1", fields: { kind: "who", text: "Platform teams at software companies." } }, ...served.slice(1)];
+    const list = fromItems(nowServed, "drafted", drafted);
+    expect(at(list, 0).origin).toBe("drafted");
+    expect(list.map((i) => isApproved(i, nowServed))).toEqual([true, true]);
+    expect(isApproved(at(list, 0), served)).toBe(false);
+    // A served item the operator edits is no longer approved, and is again once put back.
+    const fromServed = fromItems(served, "served");
+    const edited = updateItem(fromServed, at(fromServed, 0).key, { text: "Software companies with 50 to 500 engineers." });
+    expect(isApproved(at(edited, 0), served)).toBe(false);
+    const restored = updateItem(edited, at(edited, 0).key, { text: "Software companies with 30 to 300 engineers." });
+    expect(isApproved(at(restored, 0), served)).toBe(true);
+    // A hard stop whose lists changed, or an item whose kind changed, is not the approved one.
+    expect(isApproved(at(updateItem(fromServed, at(fromServed, 1).key, { field: { name: "domains", value: "initech.example" } }), 1), served)).toBe(false);
+    expect(isApproved(at(updateItem(fromServed, at(fromServed, 0).key, { kind: "trigger" }), 0), served)).toBe(false);
+    // Field order and surrounding whitespace do not matter; an added item never is approved.
+    const reordered = fromItems([{ id: "never-globex", fields: { domains: "globex.example", text: " Never contact Globex. ", kind: "never" } }], "served");
+    expect(isApproved(at(reordered, 0), served)).toBe(true);
+    expect(isApproved(at(addItem(fromServed, "why_now"), 2), served)).toBe(false);
   });
 
   it("starts from a ready draft's working copy, else from what is served", () => {

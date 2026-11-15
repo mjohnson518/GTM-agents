@@ -39,7 +39,7 @@ A site with too little readable text, a page that cannot be read, or an answer i
 
 ## Editing and approving
 
-Each card is a list of items, one text box each, with its kind, a character counter and badges: drafted from your site (stated or inferred), states a figure, not yet approved. ICP items are grouped as Who, Why now, Must have, Triggers, Ignore, Never and Open questions.
+Each card is a list of items, one text box each, with its kind, a character counter and badges: drafted from your site (stated or inferred), states a figure, and not yet approved, shown whenever the served file does not hold that exact item (a drafted item loses it once its file is approved; a served item you edit gets it). ICP items are grouped as Who, Why now, Must have, Triggers, Ignore, Never and Open questions.
 
 - **Hard stops are kept.** Every `never` item the brain serves is in the editor unchanged, including one added after the draft was made. An ICP that leaves out a hard stop the brain serves is refused unless you confirm removing it: the page names each one and asks first.
 - **The served file must check out.** If a component listed in the brain's lock does not match it (an upload that stopped halfway, or KV still settling), nothing is drafted or proposed over it, because what it holds cannot be shown.
