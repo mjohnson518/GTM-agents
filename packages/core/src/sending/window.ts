@@ -49,20 +49,35 @@ export function localParts(at: Date, tz: string): LocalParts {
   return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day), hour, minute: Number(parts.minute), weekday: WEEKDAYS.includes(weekday) ? weekday : "MON" };
 }
 
-function offsetMs(at: number, tz: string): number {
+const DAY_MS = 86_400_000;
+
+/** `at` read as a wall clock in `tz`, as if that wall clock were UTC, to the minute. */
+function wallMs(at: number, tz: string): number {
   const p = localParts(new Date(at), tz);
-  const asUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
-  return asUtc - Math.floor(at / 60_000) * 60_000;
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute);
 }
 
-/** The UTC instant of a wall-clock time in `tz`. In a skipped daylight-saving hour it lands an hour later. */
+function offsetMs(at: number, tz: string): number {
+  return wallMs(at, tz) - Math.floor(at / 60_000) * 60_000;
+}
+
+/**
+ * The UTC instant of a wall-clock time in `tz`. A time that happens twice, in the hour the clocks go
+ * back, gives the earlier instant. A time that never happens, in the hour the clocks skip, gives the
+ * instant as far past the change as the time is past its start, so 02:00 on a night the clocks jump
+ * from 02:00 to 03:00 is 03:00, wherever the zone is.
+ */
 export function zonedTimeToUtc(year: number, month: number, day: number, hour: number, tz: string): Date {
   const naive = Date.UTC(year, month - 1, day, hour);
-  const first = offsetMs(naive, tz);
-  let guess = naive - first;
-  const second = offsetMs(guess, tz);
-  if (second !== first) guess = naive - second;
-  return new Date(guess);
+  // An instant with this wall time is within a day of `naive` and uses one of the offsets in force
+  // there: the one before and the one after any change in between.
+  const offsets = new Set([offsetMs(naive - DAY_MS, tz), offsetMs(naive, tz), offsetMs(naive + DAY_MS, tz)]);
+  const candidates = [...offsets].map((o) => naive - o).sort((a, b) => a - b);
+  const exact = candidates.find((t) => wallMs(t, tz) === naive);
+  if (exact !== undefined) return new Date(exact);
+  // Skipped: clocks skip only when the offset grows, so the offset before the change is the smaller
+  // one, and naive minus it is the latest candidate.
+  return new Date(candidates.at(-1) ?? naive);
 }
 
 /** True when `at` falls inside the window, recipient-local. */

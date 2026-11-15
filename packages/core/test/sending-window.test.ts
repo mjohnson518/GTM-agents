@@ -59,6 +59,27 @@ describe("send windows", () => {
     expect(zonedTimeToUtc(2026, 7, 1, 8, "America/New_York").toISOString()).toBe("2026-07-01T12:00:00.000Z");
     expect(zonedTimeToUtc(2026, 12, 1, 8, "America/New_York").toISOString()).toBe("2026-12-01T13:00:00.000Z");
     expect(zonedTimeToUtc(2026, 11, 2, 8, "America/New_York").toISOString()).toBe("2026-11-02T13:00:00.000Z");
+    expect(zonedTimeToUtc(2026, 7, 1, 8, "Asia/Kolkata").toISOString()).toBe("2026-07-01T02:30:00.000Z");
+  });
+
+  it("resolves an hour the clocks skip, or repeat, the same way on either side of UTC", () => {
+    // Skipped: 02:00 does not exist on these nights; the answer is the moment clocks show 03:00.
+    expect(zonedTimeToUtc(2027, 3, 14, 2, "America/New_York").toISOString()).toBe("2027-03-14T07:00:00.000Z");
+    expect(zonedTimeToUtc(2026, 3, 8, 2, "America/New_York").toISOString()).toBe("2026-03-08T07:00:00.000Z");
+    expect(zonedTimeToUtc(2027, 3, 28, 2, "Europe/Berlin").toISOString()).toBe("2027-03-28T01:00:00.000Z");
+    // A half-hour change: 02:00 jumps to 02:30.
+    expect(zonedTimeToUtc(2026, 10, 4, 2, "Australia/Lord_Howe").toISOString()).toBe("2026-10-03T15:30:00.000Z");
+    // Repeated: the first of the two.
+    expect(zonedTimeToUtc(2026, 11, 1, 1, "America/New_York").toISOString()).toBe("2026-11-01T05:00:00.000Z");
+    expect(zonedTimeToUtc(2026, 10, 25, 2, "Europe/Berlin").toISOString()).toBe("2026-10-25T00:00:00.000Z");
+  });
+
+  it("opens a window that starts in a skipped hour when the clocks jump, not before it", () => {
+    // 00:30 EST on the night New York skips 02:00; the window opens at 02:00, so at 03:00 EDT.
+    const window: SendWindow = { days: ["SUN"], startHour: 2, endHour: 5 };
+    const opens = nextAllowedTime(new Date("2027-03-14T05:30:00.000Z"), "America/New_York", window);
+    expect(opens.toISOString()).toBe("2027-03-14T07:00:00.000Z");
+    expect(isWithinWindow(opens, "America/New_York", window)).toBe(true);
   });
 
   it("returns now inside the window", () => {

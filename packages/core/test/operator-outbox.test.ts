@@ -96,6 +96,8 @@ describe("quiet hours", () => {
     expect(quietHoursEnd(new Date("2026-11-14T02:59:00Z"), ny)).toBeNull();
     expect(quietHoursEnd(new Date("2026-11-14T03:30:00Z"), { start: 1, end: 6, timeZone: "UTC" })?.toISOString()).toBe("2026-11-14T06:00:00.000Z");
     expect(quietHoursEnd(new Date("2026-11-14T23:10:00Z"), { start: 22, end: 0, timeZone: "UTC" })?.toISOString()).toBe("2026-11-15T00:00:00.000Z");
+    // Quiet hours that end at 02:00 on the night New York skips it end when the clocks show 03:00.
+    expect(quietHoursEnd(new Date("2027-03-14T06:30:00Z"), { start: 22, end: 2, timeZone: "America/New_York" })?.toISOString()).toBe("2027-03-14T07:00:00.000Z");
   });
 
   it("are validated with the config: a known time zone, and a start that differs from the end", () => {
