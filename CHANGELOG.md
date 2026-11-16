@@ -6,6 +6,11 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### CRM mirror
+
+- A one-way CRM mirror, behind `crm:mirror_enabled`: every 15 minutes the new `crm_mirror` job copies contacts and their companies into the CRM, with our own activity as dated notes (emails sent, replies by intent only, meetings booked and held, deal stage changes). It never sends inbound text, writes nothing more about a person who opted out or is suppressed (one note records an opt-out), and on erasure tells you which CRM record to delete instead of deleting it. At most `crm:mirror_per_run` (100) rows a run; no model calls and no spend. Needs migration 0037 ([docs/CRM.md](docs/CRM.md)).
+- A new adapter, `crm-attio` (CrmSink), for Attio: companies upserted on their domain, people on their address with a company reference, activity as plain-text notes. The template lists it disabled; enable it and put `ATTIO_API_KEY`. `CrmSink.upsertContact` gains an optional `accountExternalId`, and `logActivity`'s `contactId` is the CRM's record id.
+
 ### Product and ICP
 
 - The Product and ICP page suggests search queries and personas, behind `targeting:suggest_enabled`: one `worker`-role model call reads only the approved `product` and `icp` (and the served `personas` and `keyword-portfolio`, so it does not repeat them) and suggests up to 8 queries and 4 personas. Every item is filtered (the brain's schema, links, dashes, prices, instructions, repeats, and never-list companies, domains and titles, with the reason shown). You pick suggestions, edit their main text, and approve each component as every served item plus your picks, through the ordinary brain proposal path; a proposal can never drop or change what is served. At most `targeting:suggestions_daily_max` (5) suggestions and 50 cents a day, under the job `targeting_suggest`. Needs migration 0036 ([docs/TARGETING.md](docs/TARGETING.md#suggested-search-queries-and-personas)).

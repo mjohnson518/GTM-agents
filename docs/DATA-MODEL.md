@@ -199,6 +199,12 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 
 - `targeting_suggestions`: suggested search queries and personas from the dashboard's Product and ICP page ([TARGETING.md](TARGETING.md)). `status` runs `running` (one model call; a row still running after five minutes reads as failed), then `ready` or `failed`, and any row may end `discarded`; every move out of `running` is a compare-and-set, and one suggestion runs at a time. `suggestions` holds the `keyword-portfolio` and `personas` items that passed every filter, `dropped` what was left out and why, and `working` the operator's picks per component, with their edits. Nothing reads these rows to serve the brain: only an approved brain proposal adds to `keyword-portfolio` or `personas`. The rows hold queries, job titles and short descriptions, never a person's data, so erasure has nothing to delete here.
 
+### CRM mirror (0037)
+
+- `crm_sync_state`: one cursor per CRM sink and stream (`contacts`, `sends`, `replies`, `meetings`, `deal_stages`), the change time and id of the last row the `crm_mirror` job finished ([CRM.md](CRM.md)). A stream reads only rows after it.
+- `crm_links`: a local `account` (by account key) or `contact` (by id) and its record id in the CRM, with a digest of the fields last written, so an unchanged contact is not written again. The rows hold ids and a digest, never an address or a name. Erasing a person deletes their contact link in the same batch; nothing is sent to the CRM. A contact link is written only while the contact row exists.
+- `crm_erasures`: the CRM record of each erased person who was mirrored (sink, record id, when), which the operator deletes in the CRM. Erasure writes it in the same batch as a held operator notice naming the record; it keeps the record id for good, and no address.
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

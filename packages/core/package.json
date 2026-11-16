@@ -50,6 +50,8 @@
     "./enrichment": "./src/enrichment/index.ts",
     "./scoring": "./src/scoring/index.ts",
     "./targeting": "./src/targeting/index.ts",
+    "./crm": "./src/crm/index.ts",
+    "./crm/testing": "./src/crm/testing.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/testing": "./src/agents/testing.ts",
     "./tools": "./src/tools/index.ts",

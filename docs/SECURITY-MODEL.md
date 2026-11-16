@@ -231,6 +231,17 @@ The same page suggests `keyword-portfolio` queries and `personas` from the appro
 
 `tests/security/targeting-suggest.test.ts` proves the gates, that a pick outside the suggestion or an edit beyond its main text is refused, that served items are kept, and that nothing reaches discovery before a person approves the exact file.
 
+## The CRM mirror
+
+The `crm_mirror` job is the one path that copies data about people to a third party on a schedule ([CRM.md](CRM.md)). What it may send is fixed in code:
+
+- **Fields:** a contact's address, first and last name, job title and company; an account's name and domain. Warmth, attributes, research, scores and notes are not sent.
+- **Activity:** only fixed sentences filled from enumerated values (a reply's intent from a fixed list, a deal stage, a time) or from a subject line we wrote and sent. The mirror never selects a reply's body, preview, subject, sender name, headers or triage notes, and summarizes a reply we sent without its subject, since it can repeat the sender's.
+- **Who:** a contact that is suppressed for any reason or opted out is not written again (one note records an opt-out for a person already mirrored), and the suppression check fails closed: an error stops the run. An erased person has no row left to mirror; erasure deletes their link, keeps the CRM record id in `crm_erasures` and leaves the operator a notice naming it, because data deletion is human-only. A link is written only while the contact row exists, so an erasure that lands mid-write is reported the same way.
+- **Gates:** `crm:mirror_enabled` reads fail closed, the run is bounded by `crm:mirror_per_run`, and each note is claimed in the effects ledger before it is written.
+
+`tests/security/crm-mirror.test.ts` puts a canary in every inbound field and proves none reaches the sink, and proves erasure and suppression stop the mirror.
+
 ## The effects ledger
 
 Work can run more than once for the same event: a queue retry, a backstop sweep, a job rerun, or a handler that failed halfway. Every side effect outside the database (an email, a page, a webhook call) is claimed first:

@@ -606,13 +606,13 @@ export interface ModelGateway {
 
 ### CrmSink (optional)
 
-Mirrors contacts, accounts and activity into an external CRM. The database in this system is the truth; the sink is one-way and tolerates failure.
+Mirrors contacts, accounts and activity into an external CRM. The database in this system is the truth; the sink is one-way and tolerates failure. The `crm_mirror` job is its only caller ([CRM.md](CRM.md)): it upserts the account first and passes that record's id as `accountExternalId`, passes the contact's record id as `contactId` to `logActivity`, and sends only its own summary text, never inbound mail. Upserts match on the domain and the address, so calling one again updates the same record.
 
 ```ts
 export interface CrmSink {
   readonly name: string;
   upsertAccount(account: { key: string; name: string; domain: string; attributes: Record<string, unknown> }): Promise<{ externalId: string }>;
-  upsertContact(contact: { id: string; email?: string; firstName?: string; lastName?: string; title?: string; accountKey?: string; warmth: string; attributes: Record<string, unknown> }): Promise<{ externalId: string }>;
+  upsertContact(contact: { id: string; email?: string; firstName?: string; lastName?: string; title?: string; accountKey?: string; accountExternalId?: string; warmth: string; attributes: Record<string, unknown> }): Promise<{ externalId: string }>;
   logActivity(activity: { contactId: string; type: "email_sent" | "reply" | "meeting" | "note"; at: string; summary: string }): Promise<void>;
 }
 ```
@@ -778,6 +778,7 @@ The adapters in `packages/adapters/`, each with a hermetic contract test, and th
 | `data-xai` | SignalSource | Planned. Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |
+| `crm-attio` | CrmSink | Attio's REST API: companies upserted on `domains`, people on `email_addresses` with a company reference, activity as dated plain-text notes; one retry on a `429` after `Retry-After`. Available ([CRM.md](CRM.md)) |
 | `code-github` | CodeHost | GitHub over plain fetch, for the ship module: one commit per task through the git data API on `ship/<task>`, in the target repository or a configured fork, idempotent pull requests, commit comparison for deploy detection, `X-Hub-Signature-256` verified in constant time before parsing. It cannot merge. Available |
 | `sandbox-cloudflare` | CodingSandbox | A Cloudflare Container per ship task with internet access off and no credentials; the Worker lets through a read-only clone, package reads and the coder model only. Agent profiles `claude-code` (default) and `opencode`. Needs a plan with Containers. Available |
 | `llm-gateway` | ModelGateway | Anthropic's Messages API, with streaming, tools and structured output; Cloudflare AI Gateway optional. `embed()` is refused, because the Messages API has no embeddings endpoint. Available; OpenAI and Workers AI are planned |

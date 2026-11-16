@@ -17,6 +17,7 @@
 import { createWorker, kvFlagReader, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
+import { createCrmJobs } from "@gtm-agents/core/crm";
 import { createExperimentJobs } from "@gtm-agents/core/experiments";
 import { createOperatorOutboxJobs, createOperatorTimerJobs, withOperatorOutbox } from "@gtm-agents/core/operator";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
@@ -36,6 +37,7 @@ import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobb
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
 import { createAdapter as createStripe } from "@gtm-agents/adapters/billing-stripe";
 import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
+import { createAdapter as createAttio } from "@gtm-agents/adapters/crm-attio";
 import { createAdapter as createRoutedMail } from "@gtm-agents/adapters/email-cloudflare";
 import { createAdapter as createResend } from "@gtm-agents/adapters/email-resend";
 import { createAdapter as createGmail } from "@gtm-agents/adapters/inbox-gmail";
@@ -152,12 +154,17 @@ const timers = createOperatorTimerJobs<Env>({ operator });
 // has no flag, so anything held while the outbox was on still goes out after it is turned off.
 const outbox = createOperatorOutboxJobs<Env>({ operator });
 
+// The CRM mirror (docs/CRM.md): every 15 minutes, behind crm:mirror_enabled, contacts, accounts and
+// fixed summaries of our own activity go to Attio. One way, and no inbound text. To use it, set
+// adapters["crm-attio"].enabled to true in gtm.config.ts and put the ATTIO_API_KEY secret.
+const crm = createCrmJobs<Env>({ sink: (env) => (config.adapters["crm-attio"]?.enabled ? createAttio(context(env, "crm-attio")) : undefined) });
+
 // Housekeeping: old run rows are deleted daily once ops:retention_enabled is on.
 const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, ...outbox, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, ...outbox, ...crm, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},

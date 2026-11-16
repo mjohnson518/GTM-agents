@@ -1,0 +1,13 @@
+{
+  "name": "crm-attio",
+  "version": "1.0.0",
+  "ports": ["CrmSink"],
+  "capabilities": [],
+  "requiredSecrets": ["ATTIO_API_KEY"],
+  "optionalSecrets": [],
+  "flags": ["crm:mirror_enabled"],
+  "tools": {},
+  "costs": {},
+  "limits": { "perSecond": 25 },
+  "contract": "./contract.test.ts"
+}

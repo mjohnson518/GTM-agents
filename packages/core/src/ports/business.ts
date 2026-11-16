@@ -99,7 +99,11 @@ export interface BillingProvider {
   createCheckoutLink?(args: { plan: string; email: string; effectKey: string }): Promise<{ url: string; expiresAt?: string }>;
 }
 
-/** One-way mirror into an external CRM. The database in this system is the truth. */
+/**
+ * One-way mirror into an external CRM (docs/CRM.md). The database in this system is the truth.
+ * Upserts match on the account's domain and the contact's address, so a repeated call updates the
+ * same record. No inbound mail text ever reaches a sink: activity summaries are core's own sentences.
+ */
 export interface CrmSink {
   readonly name: string;
   upsertAccount(account: { key: string; name: string; domain: string; attributes: Record<string, unknown> }): Promise<{ externalId: string }>;
@@ -110,9 +114,12 @@ export interface CrmSink {
     lastName?: string;
     title?: string;
     accountKey?: string;
+    /** The account's record in this CRM, from upsertAccount, when the contact has an account. */
+    accountExternalId?: string;
     warmth: string;
     attributes: Record<string, unknown>;
   }): Promise<{ externalId: string }>;
+  /** contactId is the contact's record in this CRM, from upsertContact. */
   logActivity(activity: { contactId: string; type: "email_sent" | "reply" | "meeting" | "note"; at: string; summary: string }): Promise<void>;
 }
 

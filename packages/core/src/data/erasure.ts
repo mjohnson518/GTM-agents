@@ -19,6 +19,9 @@
 //      exist);
 //   3. deletes the contact rows. Foreign keys then delete per-contact state (tags, scores, drafts,
 //      inbound mail, meetings, feedback and so on) and clear contact_id on the measurement ledgers.
+//      A contact the CRM mirror wrote to a CRM loses its link; the CRM record to delete there is
+//      kept in crm_erasures and named in a notice held for the operator outbox (docs/CRM.md).
+//      Nothing is sent to the CRM.
 // Product and billing data go in the same erasure (eraseProductData): the raw payloads of events
 // about the person (linked to their contact, or naming their product user id) are deleted from blob
 // storage before the batch, like inbound bodies, and the batch clears those rows' payload key and
@@ -238,6 +241,25 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
            OR EXISTS (SELECT 1 FROM json_each(?2) WHERE instr(lower(brief_markdown), value) > 0)`,
       )
       .bind(ids, addresses),
+    // The CRM mirror: the record in the CRM is the operator's to delete. crm_erasures keeps its id
+    // for good, and the notice, which the operator_outbox job delivers, names it. Neither holds an
+    // address.
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO crm_erasures (sink, external_id, erased_at, created_at)
+         SELECT sink, external_id, ?2, ?2 FROM crm_links WHERE local_kind = 'contact' AND local_id IN (SELECT value FROM json_each(?1))`,
+      )
+      .bind(ids, now),
+    db
+      .prepare(
+        `INSERT INTO operator_outbox (id, kind, text, silent, status, release_at, attempts, created_at, updated_at)
+         SELECT 'ob_' || lower(hex(randomblob(8))), 'notice',
+                'A person mirrored to the CRM (' || sink || ') was erased here. Their CRM record ' || external_id || ' still holds their data: delete it in the CRM yourself. The mirror will not write to it again.',
+                0, 'held', ?2, 0, ?2, ?2
+           FROM crm_links WHERE local_kind = 'contact' AND local_id IN (SELECT value FROM json_each(?1))`,
+      )
+      .bind(ids, now),
+    db.prepare("DELETE FROM crm_links WHERE local_kind = 'contact' AND local_id IN (SELECT value FROM json_each(?1))").bind(ids),
     db.prepare("DELETE FROM contacts WHERE id IN (SELECT value FROM json_each(?1))").bind(ids),
   ]);
   return { emailSha256: fields.email_sha256, contactsDeleted: contacts.length };

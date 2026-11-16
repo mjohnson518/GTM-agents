@@ -33,6 +33,7 @@ packages/adapters/<name>/
 | `email-cloudflare` | InboxProvider (receive only) | Mail that Cloudflare Email Routing delivers to the Worker |
 | `calendar-google` | CalendarProvider | Read-only calendar events with privacy-limited fields |
 | `billing-stripe` | BillingProvider | Signed billing webhooks, customer and subscription reads, and checkout links only through the human-only offers path |
+| `crm-attio` | CrmSink | The one-way CRM mirror into Attio: companies and people upserted on their domain and address, our own activity as dated notes ([docs/CRM.md](../../docs/CRM.md)) |
 | `code-github` | CodeHost | For the optional ship module: one commit per task on the target repository or a fork, pull requests, deploy detection through commit comparison, and signed webhooks; it never merges |
 | `sandbox-cloudflare` | CodingSandbox | For the optional ship module: a coding agent in a Cloudflare Container with no credentials, with the profiles `claude-code` and `opencode` |
 

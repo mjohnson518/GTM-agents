@@ -47,6 +47,8 @@ export default defineConfig({
     "calendar-google": { options: {} },
     "data-jobboards": { options: {} },
     "billing-stripe": { options: {} },
+    // The CRM mirror's sink (docs/CRM.md). Off until you set enabled to true and put ATTIO_API_KEY.
+    "crm-attio": { enabled: false, options: {} },
   },
 
   // Model id per role. Core asks for roles; only this file names models.

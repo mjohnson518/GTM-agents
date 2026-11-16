@@ -208,6 +208,10 @@ Calendar sync reads the operator's calendar every 15 minutes, read-only, asking 
 
 Email is plain text, with no tracking pixels or click tracking, so replies are the metric. Cold, follow-up and lifecycle mail go from an isolated sending subdomain through the email provider. Approved replies go from the real mailbox. `Reply-To` on provider mail points at that mailbox, so every reply lands in one inbox.
 
+## The CRM mirror
+
+The `crm_mirror` job copies contacts, their companies and fixed summaries of our own activity (emails sent, replies by intent, meetings, deal stages) one way into a CRM through `CrmSink`, every 15 minutes behind `crm:mirror_enabled`. It never sends inbound text, stops for anyone suppressed or opted out, and leaves deleting an erased person's CRM record to the operator. [CRM.md](CRM.md) covers it.
+
 ## HTTP surface
 
 | Route | Authentication |
