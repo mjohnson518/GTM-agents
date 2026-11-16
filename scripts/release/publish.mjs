@@ -18,10 +18,11 @@
 //   node scripts/release/publish.mjs --tag v1.2.3 --record-sha256 <hex>                 publish (GitHub Actions only)
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { TARBALL_DIR, capture, distTagFor, oidcLogLines, publishAuth, publishProblems, readReleaseRecord, run } from "./lib.mjs";
+import { TARBALL_DIR, capture, distTagFor, oidcLogLines, publishAuth, publishLogs, publishProblems, readReleaseRecord, run } from "./lib.mjs";
 
 const { values } = parseArgs({ options: { "dry-run": { type: "boolean" }, tag: { type: "string" }, "record-sha256": { type: "string" } } });
 const dryRun = values["dry-run"] === true;
@@ -37,6 +38,9 @@ function main() {
   if (!dryRun) console.log(`publish: signing in to npm with ${publishAuth(env).mode === "token" ? "the NPM_TOKEN secret" : "trusted publishing (OIDC)"}`);
 
   console.log(`publish: ${record.packages.map((p) => `${p.name}@${record.version}`).join(", ")}${dryRun ? " (dry run)" : ""}`);
+  // Where npm writes its debug logs, found before anything is published: every npm command writes
+  // its own log, so asking after a failure would add a newer log than the one that explains it.
+  const logDir = !dryRun && publishAuth(env).mode === "oidc" ? npmLogDir() : null;
   for (const p of record.packages) {
     const file = join(TARBALL_DIR, p.tarball);
     const published = registryInfo(p.name, record.version);
@@ -49,10 +53,11 @@ function main() {
     const distTag = distTagFor(record.version, published.latest);
     if (dryRun) run("npm", ["publish", file, "--dry-run", "--access", "public", "--tag", distTag]);
     else {
+      const before = listLogs(logDir);
       try {
         run("npm", ["publish", file, "--access", "public", "--provenance", "--tag", distTag]);
       } catch (error) {
-        if (publishAuth(env).mode === "oidc") explainOidcFailure(p.name);
+        if (logDir !== null) explainOidcFailure(p.name, logDir, before);
         throw error;
       }
     }
@@ -61,20 +66,45 @@ function main() {
 }
 
 /**
+ * npm's debug log folder, worked out as npm does (logs-dir, else <cache>/_logs, the cache defaulting
+ * to ~/.npm) rather than by asking npm: npm 11 refuses `npm config get cache`, and every npm call
+ * writes a log of its own.
+ */
+function npmLogDir() {
+  const env = process.env;
+  const logsDir = env.npm_config_logs_dir ?? env.NPM_CONFIG_LOGS_DIR;
+  if (logsDir) return logsDir;
+  return join(env.npm_config_cache ?? env.NPM_CONFIG_CACHE ?? join(homedir(), ".npm"), "_logs");
+}
+
+/**
+ * The files in npm's log folder; empty when there is none yet. Never throws.
+ * @param {string | null} dir
+ * @returns {string[]}
+ */
+function listLogs(dir) {
+  if (dir === null) return [];
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * After a publish through trusted publishing fails, print what npm logged about the OIDC exchange.
  * npm turns a refused exchange into ENEEDAUTH and logs the registry's reason only at the verbose
- * level, in its debug log on the runner, which is gone once the job ends. Never throws.
+ * level, in the debug log that publish wrote on the runner, which is gone once the job ends.
+ * Never throws.
  * @param {string} name
+ * @param {string} dir
+ * @param {readonly string[]} before the log folder's files just before the publish
  */
-function explainOidcFailure(name) {
+function explainOidcFailure(name, dir, before) {
   try {
-    const dir = join(capture("npm", ["config", "get", "cache"]).trim(), "_logs");
-    const newest = readdirSync(dir)
-      .filter((f) => f.endsWith(".log"))
-      .map((f) => ({ f, t: statSync(join(dir, f)).mtimeMs }))
-      .sort((a, b) => b.t - a.t)[0];
-    const lines = newest ? oidcLogLines(readFileSync(join(dir, newest.f), "utf8")) : [];
-    console.error(`publish: npm's trusted-publishing steps for ${name}:`);
+    const logs = publishLogs(before, listLogs(dir));
+    const lines = logs.flatMap((f) => oidcLogLines(readFileSync(join(dir, f), "utf8")));
+    console.error(`publish: npm's trusted-publishing steps for ${name} (${logs.length ? logs.join(", ") : "no debug log found"}):`);
     for (const line of lines.length ? lines : ["(npm logged no OIDC step)"]) console.error(`publish:   ${line}`);
   } catch {
     console.error("publish: npm's debug log could not be read");

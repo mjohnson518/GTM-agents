@@ -15,6 +15,7 @@ import {
   mapExport,
   normalizeRepository,
   oidcLogLines,
+  publishLogs,
   publishAuth,
   publishProblems,
   publishablePackages,
@@ -247,6 +248,13 @@ describe("release: publish guards", () => {
     // Long lines are cut, and at most 20 lines are kept.
     expect(oidcLogLines(`1 verbose oidc ${"x".repeat(1000)}`)[0]?.length).toBeLessThanOrEqual(400);
     expect(oidcLogLines(Array.from({ length: 50 }, (_, i) => `${i} verbose oidc step ${i}`).join("\n"))).toHaveLength(20);
+  });
+
+  it("reads only the debug logs the failed publish wrote, never one from an earlier or later npm call", () => {
+    const before = ["2026-11-16T17_00_00_000Z-debug-0.log"];
+    const after = [...before, "2026-11-16T17_38_56_028Z-debug-0.log", "notes.txt"];
+    expect(publishLogs(before, after)).toEqual(["2026-11-16T17_38_56_028Z-debug-0.log"]);
+    expect(publishLogs(after, after)).toEqual([]);
   });
 
   it("never moves latest backwards, and keeps prereleases off latest", () => {

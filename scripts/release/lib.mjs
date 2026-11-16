@@ -658,6 +658,19 @@ export function oidcLogLines(logText) {
 }
 
 /**
+ * The npm debug logs a publish wrote: the .log files in the log folder after it that were not there
+ * before it. Every npm command writes its own log, so "the newest log" after a failure can belong to
+ * a later npm call; comparing against a listing taken just before the publish cannot.
+ * @param {readonly string[]} before
+ * @param {readonly string[]} after
+ * @returns {string[]} newest first
+ */
+export function publishLogs(before, after) {
+  const seen = new Set(before);
+  return after.filter((f) => f.endsWith(".log") && !seen.has(f)).sort().reverse();
+}
+
+/**
  * @param {string} version
  * @returns {number[] | null} major, minor, patch of a stable version; null for a prerelease
  */
