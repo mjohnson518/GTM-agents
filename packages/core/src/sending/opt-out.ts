@@ -48,7 +48,7 @@ export async function optOutAddress(db: D1Database, rawAddress: string, options:
   const address = normalizeAddress(rawAddress);
   if (!address) throw new TypeError("the address to opt out cannot be parsed");
   const now = (options.now ?? new Date()).toISOString();
-  const added = await addSuppression(db, { email: address, reason: options.reason, source: options.source, ...(options.notes ? { notes: options.notes.slice(0, 300) } : {}) });
+  const added = await addSuppression(db, { email: address, reason: options.reason, source: options.source, ...(options.notes ? { notes: options.notes.slice(0, 300) } : {}), ...(options.now ? { at: options.now } : {}) });
   const failedWrites: string[] = [];
   const attempt = async (name: string, write: () => Promise<unknown>) => {
     try {

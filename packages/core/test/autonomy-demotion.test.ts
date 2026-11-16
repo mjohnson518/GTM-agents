@@ -175,7 +175,8 @@ describe("a demotion that cannot be written", () => {
     const broken = failingOn(db, /autonomy_level_changes|outreach_sends os JOIN drafts/);
     const result = await optOutAddress(broken, contact.email, { reason: "bounce", source: "provider_webhook", now: NOW });
     expect(result.failedWrites).toContain("autonomy_incident");
-    expect(await db.prepare("SELECT reason FROM suppression WHERE email = ?1").bind(contact.email).first()).toEqual({ reason: "bounce" });
+    // The entry carries the opt-out's own clock, so the hourly watch below sees the send it follows.
+    expect(await db.prepare("SELECT reason, created_at FROM suppression WHERE email = ?1").bind(contact.email).first()).toEqual({ reason: "bounce", created_at: NOW.toISOString() });
     expect(await incidents()).toEqual([]);
 
     // Until it lands, a level read that cannot see the recorded changes is 1.

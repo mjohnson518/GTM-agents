@@ -635,6 +635,29 @@ export function publishAuth(env) {
 }
 
 /**
+ * The trusted-publishing steps npm logged, from the text of its debug log. npm treats a refused OIDC
+ * exchange as "no credentials" and only fails later with ENEEDAUTH; the registry's reason is logged
+ * at the verbose level, which the job output does not show. Each line keeps its level and the
+ * message, cut to 400 characters, at most 20 lines, with anything shaped like a token (a JWT or an
+ * npm token) replaced, so the lines are safe to print in a public workflow log.
+ * @param {string} logText
+ * @returns {string[]}
+ */
+export function oidcLogLines(logText) {
+  const out = [];
+  for (const line of logText.split(/\r?\n/)) {
+    const m = /^\d+\s+(\w+)\s+oidc\s+(.*)$/.exec(line);
+    if (!m) continue;
+    const message = (m[2] ?? "")
+      .replace(/eyJ[\w-]+\.[\w-]+\.[\w-]*/g, "[redacted]")
+      .replace(/npm_[A-Za-z0-9]{20,}/g, "[redacted]");
+    out.push(`${m[1]} oidc ${message}`.slice(0, 400));
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+/**
  * @param {string} version
  * @returns {number[] | null} major, minor, patch of a stable version; null for a prerelease
  */

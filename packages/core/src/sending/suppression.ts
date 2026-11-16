@@ -80,6 +80,8 @@ export interface SuppressionEntry {
   notes?: string;
   /** Keep the plaintext address alongside the hash. Defaults to true when `email` is given. */
   storeAddress?: boolean;
+  /** When the entry was made: the caller's clock, so its windows line up. Defaults to now. */
+  at?: Date;
 }
 
 /**
@@ -102,7 +104,7 @@ export async function addSuppression(db: D1Database, entry: SuppressionEntry): P
   } else {
     throw new TypeError("a suppression entry needs an address or a lowercase hex SHA-256");
   }
-  const now = new Date().toISOString();
+  const now = (entry.at ?? new Date()).toISOString();
   const insert = "INSERT OR IGNORE INTO suppression (email_sha256, email, reason, source, notes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
   const result = await db.prepare(insert).bind(hash, address, entry.reason, entry.source ?? null, entry.notes ?? null, now).run();
   // The mailbox entry keeps no address: it exists only so other subaddresses match.

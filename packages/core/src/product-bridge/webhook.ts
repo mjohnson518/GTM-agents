@@ -80,7 +80,7 @@ export function createProductWebhook<E extends Env>(options: ProductWebhookOptio
       // when the event routes, at once, whatever lifecycle:enabled says.
       try {
         await writeTombstone(c.env.DB, { emailSha256: erasure.emailSha256, userId: erasure.userId, source: "product", erasedAt: now.toISOString() });
-        await addSuppression(c.env.DB, { emailSha256: erasure.emailSha256, reason: "erasure", source: "lifecycle:product" });
+        await addSuppression(c.env.DB, { emailSha256: erasure.emailSha256, reason: "erasure", source: "lifecycle:product", at: now });
       } catch (error) {
         options.logger.error("an erasure could not be recorded", { error: sanitizeErrorMessage(error) });
         return c.json({ error: "record_failed" }, 500);

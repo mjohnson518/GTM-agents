@@ -14,6 +14,7 @@ import {
   lockstepProblems,
   mapExport,
   normalizeRepository,
+  oidcLogLines,
   publishAuth,
   publishProblems,
   publishablePackages,
@@ -221,6 +222,31 @@ describe("release: publish guards", () => {
     for (const env of [{ ...oidc, NPM_CLI_VERSION: "11.5.0" }, { ...oidc, NPM_CLI_VERSION: "10.9.2" }, { ...oidc }, { GITHUB_ACTIONS: "true", NPM_CLI_VERSION: "11.19.1" }]) {
       expect(publishAuth(env).mode, JSON.stringify(env)).toBe("none");
     }
+  });
+
+  it("explains a refused trusted-publishing sign-in from npm's debug log, without any token in it", () => {
+    // Token-shaped values built at runtime, low entropy, so no secret scanner mistakes them for real ones.
+    const jwt = ["eyJ" + "a".repeat(12), "b".repeat(12), "c".repeat(12)].join(".");
+    const npmToken = "npm_" + "x".repeat(36);
+    const log = [
+      "0 verbose cli /usr/bin/node /usr/bin/npm",
+      "41 silly oidc Skipped because no id_token available",
+      `52 http fetch GET https://token.actions.example/x?audience=npm%3Aregistry.npmjs.org 200 120ms`,
+      `53 verbose oidc Failed token exchange request with body message: No trusted publisher matched for ${jwt}`,
+      `54 verbose oidc Failed with ${npmToken} attached`,
+      "60 error code ENEEDAUTH",
+      "61 verbose not-oidc oidc in the message only",
+    ].join("\n");
+    const lines = oidcLogLines(log);
+    expect(lines).toEqual([
+      "silly oidc Skipped because no id_token available",
+      "verbose oidc Failed token exchange request with body message: No trusted publisher matched for [redacted]",
+      "verbose oidc Failed with [redacted] attached",
+    ]);
+    expect(oidcLogLines("0 verbose cli npm\n1 error code ENEEDAUTH")).toEqual([]);
+    // Long lines are cut, and at most 20 lines are kept.
+    expect(oidcLogLines(`1 verbose oidc ${"x".repeat(1000)}`)[0]?.length).toBeLessThanOrEqual(400);
+    expect(oidcLogLines(Array.from({ length: 50 }, (_, i) => `${i} verbose oidc step ${i}`).join("\n"))).toHaveLength(20);
   });
 
   it("never moves latest backwards, and keeps prereleases off latest", () => {
