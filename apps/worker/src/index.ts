@@ -35,6 +35,7 @@ import { createSourcingJobs } from "@gtm-agents/core/sourcing";
 import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
+import { createAdapter as createLeadMagic } from "@gtm-agents/adapters/data-leadmagic";
 import { createAdapter as createStripe } from "@gtm-agents/adapters/billing-stripe";
 import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
 import { createAdapter as createAttio } from "@gtm-agents/adapters/crm-attio";
@@ -64,25 +65,42 @@ const calendar = (env: Env) => createGoogleCalendar(context(env, "calendar-googl
 // approval digest, send window, caps, circuit breaker) runs inside it.
 const sendOutreach = (env: Env) => createOutreachSender(senderDepsFromEnv(env, { config, provider: email(env), operator: operator(env) }));
 
+// LeadMagic (docs/SOURCING.md#the-email-waterfall): a second finder after Hunter, behind
+// discovery:email_waterfall_enabled, and the employment checks (signals:job_change_enabled). Set
+// adapters["data-leadmagic"].enabled to true in gtm.config.ts and put LEADMAGIC_API_KEY to use it.
+const leadmagic = (env: Env) => (config.adapters["data-leadmagic"]?.enabled ? createLeadMagic(context(env, "data-leadmagic")) : undefined);
+
+// Which adapter verifies addresses before promotion. Hunter reports accept-all domains as risky, so
+// verification:promotion_policy allow_risky works with it. LeadMagic is cheaper (a quarter credit,
+// and inconclusive results are free), but reports accept-all as unknown: such an address earns no
+// qualification credit, so its candidate stops at borderline and is never promoted, and allow_risky
+// has no effect. "data-leadmagic" needs that adapter enabled; until it
+// is, Hunter verifies.
+const VERIFIER = "data-hunter" as "data-hunter" | "data-leadmagic";
+
 // Sourcing and enrichment: discovery, the email waterfall, prescore, fit scoring and account research
 // (enrichment:research_enabled; the research effort is the data-exa researchEffort option).
 const sourcing = createSourcingJobs<Env>({
   adapters(env) {
     const hunter = createHunter(context(env, "data-hunter"));
     const exa = createExa(context(env, "data-exa"));
-    return { sources: [exa], people: hunter, finders: [hunter], verifier: hunter, model: model(env), research: exa };
+    const second = leadmagic(env);
+    const verifier = VERIFIER === "data-leadmagic" && second ? second : hunter;
+    return { sources: [exa], people: hunter, finders: [hunter, ...(second ? [second] : [])], verifier, model: model(env), research: exa };
   },
 });
 
-// Signals: websets, search monitors, dated news, hiring boards, responder lookalikes and coverage fill,
-// each behind its own signals:* flag (docs/SIGNALS.md). Add your monitors here: each names its key, the
+// Signals: websets, search monitors, dated news, hiring boards, responder lookalikes, coverage fill and
+// employment checks (with champion moves), each behind its own signals:* flag (docs/SIGNALS.md). Add your monitors here: each names its key, the
 // Worker secret that signs its deliveries, and whether its results are company sites or articles.
 const monitors: readonly MonitorConfig[] = [];
 const signals = createSignalJobs<Env>({
   adapters(env) {
     const exa = createExa(context(env, "data-exa"));
-    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")) };
+    const employment = leadmagic(env);
+    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")), ...(employment ? { employment } : {}) };
   },
+  operator,
   options: { monitors },
 });
 

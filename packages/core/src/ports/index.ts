@@ -23,8 +23,8 @@ export type {
   SignalType,
   WatchHandle,
 } from "./discovery.ts";
-export { VERIFICATION_STATUSES } from "./contact.ts";
-export type { ContactFinder, EmailVerifier, VerificationStatus } from "./contact.ts";
+export { EMPLOYMENT_STATUSES, VERIFICATION_STATUSES } from "./contact.ts";
+export type { ContactFinder, EmailVerifier, EmploymentChecker, EmploymentStatus, VerificationStatus } from "./contact.ts";
 export type { EmailEvent, EmailProvider, InboundMessage, InboxProvider, OutboundMessage, SendOutcome } from "./email.ts";
 export type { ApprovalRequest, OperatorChannel, OperatorMessage, OperatorUpdate } from "./operator.ts";
 export type { BillingEvent, BillingInterval, BillingProvider, CalendarAttendee, CalendarEvent, CalendarEventSummary, CalendarProvider, CrmSink, Sandbox } from "./business.ts";

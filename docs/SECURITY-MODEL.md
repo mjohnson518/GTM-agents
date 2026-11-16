@@ -280,6 +280,18 @@ Automation may add a critical pause when none stands (the bounce monitor does, o
 
 News, posts, monitor hits and job listings are full taint: stored as evidence data only, never instructions, and a signal without a date and a source URL is dropped. The hiring-board adapter fetches only the documented public board hosts and paths of three vendors, refuses redirects, and keeps role-kind counts, never titles. Search monitor deliveries are verified against each monitor's own secret before anything is read. Openers come from fixed text per signal category; only whitelisted sources may have a sanitized, length-capped headline quoted. Product-derived signals are never carried to colleagues.
 
+## Employment checks and champion moves
+
+The employment checks send a third party a contact's profile URL and the company we expect them at, and a champion lookup sends the profile URL and their name ([SIGNALS.md](SIGNALS.md#employment-checks)). What comes back is full-taint data:
+
+- **Notices and headlines are our own words.** The chat notice about a contact who moved names them, our account and the contact id from our own records; a new-role signal has the fixed headline "Started a new role". The provider's title and company name reach neither. Erasure deletes a held notice that carries an erased contact's id.
+- **Stored text is cleaned.** A champion's new title and company name are one capped line each, with injection patterns redacted, and are treated like any provider's text: person fit reads the title, and once promoted they are the contact's title and the account's name, which templates may use as variables.
+- **Nothing skips the checks.** A suppressed, tombstoned or opted-out contact is not checked and not followed. A champion's new address is kept only when it screens clean and is not suppressed, and it is a raw candidate: the discovery cycle verifies, qualifies and promotes it like any other, promotion refuses it if the person has since opted out or been suppressed at their earlier address, and nothing is sent without the cold batch's approval.
+- **Erasure covers both addresses, and nobody else.** The champion link (`candidates.source_contact_id`) is followed both ways, through addresses only: from a contact to its champion candidates' addresses and the contacts holding them, and from an address to the champion candidates holding it and the contacts they came from. A match by name is never followed, so a namesake at the new company is not erased in the person's place. Addresses match by mailbox (a `+tag` variant is the same person), as everywhere in erasure. The one reach this keeps is what an address implies: if the provider returned someone else's validated address, erasing that person also erases the champion's earlier contact.
+- **Gates.** `signals:job_change_enabled` and `signals:champion_moves_enabled` read fail closed, the run is bounded (10 checks, 5 lookups), every call goes through the spend gate, and a suppression check that cannot be read skips the contact.
+
+`tests/security/employment.test.ts` proves erasure at either address (before and after promotion) and never of a namesake, that an opt-out at the earlier address blocks promotion, that hostile provider text reaches no notice or headline, and that an unreadable flag checks nobody.
+
 ## Suppression
 
 The suppression list holds addresses the system never emails: opt-outs, bounces, complaints, erasures, and manual or do-not-contact entries. Entries are keyed by the SHA-256 of the normalized address, and the plaintext address is optional, so an erasure can keep someone suppressed without keeping their address.

@@ -13,6 +13,10 @@ export const SIGNAL_FLAGS = Object.freeze({
   hiringBoards: "signals:hiring_boards_enabled",
   lookalikes: "signals:lookalikes_enabled",
   coverageFill: "signals:coverage_fill_enabled",
+  /** Employment checks: contacts who moved are marked moved, and a recent new role is a signal. */
+  jobChange: "signals:job_change_enabled",
+  /** An engaged contact who moved becomes a candidate at their new company. Needs jobChange. */
+  championMoves: "signals:champion_moves_enabled",
   /** Compute the nightly intent score (shadow: recorded, never used to select). */
   intent: "scoring:intent_enabled",
   /** Use the intent band to filter cold selection. Existing flag, read by selection. */
@@ -64,4 +68,14 @@ export const SIGNAL_LIMITS = Object.freeze({
   coverageMinSeats: 2,
   coverageRecentDays: 30,
   intentContactsPerRun: 5000,
+  /** Employment checks per run, and the days before a contact is checked again. */
+  employmentChecksPerRun: 10,
+  employmentRecheckDays: 90,
+  /** An inconclusive check (unknown, ambiguous, never worked there, no profile) is retried sooner. */
+  employmentUnknownRecheckDays: 30,
+  /** A current role that began this recently is a job_change signal. */
+  employmentNewRoleDays: 90,
+  employmentSignalExpiryDays: 45,
+  /** Champion lookups per run: an engaged contact who moved, at their new company. */
+  championFindsPerRun: 5,
 });

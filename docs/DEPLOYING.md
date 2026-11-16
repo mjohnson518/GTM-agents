@@ -72,6 +72,7 @@ The Worker has exactly one cron trigger, `* * * * *`. Every minute the scheduled
 | `llm-gateway` | ModelGateway | Anthropic model calls, optionally through Cloudflare AI Gateway | Chat, fit scoring, the reviewer, reply triage and drafting |
 | `data-exa` | DiscoverySource | Account and people search | Sourcing |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finding and verifying work email addresses | Sourcing |
+| `data-leadmagic` | ContactFinder, EmailVerifier, EmploymentChecker | A second email finder, an optional verifier, and employment checks | Sourcing (second finder), employment checks and champion moves |
 | `email-resend` | EmailProvider | Sending cold and follow-up mail, delivery and bounce webhooks | Delivery |
 | `inbox-gmail` | InboxProvider | Reading the reply mailbox, mirroring reply drafts, sending approved replies | Inbox and replies |
 | `email-cloudflare` | InboxProvider (receive only) | Mail that Cloudflare Email Routing delivers to the Worker | Inbox, as an alternative to Gmail |
@@ -80,7 +81,7 @@ The Worker has exactly one cron trigger, `* * * * *`. Every minute the scheduled
 | `billing-stripe` | BillingProvider | Signed billing webhooks and subscription reads | Lifecycle billing |
 | `crm-attio` | CrmSink | A one-way copy of contacts, companies and our activity into Attio | The CRM mirror ([CRM.md](CRM.md)) |
 
-The template's `gtm.config.ts` and `src/index.ts` wire all eleven; `crm-attio` starts with `enabled: false`. Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
+The template's `gtm.config.ts` and `src/index.ts` wire all twelve; `data-leadmagic` and `crm-attio` start with `enabled: false`. Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
 
 ## 2. Requirements by capability
 
@@ -103,7 +104,7 @@ Start with the foundation and the operator chat, then add one capability at a ti
 
 The cents figures are each job's default daily spend cap in this toolkit, always enforced; they are not vendor prices.
 
-**Adding capabilities one at a time.** The template's `gtm.config.ts` enables ten adapters (it lists `crm-attio` too, disabled), and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
+**Adding capabilities one at a time.** The template's `gtm.config.ts` enables ten adapters (it lists `data-leadmagic` and `crm-attio` too, disabled), and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
 
 ```ts
 adapters: {
@@ -253,6 +254,7 @@ Warm the domain up slowly: the warm-up ramp ([section 9](#the-warm-up-ramp)) doe
 ### 4.6 Exa and Hunter (sourcing)
 
 - **Exa** searches for accounts and people. Create an API key in its dashboard and store it as `EXA_API_KEY`. The adapter records the cost the API reports with each search, or estimates it from its manifest's table; check Exa's pricing page and set the discovery cap to match. [Exa](https://exa.ai/)
+- **LeadMagic** (optional) is a second email finder after Hunter, can verify instead of Hunter, and checks whether contacts still work where we think. Create an API key and store it as `LEADMAGIC_API_KEY`, set `adapters["data-leadmagic"].enabled` to `true` and `options.usdPerCredit` to your plan's price per credit. [SOURCING.md](SOURCING.md#choosing-the-verifier) and [SIGNALS.md](SIGNALS.md#employment-checks) cover what each use costs. [LeadMagic](https://leadmagic.io/)
 - **Hunter** finds and verifies work email addresses and lists people at a domain. Create an API key and store it as `HUNTER_API_KEY`. Set `adapters["data-hunter"].options.usdPerCredit` to your plan's price per credit (unset, a built-in default is assumed); the adapter records credits per call and multiplies. [Hunter](https://hunter.io/)
 
 [SOURCING.md](SOURCING.md) explains the discovery cycle, the waterfall and the budget.
@@ -329,6 +331,7 @@ Before the first deploy, Wrangler offers to create the Worker so it can hold the
 | `AI_GATEWAY_TOKEN` | `llm-gateway` | No | Cloudflare AI Gateway, for an authenticated gateway | Calls go through the gateway unauthenticated, or directly |
 | `EXA_API_KEY` | `data-exa` | Yes, when enabled | Exa dashboard | The discovery cycle's searches fail |
 | `HUNTER_API_KEY` | `data-hunter` | Yes, when enabled | Hunter dashboard | Lookups and verifications fail |
+| `LEADMAGIC_API_KEY` | `data-leadmagic` | Yes, when enabled | LeadMagic dashboard | The second finder is skipped for the run, and the employment checks fail; Hunter keeps finding and verifying unless LeadMagic is the verifier |
 | `RESEND_API_KEY` | `email-resend` | Yes, when enabled | Resend: a key with sending access | Every message fails with an auth error before reaching Resend, and is not retried |
 | `RESEND_WEBHOOK_SECRET` | `email-resend` | Yes, when enabled | Resend: the webhook endpoint's signing secret (`whsec_...`) | `/api/webhooks/email` answers 503 |
 | `GOOGLE_CLIENT_ID` | `inbox-gmail` | Yes, when enabled | Google Cloud: the OAuth client | The poll and sweep fail with an auth error |
@@ -394,6 +397,7 @@ Never put a literal secret in this file. Everything specific to what you sell li
 | `llm-gateway` | `aiGatewayBaseUrl`, `byok`, `anthropicVersion` (default `2026-10-21`), `promptCache` (default `true`), `fallbacks` (`"default"` turns on the provider's server-side fallback), `roles` (used only when core sends no model id) |
 | `data-exa` | `baseUrl`, `searchType` (default `auto`), `accountCategory` (default `company`), `personCategory` (default `people`), `highlightChars` (default 400), `websetEmail` (default `true`: websets ask for a work email), `creditUsd` (dollars per websets credit, default 0.006) |
 | `data-hunter` | `baseUrl`, `usdPerCredit` (set it to your plan's price per credit) |
+| `data-leadmagic` | `baseUrl`, `usdPerCredit` (0.0198 by default, the Essential plan; set it to your plan's price per credit) |
 | `email-resend` | `apiBaseUrl`, `usdPerEmail` (set it to your plan's price per email) |
 | `inbox-gmail` | `address` (the mailbox's own address; set it), `pubsubTopic`, `userId` (default `me`), `scanLimit` (1 to 500, default 200), `apiBaseUrl` |
 | `email-cloudflare` | `ownAddresses`, `maxBytes` (default 25 MiB) |
@@ -673,7 +677,7 @@ Experiments need volume: each arm needs hundreds of matured sends before anythin
 
 ### Signals
 
-Signal sources need only what sourcing already has (`EXA_API_KEY` and `HUNTER_API_KEY`), plus the `data-jobboards` adapter, which needs no key. Turn each on with its flag (`signals:news_enabled`, `signals:hiring_boards_enabled`, `signals:websets_enabled`, `signals:monitors_enabled`, `signals:lookalikes_enabled`, `signals:coverage_fill_enabled`); each spends within its own daily cap. A search monitor you create at the provider is added to `monitors` in `src/index.ts`, with a Worker secret named in its `secretName` (it must start with `MONITOR_`, so no other setting or credential can sign deliveries) that signs its deliveries to `/api/webhooks/search/<key>`. The intent score runs in shadow behind `scoring:intent_enabled` until `intent_score:enforce`. [SIGNALS.md](SIGNALS.md) has each source's rules and costs.
+Signal sources need only what sourcing already has (`EXA_API_KEY` and `HUNTER_API_KEY`), plus the `data-jobboards` adapter, which needs no key. Turn each on with its flag (`signals:news_enabled`, `signals:hiring_boards_enabled`, `signals:websets_enabled`, `signals:monitors_enabled`, `signals:lookalikes_enabled`, `signals:coverage_fill_enabled`); each spends within its own daily cap. Employment checks (`signals:job_change_enabled`, and `signals:champion_moves_enabled` to follow engaged contacts who move) need `data-leadmagic` enabled and `LEADMAGIC_API_KEY`. A search monitor you create at the provider is added to `monitors` in `src/index.ts`, with a Worker secret named in its `secretName` (it must start with `MONITOR_`, so no other setting or credential can sign deliveries) that signs its deliveries to `/api/webhooks/search/<key>`. The intent score runs in shadow behind `scoring:intent_enabled` until `intent_score:enforce`. [SIGNALS.md](SIGNALS.md) has each source's rules and costs.
 
 ### The dashboard
 

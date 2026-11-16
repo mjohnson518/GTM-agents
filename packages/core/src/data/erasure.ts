@@ -29,9 +29,13 @@
 // records to a marker (the hash of the customer id) so a later billing event for them is refused.
 // The product user id comes from the caller or from the contact's lifecycle row, and the tombstone
 // keeps it so a later event naming that user is refused too.
+// A person followed to a new employer (signals/employment.ts) is one person at two addresses: a
+// champion candidate links the new address to the old contact (candidates.source_contact_id), and
+// erasure follows that link both ways, through addresses only (withLineage), so erasing either
+// address erases the contacts, candidates and data held under both, and tombstones both.
 // eraseByHash does the same when only the address hash is known (the product's user.deleted
 // event). Memory text is not linked to a contact; the memory module removes it separately.
-import { addressHash } from "../sending/suppression.ts";
+import { addressHash, mailboxOf } from "../sending/suppression.ts";
 import { sha256Hex } from "../shared/hash.ts";
 import { contactEmailFields } from "./contacts.ts";
 
@@ -71,6 +75,70 @@ const inboundAbout = `SELECT id, body_key FROM inbound_emails WHERE ${addressIn(
 
 // R2 deletes at most 1,000 keys per call.
 const BLOB_DELETE_CHUNK = 1000;
+/** A lowercased address column with any +tag removed: its mailbox, in SQL (mailboxOf). */
+const mailboxSql = (column: string) =>
+  `(CASE WHEN instr(substr(lower(trim(${column})), 1, instr(lower(trim(${column})), '@') - 1), '+') > 0
+     THEN substr(lower(trim(${column})), 1, instr(lower(trim(${column})), '+') - 1) || substr(lower(trim(${column})), instr(lower(trim(${column})), '@'))
+     ELSE lower(trim(${column})) END)`;
+
+/** Hops followed along champion links (signals/employment.ts) when collecting one person's contacts. */
+const LINEAGE_ROUNDS = 5;
+
+interface ErasedContact {
+  id: string;
+  email: string;
+  mailbox_sha256: string;
+}
+
+/**
+ * The person's contacts and the addresses of the champion candidates linked to them. A champion
+ * candidate (source champion_move) names the contact the person was before they moved
+ * (source_contact_id) and holds their new address. The link is followed only through addresses,
+ * both ways and up to LINEAGE_ROUNDS hops: from a contact to the addresses of its champion
+ * candidates and the contacts holding those addresses, and from an address to the champion
+ * candidates holding it and the contacts they came from. It never follows a match by name, so a
+ * namesake at the new company is never erased in the person's place.
+ */
+async function withLineage(db: D1Database, start: ErasedContact[], startEmail: string): Promise<{ contacts: ErasedContact[]; candidateEmails: string[] }> {
+  const contacts = new Map(start.map((c) => [c.id, c]));
+  const emails = new Set([startEmail, ...start.map((c) => c.email)]);
+  const candidateEmails = new Set<string>();
+  for (let round = 0; round < LINEAGE_ROUNDS; round++) {
+    const before = contacts.size + emails.size;
+    const { results: links } = await db
+      .prepare(
+        `SELECT source_contact_id, lower(trim(email)) AS email FROM candidates
+          WHERE source = 'champion_move' AND source_contact_id IS NOT NULL AND email IS NOT NULL
+            AND (source_contact_id IN (SELECT value FROM json_each(?1)) OR ${mailboxSql("email")} IN (SELECT value FROM json_each(?2)))`,
+      )
+      // A person is a mailbox: a +tag variant of an address matches it.
+      .bind(JSON.stringify([...contacts.keys()]), JSON.stringify([...new Set([...emails].map(mailboxOf))]))
+      .all<{ source_contact_id: string; email: string }>();
+    const fresh = new Set<string>();
+    const sourceIds = new Set<string>();
+    for (const link of links) {
+      candidateEmails.add(link.email);
+      if (!emails.has(link.email)) fresh.add(link.email);
+      if (!contacts.has(link.source_contact_id)) sourceIds.add(link.source_contact_id);
+    }
+    // Contacts at the new addresses (by address or mailbox), and the contacts the links came from.
+    const hashes = (await Promise.all([...fresh].map((e) => contactEmailFields(e)))).flatMap((f) => (f ? [f.email_sha256, f.mailbox_sha256] : []));
+    const { results: found } = await db
+      .prepare(
+        `SELECT id, email, mailbox_sha256 FROM contacts
+          WHERE id IN (SELECT value FROM json_each(?1)) OR email_sha256 IN (SELECT value FROM json_each(?2)) OR mailbox_sha256 IN (SELECT value FROM json_each(?2))`,
+      )
+      .bind(JSON.stringify([...sourceIds]), JSON.stringify(hashes))
+      .all<ErasedContact>();
+    for (const e of fresh) emails.add(e);
+    for (const c of found) {
+      contacts.set(c.id, c);
+      emails.add(c.email);
+    }
+    if (contacts.size + emails.size === before) break;
+  }
+  return { contacts: [...contacts.values()], candidateEmails: [...candidateEmails] };
+}
 const MAX_INBOUND_PASSES = 20;
 
 /**
@@ -174,13 +242,17 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
   const fields = await contactEmailFields(email);
   if (!fields) throw new TypeError("the address to erase cannot be parsed");
   const now = (options.now ?? new Date()).toISOString();
-  const { results: contacts } = await db
-    .prepare("SELECT id, email FROM contacts WHERE email_sha256 = ?1 OR mailbox_sha256 = ?2 OR email_sha256 = ?2")
+  const { results: direct } = await db
+    .prepare("SELECT id, email, mailbox_sha256 FROM contacts WHERE email_sha256 = ?1 OR mailbox_sha256 = ?2 OR email_sha256 = ?2")
     .bind(fields.email_sha256, fields.mailbox_sha256)
-    .all<{ id: string; email: string }>();
-  const addresses = JSON.stringify([...new Set([fields.email, ...contacts.map((c) => c.email)])]);
+    .all<ErasedContact>();
+  // The same person at another address, through a champion link.
+  const lineage = await withLineage(db, direct, fields.email);
+  const contacts = lineage.contacts;
+  const linkedFields = (await Promise.all(lineage.candidateEmails.map((e) => contactEmailFields(e)))).filter((f): f is NonNullable<typeof f> => f !== null);
+  const addresses = JSON.stringify([...new Set([fields.email, ...contacts.map((c) => c.email), ...linkedFields.map((f) => f.email)])]);
   const ids = JSON.stringify(contacts.map((c) => c.id));
-  const candidates = `SELECT id FROM candidates WHERE ${addressIn("email")} OR promoted_contact_id IN (SELECT value FROM json_each(?2))`;
+  const candidates = `SELECT id FROM candidates WHERE ${addressIn("email")} OR promoted_contact_id IN (SELECT value FROM json_each(?2)) OR source_contact_id IN (SELECT value FROM json_each(?2))`;
   const tombstone = db
     .prepare(
       `INSERT INTO erasure_tombstones (email_sha256, mailbox_sha256, product_user_id, source, erased_at, created_at)
@@ -188,8 +260,13 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
        ON CONFLICT(email_sha256) DO UPDATE SET mailbox_sha256 = COALESCE(erasure_tombstones.mailbox_sha256, excluded.mailbox_sha256),
          product_user_id = COALESCE(erasure_tombstones.product_user_id, excluded.product_user_id)`,
     );
-  const hashes = await Promise.all(contacts.map(async (c) => [await addressHash(c.email), c.email] as const));
-  const addressHashes = JSON.stringify([...new Set([fields.email_sha256, fields.mailbox_sha256, ...hashes.map(([h]) => h)])]);
+  // Each address's own hash with its own mailbox hash: the person's contacts, then the addresses of
+  // champion candidates linked to them.
+  const hashes = [
+    ...(await Promise.all(contacts.map(async (c) => [await addressHash(c.email), c.mailbox_sha256] as const))),
+    ...linkedFields.map((f) => [f.email_sha256, f.mailbox_sha256] as const),
+  ];
+  const addressHashes = JSON.stringify([...new Set([fields.email_sha256, fields.mailbox_sha256, ...hashes.flatMap(([h, m]) => [h, m])])]);
   // Their product user ids: the caller's, and any their lifecycle rows link.
   const { results: linked } = await db
     .prepare("SELECT product_user_id FROM contact_lifecycle WHERE contact_id IN (SELECT value FROM json_each(?1)) AND product_user_id IS NOT NULL")
@@ -203,7 +280,7 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
   const productData = await eraseProductData(db, options.bucket, { contactIds: contacts.map((c) => c.id), userIds, hashes: JSON.parse(addressHashes) as string[] });
   await db.batch([
     tombstone.bind(fields.email_sha256, fields.mailbox_sha256, productUserId, options.source, now),
-    ...hashes.map(([hash]) => tombstone.bind(hash, fields.mailbox_sha256, productUserId, options.source, now)),
+    ...hashes.map(([hash, mailbox]) => tombstone.bind(hash, mailbox, productUserId, options.source, now)),
     ...productData,
     db.prepare(`DELETE FROM contact_evidence WHERE candidate_id IN (${candidates})`).bind(addresses, ids),
     db.prepare(`DELETE FROM candidates WHERE id IN (${candidates})`).bind(addresses, ids),
@@ -217,6 +294,8 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
     db.prepare("DELETE FROM operator_timers WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(note), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM operator_notes WHERE EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(text), value) > 0)").bind(addresses),
     db.prepare("DELETE FROM operator_outbox WHERE text IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(text), value) > 0)").bind(addresses),
+    // Notices about a contact name it without its address, and carry its id: those go too.
+    db.prepare("DELETE FROM operator_outbox WHERE text IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(text, '(contact ' || value || ')') > 0)").bind(ids),
     db.prepare("DELETE FROM email_verifications WHERE email_sha256 IN (SELECT value FROM json_each(?1))").bind(JSON.stringify([fields.email_sha256, ...hashes.map(([h]) => h)])),
     // Calendar sync: a meeting that belongs to someone else stays theirs and loses the person's
     // attendee entry and contact id; events linked to their contact or still holding one of their

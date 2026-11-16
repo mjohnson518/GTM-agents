@@ -10,6 +10,7 @@ export const PORT_NAMES = [
   "CompanyProvider",
   "ContactFinder",
   "EmailVerifier",
+  "EmploymentChecker",
   "EmailProvider",
   "InboxProvider",
   "OperatorChannel",

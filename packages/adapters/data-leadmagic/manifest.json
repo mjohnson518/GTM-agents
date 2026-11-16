@@ -1,0 +1,17 @@
+{
+  "name": "data-leadmagic",
+  "version": "1.0.0",
+  "ports": ["ContactFinder", "EmailVerifier", "EmploymentChecker"],
+  "capabilities": [],
+  "requiredSecrets": ["LEADMAGIC_API_KEY"],
+  "optionalSecrets": [],
+  "flags": ["discovery:email_waterfall_enabled", "signals:job_change_enabled", "signals:champion_moves_enabled"],
+  "tools": {},
+  "costs": {
+    "email_find": { "usd": 0.0198, "credits": 1, "per": "address found" },
+    "email_verify": { "usd": 0.00495, "credits": 0.25, "per": "conclusive validation (unknown is free)" },
+    "job_change": { "usd": 0.0594, "credits": 3, "per": "employment check (free when the profile is not found)" }
+  },
+  "limits": { "perSecond": 5 },
+  "contract": "./contract.test.ts"
+}

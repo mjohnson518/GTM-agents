@@ -7,7 +7,7 @@ This page is for deployers turning on the signal sources, and for contributors a
 ```
 websets, monitors, lookalikes, coverage fill  ->  candidates  ->  enrich -> qualify -> promote  ->  contacts
                                                                                         |
-news, hiring boards  ->  signals (contact or account)  ->  carry (72 h)  ------------->  +
+news, hiring boards, employment checks  ->  signals (contact or account)  ->  carry (72 h)  ->  +
                                          |
                                          +-> angle ({{angle_opener}}, {{angle_age}}) -> first touch
                                          +-> intent score (nightly, shadow until enforced)
@@ -41,8 +41,9 @@ npx gtm flags set scoring:intent_enabled true --env staging
 | Responder lookalikes | `signal_lookalikes`, Tuesday and Thursday 11:00 | `signals:lookalikes_enabled` | account candidates | 5 seeds, 30 inserts | $0.007 per find-similar of up to 10 results, $0.001 for each further result |
 | Coverage fill | `signal_coverage_fill`, weekdays 12:00 | `signals:coverage_fill_enabled` | person candidates | 5 accounts, 2 people each | the people provider's search price |
 | Intent score | `intent_scoring`, daily 02:30 | `scoring:intent_enabled` | `contacts.attributes.intent` | 5,000 contacts | free |
+| Employment checks | `signal_employment`, weekdays 08:00 | `signals:job_change_enabled` | `contacts.employment_status`, new-role signals; with `signals:champion_moves_enabled`, person candidates | 10 checks, 5 champion lookups | 3 LeadMagic credits a check (about 6 cents on the Essential plan; free when the profile is not found), 1 credit a champion address found |
 
-Every paid call goes through the spend gate with the job's daily cap (`websetsMaxSpendCents` 200, `newsMaxSpendCents` 50, `lookalikesMaxSpendCents` 50, `coverageMaxSpendCents` 100 by default; a `budget:job:<job>:daily_cents` flag lowers any of them). A cap that is reached, or a budget that cannot be read, stops the run's paid calls. None of these jobs calls a model.
+Every paid call goes through the spend gate with the job's daily cap (`websetsMaxSpendCents` 200, `newsMaxSpendCents` 50, `lookalikesMaxSpendCents` 50, `coverageMaxSpendCents` 100, `employmentMaxSpendCents` 60 by default; a `budget:job:<job>:daily_cents` flag lowers any of them). A cap that is reached, or a budget that cannot be read, stops the run's paid calls. None of these jobs calls a model.
 
 ### Websets
 
@@ -91,6 +92,28 @@ Seeds are accounts that responded in the last 180 days: a positive reply, a meet
 ### Coverage fill
 
 Accounts with a model fit of 7 or more, fewer than 2 keep-listed contacts, and a signal or a response in the last 30 days. Up to 5 accounts a run, best fit first, each claimed in `resource_claims` with a 30-day cooldown (given back when the lookup is stopped by the budget or a provider error), and up to 2 people each from the people provider, through the same people lookup enrichment uses (work addresses at the account's domain only, titles the brain's personas keep). Someone already a contact is skipped. Each person is a raw candidate.
+
+### Employment checks
+
+A contact who left their company keeps getting mail at an address that will soon bounce, and one who just started a role is worth a timely note. With `signals:job_change_enabled` on and an `EmploymentChecker` wired (the template's `data-leadmagic`), `signal_employment` checks up to 10 contacts each weekday:
+
+- **Who.** Contacts with an `https` profile URL (`contacts.attributes.profile_url`, which promotion copies from the people provider) and an account, not already moved, opted out, churned, suppressed or tombstoned. A contact is due when never checked, checked over 90 days ago, or inconclusive and checked over 30 days ago. Customers, then hot, engaged, warming, contacted and cold contacts go first, oldest check first. The suppression check runs again before each paid call; a contact it blocks is set aside for 90 days.
+- **Still there.** `employment_status` becomes `current`. If the current role began in the last 90 days, the contact gets one `job_change` signal (source `employment_check`, the headline "Started a new role", the profile as its source, expiring in 45 days), which feeds the new-role angle.
+- **Moved.** `employment_status` becomes `moved`, so the cold batch and every sequence skip them from then on (lifecycle follow-ups to product users do not read it). For a warming, engaged, hot or customer contact you get one chat notice, written only from our own records: "<name> at <account> (contact <id>) has moved to another company. No more cold or follow-up mail will go to their address there." The provider's text never reaches it.
+- **Inconclusive** (never worked there, several current roles, no dates, or no profile found): `employment_status` becomes `unknown`, and the contact is checked again after 30 days.
+
+Every check writes `employment_checked_at`. A provider error stops the run, and the contacts not yet checked stay due.
+
+### Champion moves
+
+With `signals:champion_moves_enabled` on as well, a second pass in the same run looks up every moved contact who was engaged, hot or a customer and has not been looked up yet, at their current employer from their profile alone, at most 5 lookups a run. A move found while the flag was off, or a lookup the budget or a provider error stopped, is picked up by a later run; a finished lookup is marked on the contact (`attributes.champion_lookup_at`) and never repeated:
+
+- the address is kept only when it is a clean work address at the domain the provider names, that domain is not their old account, and the address is not suppressed;
+- it becomes a raw candidate (source `champion_move`) linked to the old contact by `candidates.source_contact_id`, with the new title (from the employment check) and company name stored as cleaned data;
+- the discovery cycle then screens, verifies and qualifies it like any other candidate (the ICP, the never list, person fit on the new title), and promotes it only if it passes; promotion also refuses it if the person has since opted out or been suppressed at their earlier address. Nothing is sent: the cold batch's own approval still applies;
+- the chat notice says they were added as a candidate at their new company, without naming it.
+
+A champion is one person at two addresses, so erasure follows the link both ways, through addresses only (a namesake at the new company is never erased in their place): erasing either address erases the contacts, candidates and data held under both, and tombstones both ([SECURITY-MODEL.md](SECURITY-MODEL.md#employment-checks-and-champion-moves)).
 
 ### Source attribution
 
@@ -155,6 +178,7 @@ A template that uses the angle variables is composed for a contact with an angle
 
 - Product usage is never carried to a colleague and never becomes an angle: what one person does in the product is never told to someone else.
 - Job boards keep role-kind counts, never titles, locations or descriptions.
+- Employment checks send the provider a contact's profile URL and the expected company, and nothing else. A champion lookup sends the profile URL and the name. A champion is erased at both addresses together.
 - Evidence and headlines are stored as data. They never reach a system prompt, and they reach copy only through the whitelisted headline variable.
 
 ## Wiring
@@ -164,12 +188,16 @@ import { createSignalJobs, handleMonitorWebhook } from "@gtm-agents/core/signals
 import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
 import { createAdapter as createHunter } from "@gtm-agents/adapters/data-hunter";
+import { createAdapter as createLeadMagic } from "@gtm-agents/adapters/data-leadmagic";
 
 const signals = createSignalJobs<Env>({
   adapters(env) {
     const exa = createExa(context(env, "data-exa"));
-    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")) };
+    const employment = createLeadMagic(context(env, "data-leadmagic"));
+    return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")), employment };
   },
+  // Notices about contacts who moved jobs.
+  operator,
   options: {
     websets: [{ query: "engineering leaders at software companies with 30 to 300 engineers", count: 25 }],
     monitors: [{ key: "ci-pain", provider: "data-exa", secretName: "MONITOR_CI_PAIN", description: "companies writing about flaky CI", results: "company_sites" }],

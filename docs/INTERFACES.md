@@ -332,6 +332,26 @@ export interface EmailVerifier {
 }
 ```
 
+### EmploymentChecker (optional)
+
+Where a person works now, from their public professional profile. The `signal_employment` job is its only caller ([SIGNALS.md](SIGNALS.md#employment-checks)): it marks contacts who moved, records a new role as a signal, and, for engaged contacts who moved, asks for their address at the new employer. Every text field it returns is third-party data: core cleans it and stores it as data, like any provider's (a promoted champion's title and company become contact and account fields, as any people provider's do), and never puts it in a notice or a signal headline. A profile that cannot be found is a status, not an error; any other failure throws an `AdapterError`.
+
+```ts
+export type EmploymentStatus = "current" | "moved" | "never_worked_there" | "ambiguous" | "unknown" | "profile_not_found";
+
+export interface EmploymentChecker {
+  readonly name: string;
+  checkEmployment(args: { profileUrl: string; companyDomain: string; companyName?: string }):
+    Promise<{ status: EmploymentStatus; roleStartedAt?: string; title?: string; cost?: Cost }>;
+  // The person's work address at their current employer, from their profile alone. Core screens
+  // and verifies it like any finder's address.
+  findCurrentWorkEmail(args: { profileUrl: string; firstName?: string; lastName?: string }):
+    Promise<{ email: string; domain: string; companyName?: string; title?: string; sources: Evidence[]; cost?: Cost } | { email: null; cost?: Cost }>;
+}
+```
+
+`roleStartedAt` is when the current role at the expected company began, given only for `current`. There is no shared contract runner: an adapter tests every status it maps in its own `contract.test.ts`.
+
 ### EmailProvider
 
 Outbound email. The send function in core runs every check first (the halt flag, the kill switch, suppression, the content lint, the verification policy, the send window, the caps and the circuit breaker), then calls `sendBatch` in chunks of at most 100 messages, or the adapter's `batchLimit` when that is lower. The adapter sends and parses webhooks. It decides nothing.
@@ -775,6 +795,7 @@ The adapters in `packages/adapters/`, each with a hermetic contract test, and th
 | `data-jobboards` | SignalSource, and `HiringBoardSource` from `@gtm-agents/core/signals` | Public Greenhouse, Lever and Ashby board JSON from their documented hosts only; returns role-kind counts, never titles. No key. Available |
 | `data-alexandria` | PeopleProvider, CompanyProvider, ContactFinder, SignalSource | Planned. Many providers behind one gateway, with spend bounded by core's budget gate |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finder, verifier, and people at a domain. Available |
+| `data-leadmagic` | ContactFinder, EmailVerifier, EmploymentChecker | A second finder (charged only for a validated address), a verifier with no accept-all status (accept-all is unknown), employment checks and a current-employer address from a profile. Available |
 | `data-xai` | SignalSource | Planned. Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |

@@ -86,7 +86,7 @@ Up to `discovery:enrich_per_cycle` raw candidates per run, oldest first.
 1. **Identity and the fit gate, before any paid call.** The candidate needs a company account key, must not be on the never list, and its account must not have a model fit score below 5.
 2. **The person.** An account candidate (a company with no person yet) asks the people provider for people at the account's domain. They are ranked by the title classifier: persona matches first, then decision makers, then seniority. The best one fills the candidate; further matches, up to `peoplePerAccount` in total (1 to 5, default 2), become new raw candidates for the next run. Without a people provider, account candidates are rejected.
 3. **Person fit.** A title the classifier drops is rejected. A title it cannot place (maybe) is enriched without any paid email lookup, so it ends borderline. A maybe is a no until proven.
-4. **The email waterfall.** An address the people provider already returned is tried first; then the first finder; then each further finder, only while `discovery:email_waterfall_enabled` is on. Each step's address is kept only when it screens clean: exactly one address, at the candidate's own account domain, not a personal mailbox, a shared host or a role mailbox (`info@`, `sales@` and the like). Steps are recorded in `email_steps_tried` and never repeated. A provider that errors is skipped for the rest of the run.
+4. **The email waterfall.** An address the people provider already returned is tried first; then the first finder; then each further finder, only while `discovery:email_waterfall_enabled` is on. The template's finders are Hunter, then LeadMagic once `data-leadmagic` is enabled (see [Choosing the verifier](#choosing-the-verifier)). Each step's address is kept only when it screens clean: exactly one address, at the candidate's own account domain, not a personal mailbox, a shared host or a role mailbox (`info@`, `sales@` and the like). Steps are recorded in `email_steps_tried` and never repeated. A provider that errors is skipped for the rest of the run.
 5. **Suppression, then duplicates, then verification.** A found address that is suppressed, tombstoned or opted out is rejected and not kept. One that already belongs to a contact marks the candidate `duplicate`. Otherwise the address is verified (a fresh cached result is reused).
 6. **Evidence.** The employer domain, the title and the email are each recorded in `contact_evidence` with their provider, source URL and confidence.
 
@@ -167,6 +167,17 @@ The verifier adapter maps its vendor's vocabulary onto four statuses: `deliverab
 - Results are cached in `email_verifications` by address hash (the address itself is not stored there): 90 days, or 7 days for `unknown`.
 - Confidence on the contact: deliverable with a score of 90 or more is `high`, other deliverable results `medium` (`low` under 70), risky `low`.
 - **The promotion policy** (`verification:promotion_policy`): `strict`, the default, promotes only deliverable addresses. `allow_risky` also promotes risky (accept-all) ones. Any other value, or a flag that cannot be read, is `strict`. Unknown, undeliverable and disposable addresses never promote.
+
+### Choosing the verifier
+
+One adapter verifies every address, whichever finder found it. The template's `VERIFIER` constant in `src/index.ts` chooses it:
+
+| `VERIFIER` | Cost per verification | Accept-all domains | `allow_risky` |
+|---|---|---|---|
+| `"data-hunter"` (the default) | 0.5 Hunter credits | reported `risky` | promotes them |
+| `"data-leadmagic"` | 0.25 LeadMagic credits for `valid` or `invalid`; `unknown` is free | reported `unknown`: no qualification credit, so the candidate stops at borderline and is never promoted | has no effect |
+
+With the strict policy, which is the default, both promote the same addresses. `"data-leadmagic"` needs `data-leadmagic` enabled in `gtm.config.ts`; until it is, Hunter verifies.
 
 ## Evidence and conflict holds
 
@@ -255,12 +266,15 @@ A rough day at the defaults, with the two shipped adapters: 5 searches, then for
 |---|---|---|---|
 | `data-exa` | DiscoverySource (`search` here; websets, news, find-similar and monitors for [SIGNALS.md](SIGNALS.md)), and company research | `EXA_API_KEY` | `baseUrl`, `searchType` (`auto`), `accountCategory` (`company`), `personCategory` (`people`), `highlightChars` (400); for websets, `websetEmail` (`true`) and `creditUsd` (0.006); for account research, `researchEffort` (`medium`, or `low`) |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | `HUNTER_API_KEY` | `baseUrl`, `usdPerCredit` (0.025) |
+| `data-leadmagic` | ContactFinder, EmailVerifier, EmploymentChecker | `LEADMAGIC_API_KEY` | `baseUrl`, `usdPerCredit` (0.0198, the Essential plan; lower on larger plans) |
 
 - **data-exa** searches accounts with the `company` category and people with the `people` category. It reports the cost the API returns, or estimates it from its price table ($0.007 a request including up to 10 results, $0.001 for each result asked for beyond 10, and $0.001 per result for highlights).
 - **data-exa** also researches companies through the Agent API (`POST /agent/runs`, then `GET /agent/runs/{id}`), with the fixed output schema and the citation rule above. It reports the run's reported cost, or the effort's fixed price when none is reported.
 - **data-hunter** finds addresses (`/email-finder`), verifies them (`/email-verifier`) and lists named people at a domain (`/domain-search`, personal addresses only). Its statuses map as: `valid` to deliverable; `invalid` and `disposable` to undeliverable; `accept_all` and `webmail` to risky; `unknown`, and anything unrecognized, to unknown. A verification still in progress is a retryable error; a person who asked the vendor not to process their data comes back as unknown from the verifier and as no address from the finder. Costs are in credits (1 per address found, 0.5 per verification, 1 per ten addresses listed) times `usdPerCredit`.
 
-Neither adapter is offered to an agent as a tool; they are used only by these jobs and the signal jobs. `data-hunter` declares no tools, and `data-exa`'s manifest classifies its calls as full-taint egress tools so the security contract covers them ([INTERFACES.md](INTERFACES.md#how-adapters-become-tools)).
+- **data-leadmagic** finds addresses (`POST /v1/people/email-finder`, with the profile URL when the people provider gave one) and charges a credit only for an address it validated; an address on another domain comes back as a free not-found. It verifies (`/v1/people/email-validation`): `valid` maps to deliverable, `invalid` to undeliverable, and `unknown`, which is also LeadMagic's answer for accept-all domains, to unknown, so it never reports risky. Its employment checks are in [SIGNALS.md](SIGNALS.md#employment-checks). Costs are the credits LeadMagic reports times `usdPerCredit`.
+
+None of these adapters is offered to an agent as a tool; they are used only by these jobs and the signal jobs. `data-hunter` and `data-leadmagic` declare no tools, and `data-exa`'s manifest classifies its calls as full-taint egress tools so the security contract covers them ([INTERFACES.md](INTERFACES.md#how-adapters-become-tools)).
 
 ## Writing another adapter
 
@@ -276,7 +290,7 @@ The contracts drive the adapter with recorded responses only. They check the man
 
 ## Limits
 
-- **One people provider and one verifier.** Finders form a waterfall; the people provider and the verifier are single.
+- **One people provider and one verifier.** Finders form a waterfall; the people provider and the verifier are single (the verifier is chosen in `src/index.ts`).
 - **No email pattern inference.** The waterfall never builds an address from a name and a pattern; an address comes from a provider or not at all.
 - **Borderline is terminal.** A candidate with a maybe title or no address ends borderline and is not revisited by this cycle.
 - **Prices are list prices.** The adapters' price tables are estimates for budgeting. The cost ledger records what each call reports, so set `usdPerCredit` and the caps to your plan.

@@ -27,6 +27,7 @@ packages/adapters/<name>/
 | `llm-gateway` | ModelGateway | Anthropic's Messages API, optionally through Cloudflare AI Gateway, with streaming and tools. It has no embeddings |
 | `data-exa` | DiscoverySource | Account and people search, websets, dated news, find-similar, signed search monitor deliveries and company research (cited firmographics through the Agent API) |
 | `data-hunter` | ContactFinder, EmailVerifier, PeopleProvider | Finding and verifying work addresses, and people at a domain |
+| `data-leadmagic` | ContactFinder, EmailVerifier, EmploymentChecker | A second finder in the email waterfall, an optional verifier, and employment checks (who moved jobs, and where a champion went) |
 | `data-jobboards` | SignalSource | Open roles on public Greenhouse, Lever and Ashby boards, as role-kind counts; no key |
 | `email-resend` | EmailProvider | Cold and follow-up sends, signed delivery and bounce webhooks, Message-ID lookup for threading |
 | `inbox-gmail` | InboxProvider | Reading the reply mailbox, mirroring reply drafts, sending approved replies and push, through the shared `_google-auth` helper |

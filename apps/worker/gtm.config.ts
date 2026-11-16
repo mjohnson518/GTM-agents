@@ -41,6 +41,9 @@ export default defineConfig({
     "llm-gateway": { options: {} },
     "data-exa": { options: {} },
     "data-hunter": { options: {} },
+    // A second email finder, an optional verifier and the employment checks (docs/SOURCING.md). Off
+    // until you set enabled to true and put LEADMAGIC_API_KEY; set usdPerCredit to your plan's price.
+    "data-leadmagic": { enabled: false, options: { usdPerCredit: 0.0198 } },
     "email-resend": { options: {} },
     "inbox-gmail": { options: {} },
     "email-cloudflare": { options: {} },

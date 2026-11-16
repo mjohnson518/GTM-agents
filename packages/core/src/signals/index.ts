@@ -8,6 +8,8 @@ export type { AttributedSource } from "./attribution.ts";
 export { carrySignals } from "./carry.ts";
 export { claimCoverage, coverageAccounts, releaseCoverage, runCoverageFill } from "./coverage.ts";
 export type { CoverageClaim, CoverageRunInput, CoverageStats } from "./coverage.ts";
+export { CHAMPION_SOURCE, EMPLOYMENT_SIGNAL_SOURCE, NEW_ROLE_HEADLINE, dueForEmploymentCheck, runEmploymentChecks } from "./employment.ts";
+export type { EmploymentRunInput, EmploymentStats } from "./employment.ts";
 export { SIGNAL_FLAGS, SIGNAL_LIMITS } from "./flags.ts";
 export { BOARD_TOKEN, DEFAULT_ROLE_KINDS, guessBoardToken, hiringAccounts, relevantRoles, runHiringBoards } from "./hiring.ts";
 export type { HiringRunInput, HiringStats } from "./hiring.ts";

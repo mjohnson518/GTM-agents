@@ -13,6 +13,8 @@
     "./data-jobboards/manifest.json": "./data-jobboards/manifest.json",
     "./data-hunter": "./data-hunter/index.ts",
     "./data-hunter/manifest.json": "./data-hunter/manifest.json",
+    "./data-leadmagic": "./data-leadmagic/index.ts",
+    "./data-leadmagic/manifest.json": "./data-leadmagic/manifest.json",
     "./crm-attio": "./crm-attio/index.ts",
     "./crm-attio/manifest.json": "./crm-attio/manifest.json",
     "./operator-telegram": "./operator-telegram/index.ts",

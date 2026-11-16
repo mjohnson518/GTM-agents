@@ -11,6 +11,8 @@
 //   signal_hiring_boards  weekdays 06:00 UTC  signals:hiring_boards_enabled  20 accounts a run
 //   signal_lookalikes     Tue and Thu 11:00   signals:lookalikes_enabled     30 inserts a run
 //   signal_coverage_fill  weekdays 12:00 UTC  signals:coverage_fill_enabled  5 accounts, 2 people each
+//   signal_employment     weekdays 08:00 UTC  signals:job_change_enabled     10 employment checks; with
+//                                             signals:champion_moves_enabled, 5 champion lookups
 //   intent_scoring        daily 02:30 UTC     scoring:intent_enabled         shadow until enforced
 // Paid calls go through one spend gate per run with the job's daily cap. Each job re-reads its own
 // flag (failing closed), so calling run() directly with the flag off does nothing. A source whose
@@ -25,7 +27,10 @@ import { loadSourcingBrain, type SourcingBrain } from "../sourcing/brain.ts";
 import { readFlagOn } from "../sourcing/flags.ts";
 import type { SourcingEnv } from "../sourcing/jobs.ts";
 import { createSpendGate, type SpendGate } from "../sourcing/spend.ts";
+import type { EmploymentChecker } from "../ports/contact.ts";
+import type { OperatorChannel } from "../ports/operator.ts";
 import { runCoverageFill } from "./coverage.ts";
+import { runEmploymentChecks } from "./employment.ts";
 import { SIGNAL_FLAGS, SIGNAL_LIMITS } from "./flags.ts";
 import { runHiringBoards } from "./hiring.ts";
 import { runLookalikes } from "./lookalikes.ts";
@@ -42,6 +47,7 @@ export const SIGNAL_JOBS = Object.freeze({
   lookalikes: "signal_lookalikes",
   coverageFill: "signal_coverage_fill",
   intent: "intent_scoring",
+  employment: "signal_employment",
 });
 
 export interface SignalAdapters {
@@ -51,6 +57,8 @@ export interface SignalAdapters {
   news?: NewsSource;
   boards?: HiringBoardSource;
   people?: PeopleProvider;
+  /** Employment checks and champion lookups (the data-leadmagic adapter). */
+  employment?: EmploymentChecker;
 }
 
 export interface SignalJobOptions {
@@ -65,6 +73,7 @@ export interface SignalJobOptions {
   newsMaxSpendCents: number;
   lookalikesMaxSpendCents: number;
   coverageMaxSpendCents: number;
+  employmentMaxSpendCents: number;
   schedules: Readonly<Record<keyof typeof SIGNAL_JOBS, string>>;
 }
 
@@ -76,6 +85,7 @@ export const DEFAULT_SIGNAL_JOB_OPTIONS: Readonly<SignalJobOptions> = Object.fre
   newsMaxSpendCents: 50,
   lookalikesMaxSpendCents: 50,
   coverageMaxSpendCents: 100,
+  employmentMaxSpendCents: 60,
   schedules: Object.freeze({
     websets: "0 10 * * MON-FRI",
     monitors: "*/30 * * * *",
@@ -84,12 +94,15 @@ export const DEFAULT_SIGNAL_JOB_OPTIONS: Readonly<SignalJobOptions> = Object.fre
     lookalikes: "0 11 * * TUE,THU",
     coverageFill: "0 12 * * MON-FRI",
     intent: "30 2 * * *",
+    employment: "0 8 * * MON-FRI",
   }),
 });
 
 export interface SignalDeps<E extends SourcingEnv = SourcingEnv> {
   /** Build the adapters for one run. Called inside the job, after its gates have passed. */
   adapters(env: E): SignalAdapters;
+  /** The operator channel, for notices about contacts who moved jobs. */
+  operator?: (env: E) => OperatorChannel | undefined;
   options?: Partial<Omit<SignalJobOptions, "schedules">> & { schedules?: Partial<SignalJobOptions["schedules"]> };
 }
 
@@ -230,5 +243,31 @@ export function createSignalJobs<E extends SourcingEnv>(deps: SignalDeps<E>): Re
     },
   });
 
-  return [websets, monitors, news, hiring, lookalikes, coverage, intent];
+  const employment = defineJob<E>({
+    name: SIGNAL_JOBS.employment,
+    schedule: options.schedules.employment,
+    flag: SIGNAL_FLAGS.jobChange,
+    ceilings: { maxDurationMs: 120_000, maxRows: SIGNAL_LIMITS.employmentChecksPerRun + SIGNAL_LIMITS.championFindsPerRun, maxSpendCents: options.employmentMaxSpendCents },
+    rerunnable: true,
+    async run(ctx) {
+      if (!(await readFlagOn(ctx.flags, SIGNAL_FLAGS.jobChange))) return { summary: "flag off" };
+      const checker = deps.adapters(ctx.env).employment;
+      if (!checker) return { summary: "no employment checker configured" };
+      const champions = await readFlagOn(ctx.flags, SIGNAL_FLAGS.championMoves);
+      let operator: OperatorChannel | undefined;
+      try {
+        operator = deps.operator?.(ctx.env);
+      } catch {
+        operator = undefined;
+      }
+      const gate = gateFor(ctx, options.employmentMaxSpendCents);
+      const maxChecks = Math.max(0, Math.min(SIGNAL_LIMITS.employmentChecksPerRun, (ctx.ceilings.maxRows ?? SIGNAL_LIMITS.employmentChecksPerRun) - SIGNAL_LIMITS.championFindsPerRun));
+      const r = await runEmploymentChecks({ db: ctx.env.DB, checker, gate, now: ctx.now, log: ctx.log, champions, maxChecks, ...(operator ? { operator } : {}), signal: ctx.signal });
+      const summary = `checked ${r.checked}: ${r.current} current, ${r.moved} moved, ${r.inconclusive} inconclusive; ${r.skipped} skipped, ${r.signals} signals, ${r.notices} notices, ${r.championLookups} champion lookups, ${r.champions} champion candidates${stopped(gate)}`;
+      if (r.error) throw new Error(`the employment checker failed (${summary}): ${r.error}`);
+      return { summary, rows: r.checked + r.championLookups };
+    },
+  });
+
+  return [websets, monitors, news, hiring, lookalikes, coverage, intent, employment];
 }

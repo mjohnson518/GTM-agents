@@ -6,6 +6,12 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Sourcing and signals
+
+- A new adapter, `data-leadmagic` (ContactFinder, EmailVerifier and the new EmploymentChecker port), for LeadMagic. The template lists it disabled; enable it and put `LEADMAGIC_API_KEY`. Once enabled it is the second finder in the email waterfall, after Hunter, behind the existing `discovery:email_waterfall_enabled`; it charges only for an address it validated. A `VERIFIER` constant in `src/index.ts` chooses which adapter verifies: Hunter by default, or LeadMagic, which is cheaper but reports accept-all domains as unknown, so `allow_risky` has no effect with it ([docs/SOURCING.md](docs/SOURCING.md#choosing-the-verifier)).
+- Employment checks, behind `signals:job_change_enabled`: the new `signal_employment` job checks up to 10 contacts with a profile URL each weekday, warmest first, about 6 cents each, within 60 cents a day. A contact who moved is marked `moved`, so the cold batch and sequences stop mailing a dead address, and you are told about a warming or warmer one; a current role begun in the last 90 days becomes a `job_change` signal for the new-role angle ([docs/SIGNALS.md](docs/SIGNALS.md#employment-checks)).
+- Champion moves, behind `signals:champion_moves_enabled`: an engaged, hot or customer contact who moved is looked up at their new employer, and a clean work address there becomes a candidate that the discovery cycle verifies, qualifies and promotes like any other. Erasure follows the person to both addresses ([docs/SIGNALS.md](docs/SIGNALS.md#champion-moves)).
+
 ### CRM mirror
 
 - A one-way CRM mirror, behind `crm:mirror_enabled`: every 15 minutes the new `crm_mirror` job copies contacts and their companies into the CRM, with our own activity as dated notes (emails sent, replies by intent only, meetings booked and held, deal stage changes). It never sends inbound text, writes nothing more about a person who opted out or is suppressed (one note records an opt-out), and on erasure tells you which CRM record to delete instead of deleting it. At most `crm:mirror_per_run` (100) rows a run; no model calls and no spend. Needs migration 0037 ([docs/CRM.md](docs/CRM.md)).

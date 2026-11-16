@@ -138,8 +138,12 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
     return "duplicate";
   }
 
-  // 5: suppression, tombstones and opt-outs. Fails closed.
-  const suppression = await checkSuppression(db, [fields.email]);
+  // 5: suppression, tombstones and opt-outs. Fails closed. A champion (a contact followed to a new
+  // employer) is the same person as their earlier contact: an opt-out or suppression there holds
+  // here too, so a person who opted out after their move was found is never promoted at the new address.
+  // checkSuppression blocks an address whose contact opted out, as well as the list and tombstones.
+  const earlier = row.source_contact_id ? await db.prepare("SELECT email FROM contacts WHERE id = ?1").bind(row.source_contact_id).first<{ email: string }>() : null;
+  const suppression = await checkSuppression(db, earlier ? [fields.email, earlier.email] : [fields.email]);
   if (!suppression.ok) {
     if (suppression.blocked.some((b) => b.reason === "check_failed")) {
       await hold("the suppression check could not be read; retried next run");

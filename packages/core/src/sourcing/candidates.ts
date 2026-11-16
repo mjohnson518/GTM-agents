@@ -11,6 +11,8 @@ import type { RejectReason } from "./reasons.ts";
 
 export interface CandidateRow {
   id: string;
+  /** Set only on a champion candidate: the contact this person was before they moved jobs. */
+  source_contact_id?: string | null;
   source: string;
   source_ref: string | null;
   query_id: string | null;
@@ -141,6 +143,11 @@ export interface NewCandidate {
   qualificationScore?: number | null;
   notes?: string | null;
   attributes?: CandidateAttributes;
+  /**
+   * The contact this person was before (a champion who moved jobs). Erasure follows the link both
+   * ways, so erasing either address erases the person at both (data/erasure.ts).
+   */
+  sourceContactId?: string | null;
 }
 
 /** Insert a candidate unless (source, source_ref) is already known. True when a row was added. */
@@ -149,8 +156,8 @@ export async function insertCandidate(db: D1Database, c: NewCandidate, now: Date
   const result = await db
     .prepare(
       `INSERT OR IGNORE INTO candidates (id, source, source_ref, query_id, search_type, url, result_title, snippet, category, first_name, last_name,
-         email, email_source, job_title, account_name, account_key, status, qualification_notes, attributes, created_at, updated_at, qualification_score)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21)`,
+         email, email_source, job_title, account_name, account_key, status, qualification_notes, attributes, created_at, updated_at, qualification_score, source_contact_id)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?20, ?21, ?22)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -174,6 +181,7 @@ export async function insertCandidate(db: D1Database, c: NewCandidate, now: Date
       JSON.stringify(c.attributes ?? {}),
       stamp,
       c.status === "qualified" ? (c.qualificationScore ?? null) : null,
+      c.sourceContactId ?? null,
     )
     .run();
   return (result.meta.changes ?? 0) > 0;
