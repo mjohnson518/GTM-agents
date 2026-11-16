@@ -96,9 +96,11 @@ beforeAll(async () => {
   await raw("e-nopeople", { searchType: "account", accountKey: "initrode.example", accountName: "Initrode" });
   await enrichStage(await ctx(), { sources: [], finders: [] }, 50, { peoplePerAccount: 1 });
 
-  // Qualification: a score in the borderline band, and one under the rejection line.
-  await qualified("k-borderline", { status: "enriched", email: null, source_ref: "k-1" });
-  await qualified("k-low", { status: "enriched", email: null, last_name: null, account_name: null, job_title: "Director of Sales", source_ref: "k-2" });
+  // Qualification: an unverified address scoring in the borderline band, one under the rejection
+  // line, and a strong candidate with no address at all.
+  await qualified("k-borderline", { status: "enriched", email: "rob.vance@brightloop.example", first_name: "Rob", last_name: "Vance", source_ref: "k-1" });
+  await qualified("k-low", { status: "enriched", email: "lin.cho@brightloop.example", first_name: "Lin", last_name: null, account_name: null, job_title: "Director of Sales", source_ref: "k-2" });
+  await qualified("k-noemail", { status: "enriched", email: null, first_name: "Noor", last_name: "Aziz", source_ref: "k-3" });
   await qualifyStage(await ctx(), 50);
 
   // Promotion.
@@ -109,6 +111,7 @@ beforeAll(async () => {
   await qualified("p-namesake", { email: "j.roe@brightloop.example", first_name: "Jo", last_name: "Roe", source_ref: "p-4" });
   await qualified("p-maybe", { email: "lee.hart@brightloop.example", job_title: "Director of Sales", source_ref: "p-5" });
   await qualified("p-risky", { email: "rae.moss@brightloop.example", first_name: "Rae", last_name: "Moss", source_ref: "p-6" });
+  await qualified("p-noemail", { email: null, first_name: "Ira", last_name: "Bell", source_ref: "p-8" });
   await qualified("p-unknown", { email: "kit.lane@brightloop.example", first_name: "Kit", last_name: "Lane", source_ref: "p-7", attributes: JSON.stringify({ verify_attempts: 2, segment: "platform" }) });
   await verified("rae.moss@brightloop.example", "risky");
   await promoteStage(await ctx(), 50, { policy: "strict", verifier: fakeVerifier("fake-verifier", {}, "unknown") });
@@ -151,6 +154,7 @@ describe("reject-reason codes", () => {
       "e-nopeople": "no_people_provider",
       "k-1": "borderline_score",
       "k-2": "low_score",
+      "k-3": "no_email",
       "p-1": "address_unparseable",
       "p-2": "not_work_address",
       "p-3": "role_mailbox",
@@ -158,6 +162,7 @@ describe("reject-reason codes", () => {
       "p-5": "person_fit_maybe",
       "p-6": "verification_policy",
       "p-7": "verification_unknown",
+      "p-8": "no_email",
       "webset:w-nodomain": "no_domain",
     };
     expect(Object.fromEntries(rows.map((r) => [r.source_ref, r.reason]))).toEqual(expected);

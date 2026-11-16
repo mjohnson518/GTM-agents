@@ -11,7 +11,10 @@
 // Clamped to [0, 1]: 0.5 or more is qualified, under 0.3 rejected, anything between borderline.
 // Borderline and rejected are terminal, and both record a reason code (sourcing/reasons.ts). Hard
 // stops win over the score: the brain's never list, a person-fit drop, or an account fit score below
-// the floor rejects outright.
+// the floor rejects outright. After them, a candidate with no address is rejected whatever it scores:
+// promotion needs an address and nothing looks for one again, so qualifying it would leave it waiting
+// for good. Its reason is person_fit_maybe when enrichment skipped the lookup for an undecided title,
+// otherwise no_email; its score is still recorded.
 import { LOW_FIT_SCORE } from "../scoring/fit.ts";
 import { classifyTitle, type PersonFitDecision } from "../scoring/titles.ts";
 import { freshVerification } from "../enrichment/verification.ts";
@@ -92,10 +95,16 @@ export async function qualifyStage(ctx: StageContext, limit: number): Promise<Qu
         fitScore,
         prescore: account ? account.prescore : null,
       });
-      status = qualificationStatus(score);
-      const reason: RejectReason | null = status === "rejected" ? "low_score" : status === "borderline" ? "borderline_score" : null;
-      if (reason) attrs.reject_reason = reason;
-      notes = `score ${score}; person fit ${fit.decision}; email ${verification?.status ?? (row.email ? "unverified" : "none")}`;
+      if (!row.email) {
+        status = "rejected";
+        attrs.reject_reason = fit.decision === "maybe" ? "person_fit_maybe" : "no_email";
+        notes = `no work address, so nothing to promote; score ${score}; person fit ${fit.decision}`;
+      } else {
+        status = qualificationStatus(score);
+        const reason: RejectReason | null = status === "rejected" ? "low_score" : status === "borderline" ? "borderline_score" : null;
+        if (reason) attrs.reject_reason = reason;
+        notes = `score ${score}; person fit ${fit.decision}; email ${verification?.status ?? "unverified"}`;
+      }
     }
     const changed = await updateCandidate(ctx.db, row.id, "enriched", { status, qualification_score: score, qualification_notes: notes, attributes: JSON.stringify(attrs) }, ctx.now);
     if (!changed) continue;

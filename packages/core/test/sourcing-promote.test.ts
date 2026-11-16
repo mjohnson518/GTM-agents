@@ -177,14 +177,45 @@ describe("qualification", () => {
     await verified("jane.doe@brightloop.example");
     await candidate("e-lowfit", { status: "enriched", account_key: "lowfit.example", email: "x@lowfit.example", source_ref: "r-low" });
     await env.DB.prepare("INSERT INTO account_fit (account_key, status, fit_score) VALUES ('lowfit.example', 'scored', 3)").run();
-    await candidate("e-noemail", { status: "enriched", email: null, source_ref: "r-none" });
+    // An address that was found but not verified scores in the borderline band.
+    await candidate("e-unverified", { status: "enriched", email: "kit.lane@brightloop.example", first_name: "Kit", last_name: "Lane", source_ref: "r-unverified" });
     const stats = await qualifyStage(await stageContext(env.DB, env.KV, { now }), 20);
     expect(stats).toMatchObject({ qualified: 1, rejected: 1, borderline: 1 });
     expect((await status("e-good"))?.status).toBe("qualified");
     expect((await status("e-lowfit"))?.status).toBe("rejected");
-    expect((await status("e-noemail"))?.status).toBe("borderline");
+    expect((await status("e-unverified"))?.status).toBe("borderline");
     expect(await reason("e-good")).toBeUndefined();
     expect(await reason("e-lowfit")).toBe("low_fit");
-    expect(await reason("e-noemail")).toBe("borderline_score");
+    expect(await reason("e-unverified")).toBe("borderline_score");
+  });
+
+  it("never qualifies a candidate with no address, whatever its score, and says why", async () => {
+    // Name, company, a keep title and a strong account fit score 0.675: qualified, were it not for the missing address.
+    await candidate("e-noemail", { status: "enriched", email: null, email_source: null, account_key: "fitco.example", account_name: "Fitco", source_ref: "r-none" });
+    await env.DB.prepare("INSERT INTO account_fit (account_key, status, fit_score) VALUES ('fitco.example', 'scored', 9)").run();
+    // Enrichment skips the address lookup for an undecided title; that is the reason, not the address.
+    await candidate("e-maybe", { status: "enriched", email: null, email_source: null, job_title: "Director of Sales", first_name: "Lee", last_name: "Hart", source_ref: "r-maybe" });
+    // A hard stop still wins over a missing address.
+    await candidate("e-never", { status: "enriched", email: null, email_source: null, account_key: "globex.example", account_name: "Globex", source_ref: "r-never" });
+    const stats = await qualifyStage(await stageContext(env.DB, env.KV, { now }), 20);
+    expect(stats).toMatchObject({ processed: 3, qualified: 0, rejected: 3, borderline: 0 });
+    expect(await status("e-noemail")).toMatchObject({ status: "rejected", email: null });
+    expect(await reason("e-noemail")).toBe("no_email");
+    expect((await status("e-noemail"))?.qualification_notes).toMatch(/no work address/);
+    expect(await reason("e-maybe")).toBe("person_fit_maybe");
+    expect(await reason("e-never")).toBe("never_list");
+    const row = await env.DB.prepare("SELECT qualification_score FROM candidates WHERE id = 'e-noemail'").first<{ qualification_score: number }>();
+    expect(row?.qualification_score).toBe(0.675);
+  });
+
+  it("rejects a candidate already qualified with no address, so none is left waiting for an address that never comes", async () => {
+    await candidate("q-noemail", { email: null, email_source: null });
+    await candidate("q-good", { email: "kit.lane@brightloop.example", first_name: "Kit", last_name: "Lane", source_ref: "r-good" });
+    await verified("kit.lane@brightloop.example");
+    const stats = await promote();
+    expect(stats).toMatchObject({ promoted: 1, rejected: 1 });
+    expect(await status("q-noemail")).toMatchObject({ status: "rejected", email: null });
+    expect(await reason("q-noemail")).toBe("no_email");
+    expect((await status("q-good"))?.status).toBe("promoted");
   });
 });

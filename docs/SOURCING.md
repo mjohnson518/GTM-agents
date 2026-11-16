@@ -102,19 +102,20 @@ Up to `discovery:qualify_per_cycle` enriched candidates per run. The score is fr
 | Person fit keep (maybe) | 0.20 (0.05) |
 | Account fit: model score / 10 * 0.25, or else prescore / 100 * 0.10 | up to 0.25 |
 
-0.5 or more is `qualified`, under 0.3 `rejected`, anything between `borderline`. Borderline and rejected are terminal. The never list, a person-fit drop and an account fit below 5 reject whatever the score.
+0.5 or more is `qualified`, under 0.3 `rejected`, anything between `borderline`. Borderline and rejected are terminal. The never list, a person-fit drop and an account fit below 5 reject whatever the score. After those, a candidate with no address is rejected whatever it scores (`no_email`, or `person_fit_maybe` when enrichment skipped the lookup for an undecided title): promotion needs an address, and nothing looks for one again, so qualifying it would only leave it waiting. Its score is still recorded.
 
 ### 4. Promote
 
-Up to `discovery:promote_per_cycle` qualified candidates with an address, best score first. The first check that fails decides:
+Up to `discovery:promote_per_cycle` qualified candidates, best score first. The first check that fails decides:
 
-1. The address parses as exactly one address, or the candidate is rejected and the address dropped.
-2. It is a work address at the candidate's account (personal mailboxes and shared hosts never are), and not a role mailbox.
-3. It is not already a contact, by address or by mailbox (the address without a `+tag`), and the same full name at the same account is not already a contact. Either makes the candidate a `duplicate`.
-4. It is not suppressed, tombstoned or opted out. A suppression check that cannot be read holds the candidate and stops the stage.
-5. It has no unresolved evidence conflict.
-6. The person fit, recomputed from the current brain, is keep, and nothing is on the never list.
-7. A fresh verification passes the promotion policy. An unknown result is retried on later runs, then rejected after three.
+1. There is an address at all (`no_email`). Qualify already rejects a candidate without one; this catches any left `qualified` without one before it did.
+2. The address parses as exactly one address, or the candidate is rejected and the address dropped.
+3. It is a work address at the candidate's account (personal mailboxes and shared hosts never are), and not a role mailbox.
+4. It is not already a contact, by address or by mailbox (the address without a `+tag`), and the same full name at the same account is not already a contact. Either makes the candidate a `duplicate`.
+5. It is not suppressed, tombstoned or opted out. A suppression check that cannot be read holds the candidate and stops the stage.
+6. It has no unresolved evidence conflict.
+7. The person fit, recomputed from the current brain, is keep, and nothing is on the never list.
+8. A fresh verification passes the promotion policy. An unknown result is retried on later runs, then rejected after three.
 
 A candidate that passes becomes a contact in one D1 batch, all or nothing: the account is upserted, the contact is inserted with its normalized address and both hashes, warmth `cold`, the verification status and confidence, the source and the query; the candidate moves to `promoted`; its evidence is linked to the contact; and the persona seat and the fit verdict are recorded. Both the insert and the status change are guarded on the candidate still being qualified, so two runs can never promote it twice. A missing first name is allowed: drafting holds such a contact later rather than greet a guessed name.
 
@@ -132,7 +133,8 @@ Every candidate that stops short of promotion (rejected, borderline or duplicate
 | `people_lookup_failed` | enrich | The people lookup failed on three runs |
 | `no_persona_match` | enrich | No one at the account matches a persona |
 | `person_fit_drop` | enrich, qualify, promote | The title classifier dropped the person |
-| `person_fit_maybe` | promote | The person fit is undecided, and a maybe is never promoted |
+| `person_fit_maybe` | qualify, promote | The person fit is undecided, and a maybe is never promoted (at qualify: no address was looked for because of it) |
+| `no_email` | qualify, promote | No work address was found for the person, so there is nothing to promote |
 | `suppressed` | enrich, promote | The address is suppressed, tombstoned or opted out |
 | `duplicate_contact` | enrich, promote | The address or its mailbox is already a contact (status `duplicate`) |
 | `duplicate_person` | promote | The same full name at the same account is already a contact (status `duplicate`) |

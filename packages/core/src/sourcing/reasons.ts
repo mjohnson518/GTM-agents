@@ -25,6 +25,8 @@ export const REJECT_REASONS = [
   "person_fit_drop",
   /** The person fit was undecided at promotion, and a maybe is never promoted. */
   "person_fit_maybe",
+  /** No work address was found for the person, so there is nothing to promote. */
+  "no_email",
   /** The address is suppressed, tombstoned or opted out. */
   "suppressed",
   /** The address or its mailbox is already a contact. */

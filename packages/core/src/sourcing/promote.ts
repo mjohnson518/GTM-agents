@@ -1,6 +1,8 @@
 // GTM-agents: the promote stage: a qualified candidate with a verified work email becomes a contact.
 //
 // Checks, in order; the first that fails decides:
+//   0. there is an address at all: qualify rejects a candidate without one, and this catches any
+//      left qualified without one before it did, so none waits for an address that never comes;
 //   1. the address parses as exactly one address (contactEmailFields), or the candidate is rejected;
 //   2. it is a work address at the candidate's own account: accountKey returns null for personal
 //      mailboxes and shared hosts, so those are rejected here even if one slipped into the row;
@@ -62,7 +64,7 @@ export async function promoteStage(ctx: StageContext, limit: number, options: Pr
   if (limit <= 0) return stats;
   const reviews = await loadTitleReviews(ctx.db);
   const { results: rows } = await ctx.db
-    .prepare("SELECT * FROM candidates WHERE status = 'qualified' AND email IS NOT NULL ORDER BY qualification_score DESC, updated_at, id LIMIT ?1")
+    .prepare("SELECT * FROM candidates WHERE status = 'qualified' ORDER BY qualification_score DESC, updated_at, id LIMIT ?1")
     .bind(limit)
     .all<CandidateRow>();
   for (const row of rows) {
@@ -98,7 +100,8 @@ async function promoteOne(row: CandidateRow, ctx: StageContext, options: Promote
     return "held";
   };
 
-  // 1 to 3: the address.
+  // 0 to 3: the address.
+  if (!row.email) return reject("no_email", "no work address, so nothing to promote");
   const fields = await contactEmailFields(row.email);
   if (!fields) return reject("address_unparseable", "the address does not parse", true);
   const account = accountKey(row.account_key);

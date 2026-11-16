@@ -4,6 +4,12 @@ This page is for adopters and deployers: what each release of GTM-agents contain
 
 The file follows the format the operator dashboard's Changelog view reads: `## <version>` starts a release, `### <area>` starts an area, and each `- ` line is one entry. A deployment that keeps a copy in its static assets directory sees it in the dashboard ([docs/DASHBOARD.md](docs/DASHBOARD.md)).
 
+## Unreleased
+
+### Sourcing
+
+- A candidate with no work address is no longer marked `qualified`. Before, one with a good enough name, title and account fit qualified anyway, then waited for good: promotion needs an address and nothing looks for one again, and no reason was recorded, so the funnel digest never counted it. Qualify now rejects it with the new reason code `no_email` (or `person_fit_maybe` when enrichment skipped the lookup for an undecided title), and promotion rejects any candidate already left `qualified` without an address the same way, so a deployment's backlog of them is cleared on its next run ([docs/SOURCING.md](docs/SOURCING.md#reject-reasons)).
+
 ## 0.2.0 (2026-11-16)
 
 A Product and ICP page that drafts your product description and ideal customer profile from your own site for you to approve, an operator chat that batches messages, keeps timers and notes and respects quiet hours, sharper copy checks, cleaner sourcing reports, two new signal and research sources, and a DNS check for the sending domain. As in 0.1.0, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off. Upgrading applies migrations `0030` to `0035` (`gtm migrate`, or `gtm deploy`, which migrates first), and `gtm brain upload` now stops rather than undo a brain change approved in the dashboard: run `gtm brain pull` first ([docs/TARGETING.md](docs/TARGETING.md#keeping-your-brain-folder-in-step)).
