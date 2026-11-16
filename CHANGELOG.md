@@ -4,7 +4,9 @@ This page is for adopters and deployers: what each release of GTM-agents contain
 
 The file follows the format the operator dashboard's Changelog view reads: `## <version>` starts a release, `### <area>` starts an area, and each `- ` line is one entry. A deployment that keeps a copy in its static assets directory sees it in the dashboard ([docs/DASHBOARD.md](docs/DASHBOARD.md)).
 
-## Unreleased
+## 0.2.0 (2026-11-16)
+
+A Product and ICP page that drafts your product description and ideal customer profile from your own site for you to approve, an operator chat that batches messages, keeps timers and notes and respects quiet hours, sharper copy checks, cleaner sourcing reports, two new signal and research sources, and a DNS check for the sending domain. As in 0.1.0, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off. Upgrading applies migrations `0030` to `0035` (`gtm migrate`, or `gtm deploy`, which migrates first), and `gtm brain upload` now stops rather than undo a brain change approved in the dashboard: run `gtm brain pull` first ([docs/TARGETING.md](docs/TARGETING.md#keeping-your-brain-folder-in-step)).
 
 ### Product and ICP
 
@@ -25,10 +27,6 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 ### Sending
 
 - A send window that opens in an hour the clocks skip now opens when the clocks jump, in every time zone. Before, zones west of UTC (the Americas) got an opening an hour early, outside the window, so that day's window was missed; nothing was ever sent outside a window, because the send function checks the window itself. In the hour the clocks repeat, the opening is now the first of the two everywhere. Operator quiet hours that end in a skipped hour end when the clocks jump, instead of up to an hour early or late ([docs/SENDING.md](docs/SENDING.md#send-windows-and-time-zones)).
-
-## 0.2.0 (2026-11-11)
-
-Sharper copy checks, cleaner sourcing reports, two new signal and research sources and a DNS check for the sending domain. As in 0.1.0, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off. Upgrading applies migration `0030` (`gtm migrate`, or `gtm deploy`, which migrates first).
 
 ### Outreach
 
@@ -51,6 +49,7 @@ Sharper copy checks, cleaner sourcing reports, two new signal and research sourc
 ### Decisions
 
 - ADR-011: LinkedIn and X touches stay manual ([docs/DECISIONS.md](docs/DECISIONS.md#adr-011-linkedin-and-x-touches-stay-manual)).
+- ADR-012: Brain text drafted from the operator's own site ([docs/DECISIONS.md](docs/DECISIONS.md#adr-012-brain-text-drafted-from-the-operators-own-site)).
 
 ## 0.1.0 (2026-11-10)
 
