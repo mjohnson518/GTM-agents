@@ -18,7 +18,7 @@ What to look for never comes from code. Queries come from the brain's `keyword-p
 
 ## What the brain steers
 
-Each approved component steers a different part of sourcing and judging. Write them in the brain folder, or draft and approve `product` and `icp` on the dashboard's Product and ICP page ([TARGETING.md](TARGETING.md)).
+Each approved component steers a different part of sourcing and judging. Write them in the brain folder, or use the dashboard's Product and ICP page ([TARGETING.md](TARGETING.md)): it drafts `product` and `icp` from your site, and suggests `keyword-portfolio` queries and `personas` from the approved product and ICP, each approved by a person before it steers anything.
 
 | Component | What it steers |
 |---|---|
@@ -28,7 +28,7 @@ Each approved component steers a different part of sourcing and judging. Write t
 | `product` | The model fit score and the chat agent's planning, after `icp`. The template writers never read it |
 | `signals`, `hiring` | Which buying signals and hiring patterns count, and how much |
 
-Sourcing needs `personas`, `icp` and `keyword-portfolio` approved; with any of them missing or unreadable, the discovery cycle does nothing rather than search without its hard stops. Fit scoring needs `icp`.
+Sourcing needs `personas`, `icp` and `keyword-portfolio` approved. When one the lock lists cannot be read (an edited file not re-locked, a draft, a validation error), the brain is degraded and the discovery cycle does nothing, rather than search without its hard stops. A component that is simply not approved is different: with no `keyword-portfolio`, search is skipped; with no `personas`, search still runs and spends, but nobody it finds is enriched, qualified or promoted; with no `icp`, nothing is a hard stop and fit scoring has nothing to judge against. The Product and ICP page's readiness card says which of these applies. Fit scoring needs `icp`.
 
 ## Turning it on
 

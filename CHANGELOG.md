@@ -6,6 +6,11 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Product and ICP
+
+- The Product and ICP page suggests search queries and personas, behind `targeting:suggest_enabled`: one `worker`-role model call reads only the approved `product` and `icp` (and the served `personas` and `keyword-portfolio`, so it does not repeat them) and suggests up to 8 queries and 4 personas. Every item is filtered (the brain's schema, links, dashes, prices, instructions, repeats, and never-list companies, domains and titles, with the reason shown). You pick suggestions, edit their main text, and approve each component as every served item plus your picks, through the ordinary brain proposal path; a proposal can never drop or change what is served. At most `targeting:suggestions_daily_max` (5) suggestions and 50 cents a day, under the job `targeting_suggest`. Needs migration 0036 ([docs/TARGETING.md](docs/TARGETING.md#suggested-search-queries-and-personas)).
+- A readiness card on the same page says what discovery and fit scoring have to work with: which of `product`, `icp`, `personas` and `keyword-portfolio` are approved, whether the sourcing brain loads whole, whether `discovery:enabled`, `fit:scoring_enabled` and `enrichment:research_enabled` are on, and what each missing piece costs.
+
 ### Sourcing
 
 - A candidate with no work address is no longer marked `qualified`. Before, one with a good enough name, title and account fit qualified anyway, then waited for good: promotion needs an address and nothing looks for one again, and no reason was recorded, so the funnel digest never counted it. Qualify now rejects it with the new reason code `no_email` (or `person_fit_maybe` when enrichment skipped the lookup for an undecided title), and promotion rejects any candidate already left `qualified` without an address the same way, so a deployment's backlog of them is cleared on its next run ([docs/SOURCING.md](docs/SOURCING.md#reject-reasons)).

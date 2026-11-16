@@ -169,10 +169,52 @@ export interface Methods {
   "targeting.save": { params: { component: TargetingComponentName; items: TargetingItem[]; draftId?: string }; result: { draftId: string } };
   "targeting.discard": { params: { draftId: string }; result: { ok: true } };
   "targeting.propose": { params: { component: TargetingComponentName; items: TargetingItem[]; confirmRemoved?: string[] }; result: { proposalId: string; detail: string; digest: string; created: boolean } };
+  /** Suggest search queries and personas from the approved product and ICP. Listed only when a model gateway is wired. */
+  "targeting.suggest": { params: Record<string, never>; result: { suggestionId: string } };
+  "targeting.saveSuggestions": { params: { suggestionId: string; component: TargetingSuggestComponent; items: TargetingItem[] }; result: { ok: true } };
+  "targeting.discardSuggestions": { params: { suggestionId: string }; result: { ok: true } };
+  /** Check every served item plus these additions as the component's next file. Changes nothing. */
+  "targeting.checkAdditions": { params: { suggestionId: string; component: TargetingSuggestComponent; items: TargetingItem[] }; result: TargetingCheck };
+  /** Propose every served item plus these additions; served items are never dropped or changed. */
+  "targeting.proposeAdditions": { params: { suggestionId: string; component: TargetingSuggestComponent; items: TargetingItem[] }; result: { proposalId: string; detail: string; digest: string; created: boolean } };
 }
 
 /** The brain components the Product and ICP page edits. */
 export type TargetingComponentName = "product" | "icp";
+
+/** The brain components suggestions add to. */
+export type TargetingSuggestComponent = "keyword-portfolio" | "personas";
+
+/** What one brain component serves, for the readiness panel. */
+export interface TargetingComponentReadiness {
+  served: boolean;
+  /** The lock lists it, but its served bytes do not match. */
+  unverified: boolean;
+  version: number | null;
+  updated: string | null;
+  items: number;
+}
+
+/** Whether the brain discovery and fit scoring need is in place, and whether they are on. */
+export interface TargetingReadiness {
+  components: Record<TargetingComponentName | TargetingSuggestComponent, TargetingComponentReadiness>;
+  sourcing: { degraded: boolean; personas: number; queries: number };
+  flags: { discovery: boolean; fitScoring: boolean; research: boolean };
+}
+
+/** A suggestion of search queries and personas. Its items came from a model: render them as text. */
+export interface TargetingSuggestionView {
+  id: string;
+  status: "running" | "ready" | "failed" | "discarded";
+  reason: string | null;
+  suggestions: Record<TargetingSuggestComponent, TargetingItem[]> | null;
+  dropped: Array<{ component: TargetingSuggestComponent; reason: string; preview?: string }>;
+  /** The operator's picks per component, with any edits. */
+  working: Partial<Record<TargetingSuggestComponent, TargetingItem[]>> | null;
+  startedAt: string;
+  finishedAt: string | null;
+  updatedAt: string;
+}
 
 /** One brain item as the editor holds it: its id and its fields as single-line strings. */
 export interface TargetingItem {
@@ -198,14 +240,33 @@ export interface TargetingDraftItem {
 }
 
 export interface TargetingState {
-  flags: { enabled: boolean; draft: boolean; dailyMax: number; usedToday: number | null; defaultDailyMax: number };
-  /** False when no model gateway is wired, so drafts cannot run whatever the flags say. */
+  flags: {
+    enabled: boolean;
+    draft: boolean;
+    dailyMax: number;
+    usedToday: number | null;
+    defaultDailyMax: number;
+    suggest: boolean;
+    suggestDailyMax: number;
+    suggestUsedToday: number | null;
+  };
+  /** False when no model gateway is wired, so drafts and suggestions cannot run whatever the flags say. */
   draftAvailable: boolean;
   /** False when the Worker does not wire learningDashboard(), so a proposal could not be approved here. */
   approvable: boolean;
   company: { name: string; url: string; description: string };
-  served: { brainVersion: string; product: TargetingServedComponent; icp: TargetingServedComponent } | null;
+  served: {
+    brainVersion: string;
+    product: TargetingServedComponent;
+    icp: TargetingServedComponent;
+    personas: TargetingServedComponent;
+    "keyword-portfolio": TargetingServedComponent;
+  } | null;
   servedError?: string;
+  /** Null when the brain could not be read at all. */
+  readiness: TargetingReadiness | null;
+  /** The newest suggestion that is not discarded. */
+  suggestion: TargetingSuggestionView | null;
   draft: {
     id: string;
     status: "running" | "ready" | "failed" | "discarded";
@@ -264,4 +325,8 @@ export const MUTATING_METHODS: readonly MethodName[] = Object.freeze([
   "targeting.save",
   "targeting.discard",
   "targeting.propose",
+  "targeting.suggest",
+  "targeting.saveSuggestions",
+  "targeting.discardSuggestions",
+  "targeting.proposeAdditions",
 ]);

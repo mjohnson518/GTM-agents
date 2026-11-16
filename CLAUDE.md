@@ -174,7 +174,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How signal sources find dated reasons to write | [docs/SIGNALS.md](docs/SIGNALS.md) |
 | How experiments are allocated, pre-registered and concluded | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) |
 | How the operator dashboard is secured and what it can do | [docs/DASHBOARD.md](docs/DASHBOARD.md) |
-| How the product description and the ICP are drafted from the operator's site and approved | [docs/TARGETING.md](docs/TARGETING.md) |
+| How the product description and the ICP are drafted from the operator's site and approved, and search queries and personas suggested from them | [docs/TARGETING.md](docs/TARGETING.md) |
 | How the learning loops propose and apply improvements | [docs/LEARNING.md](docs/LEARNING.md) |
 | How the optional ship module turns feedback into a pull request | [docs/SHIP.md](docs/SHIP.md) |
 | How to get from nothing to a first staging deployment | [docs/QUICKSTART.md](docs/QUICKSTART.md) |

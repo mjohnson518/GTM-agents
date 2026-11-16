@@ -1,8 +1,8 @@
 // GTM-agents: the Product and ICP editor's state: items in and out, add, remove and edit, what the
 // editor starts from, grouping by kind, the review hint, and the route. Every item is synthetic.
 import { describe, expect, it } from "vitest";
-import type { TargetingItem, TargetingState } from "@gtm-agents/core/gateway/protocol";
-import { addItem, baseline, type EditorItem, fromItems, grouped, isApproved, reloadEditor, removeItem, reviewDue, sameItems, toItems, updateItem } from "../src/targeting.ts";
+import type { TargetingItem, TargetingReadiness, TargetingState, TargetingSuggestionView } from "@gtm-agents/core/gateway/protocol";
+import { addItem, baseline, editPick, type EditorItem, fromItems, grouped, isApproved, pickedItems, picksFrom, readinessLines, reloadEditor, reloadPicks, removeItem, reviewDue, sameItems, toItems, togglePick, updateItem } from "../src/targeting.ts";
 import { parseRoute, routeHash } from "../src/router.ts";
 
 const served: TargetingItem[] = [
@@ -12,11 +12,19 @@ const served: TargetingItem[] = [
 
 function state(draft: TargetingState["draft"]): TargetingState {
   return {
-    flags: { enabled: true, draft: true, dailyMax: 10, usedToday: 0, defaultDailyMax: 10 },
+    flags: { enabled: true, draft: true, dailyMax: 10, usedToday: 0, defaultDailyMax: 10, suggest: true, suggestDailyMax: 5, suggestUsedToday: 0 },
     draftAvailable: true,
     approvable: true,
     company: { name: "Acme", url: "https://acme.example", description: "Quarantines flaky tests." },
-    served: { brainVersion: "v", product: { content: null, sha256: null, version: 0, updated: null, items: [] }, icp: { content: "x", sha256: "a".repeat(64), version: 3, updated: "2026-10-01", items: served } },
+    served: {
+      brainVersion: "v",
+      product: { content: null, sha256: null, version: 0, updated: null, items: [] },
+      icp: { content: "x", sha256: "a".repeat(64), version: 3, updated: "2026-10-01", items: served },
+      personas: { content: null, sha256: null, version: 0, updated: null, items: [] },
+      "keyword-portfolio": { content: null, sha256: null, version: 0, updated: null, items: [] },
+    },
+    readiness: null,
+    suggestion: null,
     draft,
   };
 }
@@ -115,5 +123,96 @@ describe("the editor", () => {
   it("has its own route", () => {
     expect(parseRoute("#/targeting")).toEqual({ view: "targeting" });
     expect(routeHash({ view: "targeting" })).toBe("#/targeting");
+  });
+});
+
+const component = (served: boolean, items = 0) => ({ served, unverified: false, version: served ? 1 : null, updated: served ? "2026-11-01" : null, items });
+
+function readiness(over: Partial<TargetingReadiness> = {}): TargetingReadiness {
+  return {
+    components: { product: component(true, 1), icp: component(true, 2), personas: component(true, 2), "keyword-portfolio": component(true, 3) },
+    sourcing: { degraded: false, personas: 2, queries: 3 },
+    flags: { discovery: true, fitScoring: true, research: false },
+    ...over,
+  };
+}
+
+describe("readiness", () => {
+  it("says in plain words what discovery and fit scoring are missing, and which flags are off", () => {
+    const ready = readinessLines(readiness());
+    expect(ready.filter((l) => l.tone === "warn")).toEqual([]);
+    expect(ready.map((l) => l.text)).toContain("Discovery is on (discovery:enabled).");
+    expect(ready.find((l) => l.text.startsWith("Account research is off"))?.tone).toBe("off");
+
+    const bare = readinessLines(
+      readiness({
+        components: { product: component(false), icp: component(false), personas: component(false), "keyword-portfolio": component(false) },
+        sourcing: { degraded: false, personas: 0, queries: 0 },
+        flags: { discovery: false, fitScoring: false, research: false },
+      }),
+    );
+    const warnings = bare.filter((l) => l.tone === "warn").map((l) => l.text);
+    expect(warnings).toEqual([
+      "No ICP is approved: fit scoring has nothing to judge accounts against, and sourcing has no hard stops.",
+      "No personas are approved: search still runs and spends, but nobody it finds is enriched, qualified or promoted.",
+      "No search queries are approved, so search looks for nothing.",
+    ]);
+    expect(bare.map((l) => l.text)).toContain("No product description is approved; fit scoring and the chat agent go without it.");
+
+    // A brain that cannot be read whole: one warning, not a misleading list of missing parts.
+    const degraded = readinessLines(readiness({ sourcing: { degraded: true, personas: 0, queries: 0 } }));
+    expect(degraded.filter((l) => l.tone === "warn").map((l) => l.text)).toEqual(["The brain could not be read whole, so discovery does nothing until it is uploaded again."]);
+    expect(readinessLines(null)).toEqual([{ tone: "warn", text: "The brain could not be read, so readiness is unknown." }]);
+  });
+});
+
+const suggestion: TargetingSuggestionView = {
+  id: "ts_1",
+  status: "ready",
+  reason: null,
+  suggestions: {
+    "keyword-portfolio": [
+      { id: "solution-1", fields: { query: "platform teams evaluating flaky test detection", intent: "solution" } },
+      { id: "trigger-1", fields: { query: "companies adopting merge queues", intent: "trigger" } },
+    ],
+    personas: [{ id: "user-1", fields: { role: "user", seat: "user", titles: "Release Engineer", text: "Keeps releases moving." } }],
+  },
+  dropped: [],
+  working: null,
+  startedAt: "2026-11-16T10:00:00.000Z",
+  finishedAt: "2026-11-16T10:00:20.000Z",
+  updatedAt: "2026-11-16T10:00:20.000Z",
+};
+
+describe("picking suggestions", () => {
+  it("starts with nothing picked, picks on a tick or an edit, and edits only the main text", () => {
+    let list = picksFrom(suggestion, "keyword-portfolio");
+    expect(pickedItems(list)).toEqual([]);
+    list = togglePick(list, "trigger-1");
+    expect(pickedItems(list).map((i) => i.id)).toEqual(["trigger-1"]);
+    list = editPick(list, "keyword-portfolio", "solution-1", "query", "  platform teams   evaluating flaky tests ");
+    list = editPick(list, "keyword-portfolio", "solution-1", "intent", "competitor");
+    expect(pickedItems(list)).toEqual([
+      { id: "solution-1", fields: { query: "platform teams evaluating flaky tests", intent: "solution" } },
+      { id: "trigger-1", fields: { query: "companies adopting merge queues", intent: "trigger" } },
+    ]);
+    list = togglePick(list, "trigger-1");
+    expect(pickedItems(list).map((i) => i.id)).toEqual(["solution-1"]);
+    // A persona's titles and description can be edited; its role cannot.
+    const personas = editPick(editPick(picksFrom(suggestion, "personas"), "personas", "user-1", "titles", "Release Engineer, Build Engineer"), "personas", "user-1", "role", "champion");
+    expect(pickedItems(personas)).toEqual([{ id: "user-1", fields: { role: "user", seat: "user", titles: "Release Engineer, Build Engineer", text: "Keeps releases moving." } }]);
+  });
+
+  it("opens saved picks, and keeps unsaved ones through a reload unless the suggestion changed", () => {
+    const saved = { ...suggestion, working: { "keyword-portfolio": [{ id: "trigger-1", fields: { query: "teams adopting merge queues", intent: "trigger" } }] } };
+    const opened = reloadPicks(undefined, saved, "keyword-portfolio");
+    expect(pickedItems(opened.list)).toEqual(saved.working["keyword-portfolio"]);
+    expect(sameItems(pickedItems(opened.list), opened.base)).toBe(true);
+    const typing = { ...opened, list: togglePick(opened.list, "solution-1") };
+    expect(reloadPicks(typing, saved, "keyword-portfolio")).toBe(typing);
+    const fresh = reloadPicks(typing, { ...saved, id: "ts_2", working: null }, "keyword-portfolio");
+    expect(fresh.suggestionId).toBe("ts_2");
+    expect(pickedItems(fresh.list)).toEqual([]);
+    expect(reloadPicks(typing, null, "keyword-portfolio").list).toEqual([]);
   });
 });

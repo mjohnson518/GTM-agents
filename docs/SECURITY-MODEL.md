@@ -221,6 +221,16 @@ The dashboard's Product and ICP page drafts `product` and `icp` items from the o
 
 `tests/security/targeting.test.ts` proves the gates, that a hostile page shapes nothing but the list of dropped items, and that nothing is served before a person approves the exact file.
 
+The same page suggests `keyword-portfolio` queries and `personas` from the approved product and ICP. That path reads no untrusted text, but its answer is model output, so it is held to the same approval rules:
+
+- **Input:** only approved, locked brain text (`product`, `icp`, and the served `personas` and `keyword-portfolio`), in the system prompt as every task that reads the brain has it, and fixed words in the user turn. No web page, draft or unapproved text reaches the model. A component the lock lists whose served bytes do not match it stops the suggestion before the call.
+- **Filtering:** every suggested item is checked in code: the brain's schema, links, dashes, prices and injection patterns, a query that repeats a served one, a query, segment or persona description that names a never-list company or domain (or a never-list domain's name as a word), and persona titles already served or on the never list. Each drop is recorded with its reason. A brain sourcing cannot read whole stops the suggestion before it starts, since its never list could not be applied.
+- **Proposing:** a pick must be one of that suggestion's items, at most once, with the suggested fields, changed only in its main text (a query; a persona's titles and description). The server renders every served item, unchanged and in order, followed by the picks, so the page can add to a component but never drop or rewrite what is served; a component that changes between the two reads of a check is refused rather than built from the older items. The proposal is the operator's (`operator:<email>`), so it is never autonomy evidence and never applies on its own; approval is the same `proposals.approve` with the digest of the exact detail.
+- **Gates:** `targeting:enabled` and `targeting:suggest_enabled` read fail closed, the daily cap reads 0 when unreadable, one suggestion runs at a time, and the model, its price and the `targeting_suggest` budget are checked before the call.
+- **Reaching prospects:** `personas` is in the `outreach` slice, so an approved suggested persona's text can shape cold mail, as any approved persona does. It is derived only from text the operator approved, filtered, and approved again as an exact file; the page says so before approval.
+
+`tests/security/targeting-suggest.test.ts` proves the gates, that a pick outside the suggestion or an edit beyond its main text is refused, that served items are kept, and that nothing reaches discovery before a person approves the exact file.
+
 ## The effects ledger
 
 Work can run more than once for the same event: a queue retry, a backstop sweep, a job rerun, or a handler that failed halfway. Every side effect outside the database (an email, a page, a webhook call) is claimed first:

@@ -12,8 +12,17 @@
 // (learningDashboard(), which the template wires), the only one that can approve a brain proposal.
 // Nothing here writes the brain.
 //
-// Drafted text came from the operator's site through a model: it is returned as plain strings and
-// the dashboard renders it as text. Audit rows carry ids, counts and enum values, never the text.
+// Suggestions: targeting.suggest (behind targeting:suggest_enabled, and listed in capabilities only
+// when a model gateway is wired) asks the model for search queries and personas from the approved
+// product and ICP and lets it finish after the response; targeting.saveSuggestions keeps the
+// operator's picks; targeting.checkAdditions and targeting.proposeAdditions render every served item
+// of keyword-portfolio or personas, unchanged, followed by the picked items. Picks must be items of
+// that suggestion, edited only in their main text (picksProblem), so a proposal described as
+// suggested by the model is one. targeting.get also reports readiness: what discovery and fit scoring
+// have to work with, and whether they are on.
+//
+// Drafted and suggested text came through a model: it is returned as plain strings and the dashboard
+// renders it as text. Audit rows carry ids, counts and enum values, never the text.
 import { tryBuild } from "./wiring.ts";
 import { RpcError, type GatewayContext, type Handler } from "./context.ts";
 import { proposalDigest } from "./proposals.ts";
@@ -21,7 +30,21 @@ import type { ProposalSource } from "./wiring.ts";
 import type { BrainKv } from "../learning/brain-edit.ts";
 import {
   TARGETING_DRAFTS_DAILY_MAX,
+  checkAdditions,
   checkTargetingFile,
+  discardSuggestion,
+  isTargetingSuggestEnabled,
+  latestSuggestion,
+  loadSuggestion,
+  picksProblem,
+  proposeAdditions,
+  saveSuggestionWorking,
+  startTargetingSuggest,
+  suggestionsStartedOn,
+  targetingReadiness,
+  targetingSuggestionsDailyMax,
+  type SuggestComponent,
+  type TargetingSuggestion,
   discardDraft,
   draftsStartedOn,
   insertDraft,
@@ -58,13 +81,24 @@ function operatorActor(ctx: GatewayContext): string {
   return ctx.actor.startsWith("operator:") ? ctx.actor : `operator:${ctx.state.email}`;
 }
 
+const servedView = (c: { content: string | null; sha256: string | null; version: number; updated: string | null; items: Array<{ id: string; fields: Record<string, string> }> }) => ({
+  content: c.content,
+  sha256: c.sha256,
+  version: c.version,
+  updated: c.updated,
+  items: c.items,
+});
+
 export const targetingGet: Handler<"targeting.get"> = async (_p, ctx) => {
   const now = ctx.now();
-  const [enabled, draftOn, dailyMax, usedToday] = await Promise.all([
+  const [enabled, draftOn, dailyMax, usedToday, suggestOn, suggestDailyMax, suggestUsedToday] = await Promise.all([
     isTargetingEnabled(ctx.flags),
     isTargetingDraftEnabled(ctx.flags),
     targetingDraftsDailyMax(ctx.flags),
     draftsStartedOn(ctx.env.DB, now).catch(() => null),
+    isTargetingSuggestEnabled(ctx.flags),
+    targetingSuggestionsDailyMax(ctx.flags),
+    suggestionsStartedOn(ctx.env.DB, now).catch(() => null),
   ]);
   let served: Awaited<ReturnType<typeof servedTargeting>> | null = null;
   let servedError: string | undefined;
@@ -73,21 +107,27 @@ export const targetingGet: Handler<"targeting.get"> = async (_p, ctx) => {
   } catch {
     servedError = "the served brain could not be read";
   }
+  const readiness = served ? await targetingReadiness(brainKv(ctx), ctx.flags) : null;
   const draft = await latestDraft(ctx.env.DB, now).catch(() => null);
+  const suggestion = await latestSuggestion(ctx.env.DB, now).catch(() => null);
   const { company } = ctx.wiring.config;
   return {
-    flags: { enabled, draft: draftOn, dailyMax, usedToday, defaultDailyMax: TARGETING_DRAFTS_DAILY_MAX.default },
+    flags: { enabled, draft: draftOn, dailyMax, usedToday, defaultDailyMax: TARGETING_DRAFTS_DAILY_MAX.default, suggest: suggestOn, suggestDailyMax, suggestUsedToday },
     draftAvailable: ctx.wiring.model !== undefined,
     approvable: approvingSource(ctx) !== null,
     company: { name: company.name, url: company.url, description: company.product.description },
     served: served
       ? {
           brainVersion: served.brainVersion,
-          product: { content: served.product.content, sha256: served.product.sha256, version: served.product.version, updated: served.product.updated, items: served.product.items },
-          icp: { content: served.icp.content, sha256: served.icp.sha256, version: served.icp.version, updated: served.icp.updated, items: served.icp.items },
+          product: servedView(served.product),
+          icp: servedView(served.icp),
+          personas: servedView(served.personas),
+          "keyword-portfolio": servedView(served["keyword-portfolio"]),
         }
       : null,
     ...(servedError ? { servedError } : {}),
+    readiness,
+    suggestion: suggestion ? suggestionView(suggestion) : null,
     draft: draft
       ? {
           id: draft.id,
@@ -107,6 +147,20 @@ export const targetingGet: Handler<"targeting.get"> = async (_p, ctx) => {
       : null,
   };
 };
+
+function suggestionView(s: TargetingSuggestion) {
+  return {
+    id: s.id,
+    status: s.status,
+    reason: s.reason,
+    suggestions: s.suggestions,
+    dropped: s.dropped,
+    working: s.working,
+    startedAt: s.startedAt,
+    finishedAt: s.finishedAt,
+    updatedAt: s.updatedAt,
+  };
+}
 
 export const targetingDraft: Handler<"targeting.draft"> = async (p, ctx) => {
   ctx.audit.source = p.url !== undefined ? "url" : "text";
@@ -185,6 +239,77 @@ export const targetingPropose: Handler<"targeting.propose"> = async (p, ctx) => 
   const shortId = result.proposal.shortId;
   ctx.audit.proposalId = `learning:${shortId}`;
   // The detail and digest exactly as the Proposals view shows and proposals.approve checks them.
+  const current = await source.get(shortId, ctx.now());
+  if (!current) throw new RpcError("unavailable", "the proposal was stored but could not be read back; find it in the Proposals view");
+  return { proposalId: `learning:${shortId}`, detail: current.detail, digest: await proposalDigest("learning", shortId, current.detail), created: result.created };
+};
+
+export const targetingSuggest: Handler<"targeting.suggest"> = async (_p, ctx) => {
+  const started = await startTargetingSuggest(
+    { db: ctx.env.DB, kv: brainKv(ctx), flags: ctx.flags, models: ctx.wiring.config.models, model: tryBuild(ctx.wiring.model, ctx.env), now: ctx.now },
+    { requestedBy: operatorActor(ctx) },
+  );
+  if (!started.ok) throw new RpcError(started.code, started.reason);
+  ctx.audit.suggestionId = started.suggestionId;
+  ctx.defer(started.run());
+  return { suggestionId: started.suggestionId };
+};
+
+/** The ready suggestion the picks belong to, checked against its items, or an RpcError. */
+async function readySuggestion(ctx: GatewayContext, suggestionId: string, component: SuggestComponent, items: ReadonlyArray<{ id: string; fields: Record<string, string> }>): Promise<TargetingSuggestion> {
+  const row = await loadSuggestion(ctx.env.DB, suggestionId, ctx.now());
+  if (!row) throw new RpcError("not_found", "no such suggestion");
+  if (row.status !== "ready" || !row.suggestions) throw new RpcError("conflict", "that suggestion is no longer open; reload the page");
+  const problem = picksProblem(component, row.suggestions[component], items);
+  if (problem) throw new RpcError("invalid", problem);
+  return row;
+}
+
+export const targetingSaveSuggestions: Handler<"targeting.saveSuggestions"> = async (p, ctx) => {
+  await requireEnabled(ctx);
+  ctx.audit.suggestionId = p.suggestionId;
+  ctx.audit.component = p.component;
+  ctx.audit.items = p.items.length;
+  await readySuggestion(ctx, p.suggestionId, p.component, p.items);
+  if (!(await saveSuggestionWorking(ctx.env.DB, p.suggestionId, p.component, p.items, ctx.now()))) throw new RpcError("conflict", "that suggestion is no longer open; reload the page");
+  return { ok: true };
+};
+
+export const targetingDiscardSuggestions: Handler<"targeting.discardSuggestions"> = async (p, ctx) => {
+  await requireEnabled(ctx);
+  ctx.audit.suggestionId = p.suggestionId;
+  if (!(await loadSuggestion(ctx.env.DB, p.suggestionId, ctx.now()))) throw new RpcError("not_found", "no such suggestion");
+  await discardSuggestion(ctx.env.DB, p.suggestionId, ctx.now());
+  return { ok: true };
+};
+
+export const targetingCheckAdditions: Handler<"targeting.checkAdditions"> = async (p, ctx) => {
+  await readySuggestion(ctx, p.suggestionId, p.component, p.items);
+  try {
+    const file = await checkAdditions(brainKv(ctx), p.component, p.items, ctx.now());
+    return { removedHardStops: [], content: file.content, sha256: file.sha256, baseSha256: file.baseSha256, previousContent: file.previousContent, budgets: file.budgets, issues: file.issues };
+  } catch {
+    throw new RpcError("unavailable", "the served brain could not be read");
+  }
+};
+
+export const targetingProposeAdditions: Handler<"targeting.proposeAdditions"> = async (p, ctx) => {
+  await requireEnabled(ctx);
+  ctx.audit.suggestionId = p.suggestionId;
+  ctx.audit.component = p.component;
+  ctx.audit.items = p.items.length;
+  const source = approvingSource(ctx);
+  if (!source) throw new RpcError("unavailable", "brain proposals cannot be approved from this dashboard: pass learningDashboard() to createWorker as `dashboard`");
+  await readySuggestion(ctx, p.suggestionId, p.component, p.items);
+  let result: Awaited<ReturnType<typeof proposeAdditions>>;
+  try {
+    result = await proposeAdditions({ db: ctx.env.DB, kv: brainKv(ctx), now: ctx.now() }, p.component, p.items, operatorActor(ctx));
+  } catch {
+    throw new RpcError("unavailable", "the served brain could not be read");
+  }
+  if (!result.ok) throw new RpcError("invalid", result.problems.slice(0, 5).join("; "));
+  const shortId = result.proposal.shortId;
+  ctx.audit.proposalId = `learning:${shortId}`;
   const current = await source.get(shortId, ctx.now());
   if (!current) throw new RpcError("unavailable", "the proposal was stored but could not be read back; find it in the Proposals view");
   return { proposalId: `learning:${shortId}`, detail: current.detail, digest: await proposalDigest("learning", shortId, current.detail), created: result.created };

@@ -84,7 +84,7 @@ Colors are CSS variables on the document root, with a dark set chosen by the sys
 npx vitest run --project admin
 ```
 
-The tests run in Node and cover the parts that hold logic: the RPC client (handshake, request ids, timeouts, events, reconnect, the not-configured and not-allowed outcomes), state reducers (activity feed, streaming chat, kanban grouping, flag rules, the Product and ICP editor, whose unsaved edits survive a reconnect), routes, formatting and URL checks, and the page hygiene scan. The Lit views render that state and are exercised against a running Worker.
+The tests run in Node and cover the parts that hold logic: the RPC client (handshake, request ids, timeouts, events, reconnect, the not-configured and not-allowed outcomes), state reducers (activity feed, streaming chat, kanban grouping, flag rules, the Product and ICP editor, whose unsaved edits survive a reconnect, its readiness lines, and picking and editing suggested queries and personas), routes, formatting and URL checks, and the page hygiene scan. The Lit views render that state and are exercised against a running Worker.
 
 ## Adding a view
 

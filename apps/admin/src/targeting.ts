@@ -1,8 +1,9 @@
 // GTM-agents: the Product and ICP view's editor state, kept apart from the view so it can be tested.
+// It also holds the readiness lines and the picks made from suggested search queries and personas.
 // An editor is a list of brain items (a kind, a text and, for an ICP hard stop, its lists). The
 // server renders and validates the file; this module only edits the list, tells whether it differs
 // from what it was loaded from, and groups it for display. It imports types from core, never code.
-import type { TargetingDraftItem, TargetingItem, TargetingState } from "@gtm-agents/core/gateway/protocol";
+import type { TargetingDraftItem, TargetingItem, TargetingReadiness, TargetingState, TargetingSuggestionView } from "@gtm-agents/core/gateway/protocol";
 
 export type TargetingComponent = "product" | "icp";
 
@@ -177,3 +178,91 @@ export function reloadEditor(current: EditorCore | undefined, state: TargetingSt
   return { items: fromItems(b.items, b.origin, b.drafted), base: b.items };
 }
 
+
+/** One line of the readiness panel: ok (in place), warn (discovery is missing something), off (a flag or an optional part). */
+export interface ReadinessLine {
+  tone: "ok" | "warn" | "off";
+  text: string;
+}
+
+/** What each approved component steers, in plain words, for the readiness panel. */
+export const STEERS: Record<"product" | "icp" | "personas" | "keyword-portfolio", string> = {
+  product: "the model fit score and the chat agent's planning",
+  icp: "the model fit score, the fit gate before paid enrichment and promotion, and sourcing's hard stops",
+  personas: "which people pass person fit, so who is enriched, qualified and promoted, and the cold mail writers",
+  "keyword-portfolio": "what search looks for, and so what discovery spends on",
+};
+
+/** The readiness panel's lines: what discovery and fit scoring are missing first, then the flags. */
+export function readinessLines(r: TargetingReadiness | null): ReadinessLine[] {
+  if (!r) return [{ tone: "warn", text: "The brain could not be read, so readiness is unknown." }];
+  const lines: ReadinessLine[] = [];
+  if (r.sourcing.degraded) {
+    lines.push({ tone: "warn", text: "The brain could not be read whole, so discovery does nothing until it is uploaded again." });
+  } else {
+    if (!r.components.icp.served) lines.push({ tone: "warn", text: "No ICP is approved: fit scoring has nothing to judge accounts against, and sourcing has no hard stops." });
+    if (r.sourcing.personas === 0) lines.push({ tone: "warn", text: "No personas are approved: search still runs and spends, but nobody it finds is enriched, qualified or promoted." });
+    if (r.sourcing.queries === 0) lines.push({ tone: "warn", text: "No search queries are approved, so search looks for nothing." });
+  }
+  if (!r.components.product.served) lines.push({ tone: "off", text: "No product description is approved; fit scoring and the chat agent go without it." });
+  lines.push(r.flags.discovery ? { tone: "ok", text: "Discovery is on (discovery:enabled)." } : { tone: "off", text: "Discovery is off (discovery:enabled): nothing is searched, enriched or promoted." });
+  lines.push(r.flags.fitScoring ? { tone: "ok", text: "Fit scoring is on (fit:scoring_enabled)." } : { tone: "off", text: "Fit scoring is off (fit:scoring_enabled): accounts keep their prescore." });
+  lines.push(r.flags.research ? { tone: "ok", text: "Account research is on (enrichment:research_enabled)." } : { tone: "off", text: "Account research is off (enrichment:research_enabled)." });
+  return lines;
+}
+
+export type SuggestComponent = "keyword-portfolio" | "personas";
+
+/** The fields of a suggestion the operator may edit: its main text. The server enforces the same. */
+export const SUGGEST_EDITABLE: Readonly<Record<SuggestComponent, readonly string[]>> = { "keyword-portfolio": ["query"], personas: ["titles", "text"] };
+
+/** One suggestion in the picker: as suggested, as edited, and whether it is picked. */
+export interface SuggestionPick {
+  id: string;
+  suggested: Record<string, string>;
+  fields: Record<string, string>;
+  picked: boolean;
+}
+
+/** The picker for one component: every suggestion, with the saved picks and their edits applied. */
+export function picksFrom(suggestion: TargetingSuggestionView | null, component: SuggestComponent): SuggestionPick[] {
+  if (!suggestion?.suggestions) return [];
+  const saved = new Map((suggestion.working?.[component] ?? []).map((i) => [i.id, i.fields]));
+  return suggestion.suggestions[component].map((s) => {
+    const edited = saved.get(s.id);
+    return { id: s.id, suggested: s.fields, fields: { ...(edited ?? s.fields) }, picked: edited !== undefined };
+  });
+}
+
+export function togglePick(list: readonly SuggestionPick[], id: string): SuggestionPick[] {
+  return list.map((p) => (p.id === id ? { ...p, picked: !p.picked } : p));
+}
+
+/** Edit one field of a suggestion. Only its main text can change; editing picks it. */
+export function editPick(list: readonly SuggestionPick[], component: SuggestComponent, id: string, field: string, value: string): SuggestionPick[] {
+  if (!SUGGEST_EDITABLE[component].includes(field)) return [...list];
+  return list.map((p) => (p.id === id ? { ...p, picked: true, fields: { ...p.fields, [field]: value } } : p));
+}
+
+/** The picked items to save or propose, their text on one line. */
+export function pickedItems(list: readonly SuggestionPick[]): TargetingItem[] {
+  return list.filter((p) => p.picked).map((p) => ({ id: p.id, fields: Object.fromEntries(Object.entries(p.fields).map(([k, v]) => [k, v.replace(/\s+/g, " ").trim()])) }));
+}
+
+/** A picker and what it was loaded from. */
+export interface PicksCore {
+  suggestionId: string | null;
+  list: SuggestionPick[];
+  base: TargetingItem[];
+}
+
+/**
+ * The picker after a reload: one with unsaved changes to the same suggestion is kept exactly as it
+ * is; any other starts again from the suggestion and its saved picks.
+ */
+export function reloadPicks(current: PicksCore | undefined, suggestion: TargetingSuggestionView | null, component: SuggestComponent): PicksCore {
+  const id = suggestion?.status === "ready" ? suggestion.id : null;
+  if (current && current.suggestionId === id && !sameItems(pickedItems(current.list), current.base)) return current;
+  const list = id ? picksFrom(suggestion, component) : [];
+  return { suggestionId: id, list, base: pickedItems(list) };
+}

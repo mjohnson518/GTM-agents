@@ -3,6 +3,7 @@
 // so a client can never slip an identity, a status or a digest past a handler that ignores it.
 import { z } from "zod";
 import { DEAL_STAGES, DRAFT_KINDS, WARMTH_STATES } from "../data/enums.ts";
+import { ADDITIONS_MAX } from "../targeting/propose.ts";
 import type { MethodName } from "./protocol.ts";
 
 const id = z.string().regex(/^[A-Za-z0-9_:.-]{1,120}$/, "an id is 1 to 120 letters, digits or _ : . -");
@@ -24,6 +25,8 @@ const brainItem = z.strictObject({
 });
 const targetingComponent = z.enum(["product", "icp"]);
 const targetingItems = z.array(brainItem).max(40);
+const suggestComponent = z.enum(["keyword-portfolio", "personas"]);
+const additions = z.array(brainItem).max(ADDITIONS_MAX);
 
 export const PARAMS = {
   connect: z.strictObject({ protocolVersion: z.number().int().min(1).max(1000) }),
@@ -76,6 +79,11 @@ export const PARAMS = {
   "targeting.save": z.strictObject({ component: targetingComponent, items: targetingItems, draftId: id.optional() }),
   "targeting.discard": z.strictObject({ draftId: id }),
   "targeting.propose": z.strictObject({ component: targetingComponent, items: targetingItems, confirmRemoved: z.array(z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(64)).max(40).optional() }),
+  "targeting.suggest": none,
+  "targeting.saveSuggestions": z.strictObject({ suggestionId: id, component: suggestComponent, items: additions }),
+  "targeting.discardSuggestions": z.strictObject({ suggestionId: id }),
+  "targeting.checkAdditions": z.strictObject({ suggestionId: id, component: suggestComponent, items: additions }),
+  "targeting.proposeAdditions": z.strictObject({ suggestionId: id, component: suggestComponent, items: additions }),
 
   "agents.list": none,
   "agents.status": none,

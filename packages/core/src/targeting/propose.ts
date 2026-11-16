@@ -10,6 +10,10 @@
 // never applies on its own. Two more guards: a component listed in the lock whose served bytes do not
 // match it cannot be proposed over (what it holds is unknown), and an ICP proposal that leaves out a
 // hard stop the brain serves now is refused unless the operator confirmed removing that one.
+//
+// Suggested search queries and personas take another route, proposeAdditions: the server builds the
+// file from every served item, unchanged and in order, followed by the picked items, so a proposal
+// from the page can add to keyword-portfolio or personas but never drop or change what is served.
 import { budgetFor, taskComponents, tasksReading, type BrainTask, type ComponentId } from "../brain/components.ts";
 import { componentCost, renderComponent, sliceOverhead } from "../brain/assemble.ts";
 import { brainVersion, sha256Hex } from "../brain/lock.ts";
@@ -18,6 +22,13 @@ import { validateBrain } from "../brain/validate.ts";
 import { fileMeta, itemsOf, readServedBrain, renderBrainFile, type BrainItemInput, type BrainKv } from "../learning/brain-edit.ts";
 import { createLearningProposal, type LearningProposal } from "../learning/proposals.ts";
 import type { TargetingComponent } from "./draft.ts";
+import { phraseKey, type SuggestComponent } from "./suggest.ts";
+
+/** The components the Product and ICP page proposes: its own two, and the two suggestions add to. */
+export type EditableComponent = TargetingComponent | SuggestComponent;
+
+/** The most items one proposal may add. */
+export const ADDITIONS_MAX = 12;
 
 export interface ServedComponent {
   /** The served file, or null when the component is not served. */
@@ -33,27 +44,31 @@ export interface ServedTargeting {
   brainVersion: string;
   product: ServedComponent;
   icp: ServedComponent;
+  personas: ServedComponent;
+  "keyword-portfolio": ServedComponent;
 }
 
-async function served(content: string | null, component: TargetingComponent): Promise<ServedComponent> {
+async function served(content: string | null, component: EditableComponent): Promise<ServedComponent> {
   if (content === null) return { content: null, sha256: null, version: 0, updated: null, owner: null, items: [] };
   const meta = fileMeta(content, component);
   const fm = parseBrainFile(`${component}.md`, content).frontmatter as { updated?: string } | undefined;
   return { content, sha256: await sha256Hex(content), version: meta.version, updated: typeof fm?.updated === "string" ? fm.updated : null, owner: meta.owner, items: itemsOf(content, component) };
 }
 
-/** What is served now for `product` and `icp`. Throws when the brain cannot be read. */
+/** What is served now for `product`, `icp`, `personas` and `keyword-portfolio`. Throws when the brain cannot be read. */
 export async function servedTargeting(kv: BrainKv): Promise<ServedTargeting> {
   const brain = await readServedBrain(kv);
   return {
     brainVersion: brainVersion(brain.lock),
     product: await served(brain.files.get("product.md") ?? null, "product"),
     icp: await served(brain.files.get("icp.md") ?? null, "icp"),
+    personas: await served(brain.files.get("personas.md") ?? null, "personas"),
+    "keyword-portfolio": await served(brain.files.get("keyword-portfolio.md") ?? null, "keyword-portfolio"),
   };
 }
 
 export interface CheckedFile {
-  component: TargetingComponent;
+  component: EditableComponent;
   /** Ids of served ICP hard stops (never items) the new file leaves out. */
   removedHardStops: string[];
   content: string;
@@ -67,7 +82,7 @@ export interface CheckedFile {
 }
 
 /** Render the items as the component's next file and check it with the rest of the served brain. Throws when the brain cannot be read. */
-export async function checkTargetingFile(kv: BrainKv, component: TargetingComponent, items: readonly BrainItemInput[], now: Date): Promise<CheckedFile> {
+export async function checkTargetingFile(kv: BrainKv, component: EditableComponent, items: readonly BrainItemInput[], now: Date): Promise<CheckedFile> {
   const brain = await readServedBrain(kv);
   const name = `${component}.md`;
   const previous = brain.files.get(name) ?? null;
@@ -111,6 +126,26 @@ export async function checkTargetingFile(kv: BrainKv, component: TargetingCompon
 
 export type ProposeResult = { ok: true; proposal: LearningProposal; created: boolean; file: CheckedFile } | { ok: false; problems: string[]; file?: CheckedFile };
 
+const PAGE_RATIONALE = "Written on the Product and ICP page. Approve only if every item is true of your product and your best customers.";
+const SUGGESTED_RATIONALE = "Suggested by the model from your approved product and ICP, then picked and edited on the Product and ICP page. Every item already served is kept. Approve only if every added item is right for your market.";
+
+/** Store a checked file as a brain proposal, or the reasons it cannot be. */
+async function storeProposal(deps: { db: D1Database; now: Date }, file: CheckedFile, errors: string[], actor: string, rationale: string): Promise<ProposeResult> {
+  if (errors.length > 0) return { ok: false, problems: errors, file };
+  const created = await createLearningProposal(
+    deps.db,
+    {
+      kind: "brain",
+      payload: { component: file.component, baseSha256: file.baseSha256, content: file.content, previousContent: file.previousContent },
+      rationale,
+      proposedBy: actor,
+    },
+    deps.now,
+  );
+  if (!created.ok) return { ok: false, problems: created.problems, file };
+  return { ok: true, proposal: created.proposal, created: created.created, file };
+}
+
 /** Store the operator's file as a brain proposal for a person to approve. Throws when the brain or the database cannot be read. */
 export async function proposeTargeting(
   deps: { db: D1Database; kv: BrainKv; now: Date },
@@ -124,17 +159,47 @@ export async function proposeTargeting(
   const errors = file.issues.filter((i) => i.severity === "error").map((i) => i.message);
   const unconfirmed = file.removedHardStops.filter((id) => !confirmRemoved.includes(id));
   if (unconfirmed.length > 0) errors.push(`this removes the hard stop(s) ${unconfirmed.join(", ")}, which the brain serves now; keep them, or confirm removing them`);
-  if (errors.length > 0) return { ok: false, problems: errors, file };
-  const created = await createLearningProposal(
-    deps.db,
-    {
-      kind: "brain",
-      payload: { component, baseSha256: file.baseSha256, content: file.content, previousContent: file.previousContent },
-      rationale: "Written on the Product and ICP page. Approve only if every item is true of your product and your best customers.",
-      proposedBy: actor,
-    },
-    deps.now,
-  );
-  if (!created.ok) return { ok: false, problems: created.problems, file };
-  return { ok: true, proposal: created.proposal, created: created.created, file };
+  return storeProposal(deps, file, errors, actor, PAGE_RATIONALE);
+}
+
+/**
+ * Render every served item of the component, unchanged and in order, followed by the additions, as
+ * its next file, and check it with the rest of the brain. Additions that collide with a served id,
+ * repeat one another, or are none at all are errors. Throws when the brain cannot be read.
+ */
+export async function checkAdditions(kv: BrainKv, component: SuggestComponent, additions: readonly BrainItemInput[], now: Date): Promise<CheckedFile> {
+  const brain = await readServedBrain(kv);
+  const name = `${component}.md`;
+  const previous = brain.files.get(name) ?? null;
+  const served = previous ? itemsOf(previous, component) : [];
+  const file = await checkTargetingFile(kv, component, [...served, ...additions], now);
+  const issues = [...file.issues];
+  // The file is built from the first read; its base digest from the second. If they differ, the
+  // proposal would drop whatever changed in between, so refuse it.
+  if ((previous === null ? null : await sha256Hex(previous)) !== file.baseSha256) issues.push({ severity: "error", message: `the served ${component} changed while it was being checked; check again` });
+  if (additions.length === 0) issues.push({ severity: "error", message: `add at least one ${component} item` });
+  if (additions.length > ADDITIONS_MAX) issues.push({ severity: "error", message: `add at most ${ADDITIONS_MAX} items at a time` });
+  const servedIds = new Set(served.map((i) => i.id));
+  const seen = new Set<string>();
+  for (const item of additions) {
+    if (servedIds.has(item.id)) issues.push({ severity: "error", message: `the brain already serves an item with the id ${item.id}` });
+    else if (seen.has(item.id)) issues.push({ severity: "error", message: `the id ${item.id} is added twice` });
+    seen.add(item.id);
+  }
+  // Warn, not refuse, when an addition repeats what is served in other words: the diff shows it too.
+  const servedQueries = new Map(served.map((i) => [phraseKey(i.fields.query ?? ""), i.id]));
+  const servedTitles = new Map(served.flatMap((i) => (i.fields.titles ?? "").split(",").map((t) => [phraseKey(t), i.id] as const)).filter(([k]) => k !== ""));
+  for (const item of additions) {
+    const same = component === "keyword-portfolio" ? servedQueries.get(phraseKey(item.fields.query ?? "")) : undefined;
+    if (same) issues.push({ severity: "warning", message: `${item.id} repeats the served query ${same}` });
+    const overlap = component === "personas" ? (item.fields.titles ?? "").split(",").map((t) => servedTitles.get(phraseKey(t))).find((x) => x !== undefined) : undefined;
+    if (overlap) issues.push({ severity: "warning", message: `${item.id} repeats a title the served persona ${overlap} already has` });
+  }
+  return { ...file, issues };
+}
+
+/** Store the served items plus the additions as a brain proposal for a person to approve. Throws when the brain or the database cannot be read. */
+export async function proposeAdditions(deps: { db: D1Database; kv: BrainKv; now: Date }, component: SuggestComponent, additions: readonly BrainItemInput[], actor: string): Promise<ProposeResult> {
+  const file = await checkAdditions(deps.kv, component, additions, deps.now);
+  return storeProposal(deps, file, file.issues.filter((i) => i.severity === "error").map((i) => i.message), actor, SUGGESTED_RATIONALE);
 }

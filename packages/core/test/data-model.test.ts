@@ -195,10 +195,16 @@ describe("the schema", () => {
     ]);
     const result = await eraseContact(env.DB, email, { source: "operator" });
     expect(result.contactsDeleted).toBe(1);
+    // One query per table over all its TEXT columns; a table with a hit is then searched column by
+    // column, so a failure still names the exact column that kept the address.
     for (const [table] of await tables()) {
       if (table.startsWith("memory_fts") || table.startsWith("_cf") || table.startsWith("sqlite_") || table === "d1_migrations") continue;
       const { results: cols } = await env.DB.prepare(`SELECT name, type FROM pragma_table_info('${table}')`).all<{ name: string; type: string }>();
-      for (const col of cols.filter((c) => c.type === "TEXT")) {
+      const text = cols.filter((c) => c.type === "TEXT");
+      if (text.length === 0) continue;
+      const any = await env.DB.prepare(`SELECT COUNT(*) AS n FROM "${table}" WHERE ${text.map((c) => `lower("${c.name}") = ?1`).join(" OR ")}`).bind(email).first<{ n: number }>();
+      if ((any?.n ?? 0) === 0) continue;
+      for (const col of text) {
         const hit = await env.DB.prepare(`SELECT COUNT(*) AS n FROM "${table}" WHERE lower("${col.name}") = ?1`).bind(email).first<{ n: number }>();
         expect(hit?.n, `${table}.${col.name}`).toBe(0);
       }
@@ -210,7 +216,8 @@ describe("the schema", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_notes WHERE instr(lower(text), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operator_outbox WHERE instr(lower(text), ?1) > 0").bind(email).first()).toEqual({ n: 0 });
     expect(await env.DB.prepare("SELECT source FROM erasure_tombstones WHERE email_sha256 = ?1").bind(result.emailSha256).first()).toEqual({ source: "operator" });
-  });
+    // It reads every table the migrations declare, so it grows with each one: give it room on a busy machine.
+  }, 30_000);
 
   it("erases the whole mailbox, whichever subaddress is named, in any spelling", async () => {
     const base = uid("mailbox");

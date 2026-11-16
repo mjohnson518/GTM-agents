@@ -150,6 +150,10 @@ describe("mutations", () => {
     "targeting.save": { component: "product", items: [{ id: "summary", fields: { kind: "summary", text: "Finds flaky tests." } }] },
     "targeting.discard": { draftId: "td-missing" },
     "targeting.propose": { component: "product", items: [{ id: "summary", fields: { kind: "summary", text: "Finds flaky tests." } }] },
+    "targeting.suggest": {},
+    "targeting.saveSuggestions": { suggestionId: "ts-missing", component: "personas", items: [] },
+    "targeting.discardSuggestions": { suggestionId: "ts-missing" },
+    "targeting.proposeAdditions": { suggestionId: "ts-missing", component: "keyword-portfolio", items: [{ id: "solution-1", fields: { query: "teams evaluating flaky test detection", intent: "solution" } }] },
   };
 
   it("every mutating method writes an audit row, whatever its outcome", async () => {

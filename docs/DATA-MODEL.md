@@ -115,7 +115,7 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 
 ### Discovery (0010)
 
-`discovery_queries`, `candidates`, `icp_snapshots`, `monitor_items`, `signal_events`, and account-level research keyed by `account_key`: `account_fit`, `account_facts`, `account_hiring_roles`, `account_job_boards`, `account_board_checks`, `domain_resolutions`, `resource_claims`, `title_fit_reviews`.
+`discovery_queries`, `candidates`, `icp_snapshots`, `monitor_items`, `signal_events`, and account-level research keyed by `account_key`: `account_fit`, `account_facts`, `account_hiring_roles`, `account_job_boards`, `account_board_checks`, `domain_resolutions`, `resource_claims`, `title_fit_reviews`. Nothing writes or reads `icp_snapshots`: the search queries discovery runs come from the approved `keyword-portfolio`, the one source of truth for them, so the table stays empty.
 
 ### Events (0011)
 
@@ -194,6 +194,10 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 ### Targeting drafts (0035)
 
 - `targeting_drafts`: drafts from the dashboard's Product and ICP page, and the operator's saved edits ([TARGETING.md](TARGETING.md)). `status` runs `running` (the site is read and the model answers; a row still running after five minutes reads as failed), then `ready` or `failed`, and any row may end `discarded`; every move out of `running` is a compare-and-set. `source` is `url`, `text` (pasted) or `manual` (edits saved without a draft). `pages` holds each page's URL, title, size and SHA-256, never its text; `draft` holds the items that passed every filter, `dropped` what was left out and why, and `working` the editor's saved items per component. Nothing reads these rows to serve the brain: only an approved brain proposal changes `product` or `icp`. A draft holds no contact data, so erasure has nothing to delete here.
+
+### Targeting suggestions (0036)
+
+- `targeting_suggestions`: suggested search queries and personas from the dashboard's Product and ICP page ([TARGETING.md](TARGETING.md)). `status` runs `running` (one model call; a row still running after five minutes reads as failed), then `ready` or `failed`, and any row may end `discarded`; every move out of `running` is a compare-and-set, and one suggestion runs at a time. `suggestions` holds the `keyword-portfolio` and `personas` items that passed every filter, `dropped` what was left out and why, and `working` the operator's picks per component, with their edits. Nothing reads these rows to serve the brain: only an approved brain proposal adds to `keyword-portfolio` or `personas`. The rows hold queries, job titles and short descriptions, never a person's data, so erasure has nothing to delete here.
 
 ## What is not in core
 
