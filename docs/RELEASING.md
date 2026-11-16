@@ -90,7 +90,17 @@ npm can only attach a trusted publisher to a package that already exists, so the
 
 1. **First release, with a short-lived token.** On npmjs.com, create a granular access token with read and write permission on the `gtm-agents` organization's packages (the packages do not exist yet, so grant it on the organization), with "bypass two-factor authentication" enabled so CI can use it, and the shortest expiry that covers the release. Store it as the secret `NPM_TOKEN` of the `npm` environment, never in a file or as a repository secret. Then release as below.
 2. **Remove the token** once the release is out: delete the `NPM_TOKEN` secret, and revoke the token on npmjs.com.
-3. **Configure trusted publishing on each package** when you prepare the next release. For each of `@gtm-agents/core`, `adapters`, `cli`, `modules` and `sdk`, open the package's settings on npmjs.com, add a trusted publisher for GitHub Actions, and enter the repository's owner and name, the workflow file name `release.yml`, and the environment `npm`. A trusted publisher that has not published within two days of being added expires and must be added again, which is why this step waits for the next release.
+3. **Configure trusted publishing on each package** when you prepare the next release. For each of `@gtm-agents/core`, `adapters`, `cli`, `modules` and `sdk`, open the package's settings on npmjs.com, add a trusted publisher for GitHub Actions, enter the repository's owner and name, the workflow file name `release.yml` and the environment `npm`, and allow it to publish (a publisher allowed only to stage cannot run `npm publish`). A trusted publisher that has not published within two days of being added expires and must be added again, which is why this step waits for the next release.
+
+   From a terminal signed in to npm (npm 11.15 or later, two-factor authentication on the account), the same configuration is one command per package, and `npm trust list` shows what a package has:
+   ```bash
+   for p in core adapters cli modules sdk; do
+     npm trust github @gtm-agents/$p --repo <owner>/<repo> --file release.yml --env npm --allow-publish --yes
+     sleep 2
+   done
+   npm trust list @gtm-agents/core
+   ```
+   A package holds one configuration, and it must allow publishing (`--allow-publish`; staged publishing alone is not enough). To replace one, `npm trust revoke @gtm-agents/<pkg> --id <id>` first. When no configuration on the package matches the run (another repository, workflow file or environment, or none at all), npm's exchange answers `OIDC token exchange error - package not found`, npm carries on without credentials and fails with `ENEEDAUTH`; the publish step prints that line from npm's debug log.
 4. **Disallow tokens.** In each package's Publishing access settings, choose "Require two-factor authentication and disallow tokens". Trusted publishing keeps working, and a leaked token can no longer publish.
 
 ### Each release
