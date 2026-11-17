@@ -4,15 +4,9 @@ This page is for adopters and deployers: what each release of GTM-agents contain
 
 The file follows the format the operator dashboard's Changelog view reads: `## <version>` starts a release, `### <area>` starts an area, and each `- ` line is one entry. A deployment that keeps a copy in its static assets directory sees it in the dashboard ([docs/DASHBOARD.md](docs/DASHBOARD.md)).
 
-## Unreleased
+## 0.3.0 (2026-11-17)
 
-### Fixes
-
-- The self-improvement checks (brain edits, snippets, the competitor watch's note, defanged examples) and the meeting-notes quote filter now catch every link the outbound quality gate does, a bare host on any top-level domain (`globex-login.ru`, `acme.click/offer`) included, where they knew only a fixed list before, plus any URL scheme and a host joined to a path or a dash. The gate and the automatic-reply rules share one definition (`shared/links.ts`). A brain edit is checked only on the fields it changes, so text already served never blocks it, and a discovery query may name a product such as "Next.js".
-- A proposer keeps at most one brain or voice file pending per component: a newer one supersedes the older (expired, "superseded by <id>"), so reviewing the same component twice on the Product and ICP page no longer leaves two versions waiting ([docs/LEARNING.md](docs/LEARNING.md)).
-- A competitor digest sent again after a failed one names the week's pending proposal again, and a database error during the competitor watch now stops the run and gives its claims back instead of counting as a failed search.
-- `watch-list` shows every pinned account, marking one whose name is too generic for the watch to match.
-- `@gtm-agents/core` pins `hono` 4.13.16, which fixes five moderate advisories in earlier versions (routing, `mount()`, `css`, `csrf()` and form validation). The Worker uses none of the affected `mount()`, `css`, `csrf()` or validator helpers, and a new test checks that the token check on `/api/*` still applies to paths holding an encoded line terminator.
+A draft brain from a short interview (`gtm brain init`) and a Claude Code plugin whose skills guide an agent through setup, the staged rollout and the day; weekly account and competitor watches; meeting notes from Fathom or Granola, kept as the prospect's own words; LeadMagic as a second email finder, a verifier and an employment check, with champion moves; a one-way CRM mirror to Attio; and suggested search queries and personas on the Product and ICP page. As in earlier releases, everything is covered by hermetic tests and nothing has yet been run against live providers; every new capability ships behind a flag that defaults to off, and the template lists the four new adapters disabled. Upgrading applies migrations `0036` to `0038` (`gtm migrate`, or `gtm deploy`, which migrates first). The template's `src/index.ts` and `gtm.config.ts` wire the new adapters and jobs, so to use them, diff a fresh `gtm init` against your copies and carry the changes over ([docs/DEPLOYING.md](docs/DEPLOYING.md#upgrading-to-a-new-version-of-the-toolkit)); `wrangler.jsonc` is unchanged. For adapter authors: `CrmSink.upsertContact` takes an optional `accountExternalId`, and `logActivity`'s `contactId` is now the CRM's record id.
 
 ### Getting started
 
@@ -53,6 +47,14 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 ### Sourcing
 
 - A candidate with no work address is no longer marked `qualified`. Before, one with a good enough name, title and account fit qualified anyway, then waited for good: promotion needs an address and nothing looks for one again, and no reason was recorded, so the funnel digest never counted it. Qualify now rejects it with the new reason code `no_email` (or `person_fit_maybe` when enrichment skipped the lookup for an undecided title), and promotion rejects any candidate already left `qualified` without an address the same way, so a deployment's backlog of them is cleared on its next run ([docs/SOURCING.md](docs/SOURCING.md#reject-reasons)).
+
+### Fixes
+
+- The self-improvement checks (brain edits, snippets, the competitor watch's note, defanged examples) and the meeting-notes quote filter now catch every link the outbound quality gate does, a bare host on any top-level domain (`globex-login.ru`, `acme.click/offer`) included, where they knew only a fixed list before, plus any URL scheme and a host joined to a path or a dash. The gate and the automatic-reply rules share one definition (`shared/links.ts`). A brain edit is checked only on the fields it changes, so text already served never blocks it, and a discovery query may name a product such as "Next.js".
+- A proposer keeps at most one brain or voice file pending per component: a newer one supersedes the older (expired, "superseded by <id>"), so reviewing the same component twice on the Product and ICP page no longer leaves two versions waiting ([docs/LEARNING.md](docs/LEARNING.md)).
+- A competitor digest sent again after a failed one names the week's pending proposal again, and a database error during the competitor watch now stops the run and gives its claims back instead of counting as a failed search.
+- `watch-list` shows every pinned account, marking one whose name is too generic for the watch to match.
+- `@gtm-agents/core` pins `hono` 4.13.16, which fixes five moderate advisories in earlier versions (routing, `mount()`, `css`, `csrf()` and form validation). The Worker uses none of the affected `mount()`, `css`, `csrf()` or validator helpers, and a new test checks that the token check on `/api/*` still applies to paths holding an encoded line terminator.
 
 ## 0.2.0 (2026-11-16)
 
