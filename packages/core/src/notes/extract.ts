@@ -33,6 +33,7 @@ import { callModel, jsonCandidates } from "../replies/model.ts";
 import { fileObjection, matchBrainObjections, type BrainObjection } from "../replies/objections.ts";
 import { verbatimOrNull } from "../replies/text.ts";
 import { REDACTED, redactInjection } from "../security/redact.ts";
+import { holdsLinkOrHost } from "../learning/text.ts";
 import { sanitizeToolOutput } from "../security/sanitize.ts";
 import { NOTES_LIMITS } from "./flags.ts";
 import type { StoredTranscript } from "./ingest.ts";
@@ -114,7 +115,6 @@ export interface CallItems {
   sentiment: (typeof SENTIMENTS)[number] | null;
 }
 
-const LINK = /\b[a-z][a-z0-9+.-]*:\/\/|\bwww\.[a-z0-9-]/i;
 const EMAIL = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
 const DASH = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
 
@@ -141,7 +141,8 @@ export function keepQuote(quote: string, lines: readonly CheckedLine[], all: str
   for (const line of lines) {
     const kept = verbatimOrNull(quote, line.text, NOTES_LIMITS.quoteMaxChars);
     if (!kept || !verbatimOrNull(kept, all, NOTES_LIMITS.quoteMaxChars)) continue;
-    if (LINK.test(kept) || EMAIL.test(kept) || DASH.test(kept) || kept.includes(REDACTED) || /\[(them|us|\?)\]/.test(kept)) return null;
+    // A link is any URL or dotted host (the learning checks' definition, wider than the outbound gate's).
+    if (holdsLinkOrHost(kept) || EMAIL.test(kept) || DASH.test(kept) || kept.includes(REDACTED) || /\[(them|us|\?)\]/.test(kept)) return null;
     return { quote: kept, line };
   }
   return null;

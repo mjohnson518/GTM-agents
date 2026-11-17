@@ -391,12 +391,13 @@ describe("approval", () => {
     // The ICP is still served, hard stop and all.
     expect((await loadSourcingBrain(w.kv)).never).not.toEqual((await loadSourcingBrain(memoryKv())).never);
 
-    // A second proposal made against version 1, applied after another change lands, is stale.
+    // A second proposal made against version 1, applied after another change lands, is stale. (Two
+    // operators: one operator's newer proposal would supersede their own pending one.)
     const later = new Date(now.getTime() + 2 * 3_600_000);
-    const one = await proposeTargeting({ db, kv: w.kv, now: later }, "product", [items[0] ?? items[1]!], "operator:ops@acme.example");
+    const one = await proposeTargeting({ db, kv: w.kv, now: later }, "product", [items[0] ?? items[1]!], "operator:lead@acme.example");
     const two = await proposeTargeting({ db, kv: w.kv, now: later }, "product", items.slice(1), "operator:ops@acme.example");
     if (!one.ok || !two.ok) throw new Error("proposals refused");
-    expect((await approveLearningProposal({ db, kv: w.kv, now: later }, one.proposal.shortId, one.proposal.digest, "operator:ops@acme.example")).status).toBe("applied");
+    expect((await approveLearningProposal({ db, kv: w.kv, now: later }, one.proposal.shortId, one.proposal.digest, "operator:lead@acme.example")).status).toBe("applied");
     expect((await approveLearningProposal({ db, kv: w.kv, now: later }, two.proposal.shortId, two.proposal.digest, "operator:ops@acme.example")).status).toBe("stale");
   });
 

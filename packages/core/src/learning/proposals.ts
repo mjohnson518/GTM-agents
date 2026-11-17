@@ -117,7 +117,8 @@ export function proposalProblems(kind: ProposalKind, payload: AnyPayload): strin
     }
     case "discovery_query": {
       const p = payload as ProposalPayloads["discovery_query"];
-      const problems = snippetProblems(String(p.query ?? ""), 200);
+      // A query goes to a search provider and never reaches mail: a product name such as "Next.js" may stand, a URL may not.
+      const problems = snippetProblems(String(p.query ?? ""), 200, { hosts: false });
       if (!SOURCE_ID.test(String(p.source))) problems.push("the source id is malformed");
       if (p.category != null && !SOURCE_ID.test(String(p.category))) problems.push("the category is malformed");
       return problems;
@@ -329,7 +330,10 @@ async function brainPayloadConsistent(p: ProposalPayloads["brain"]): Promise<boo
 
 export type CreateResult = { ok: true; proposal: LearningProposal; created: boolean } | { ok: false; problems: string[] };
 
-/** Store a proposal. An identical pending one is returned instead of a second. Throws on a database error. */
+/**
+ * Store a proposal. An identical pending one is returned instead of a second. A new brain or voice
+ * file supersedes the same proposer's pending file for that component. Throws on a database error.
+ */
 export async function createLearningProposal(db: D1Database, input: NewProposal, now: Date): Promise<CreateResult> {
   if (!(PROPOSAL_KINDS as readonly string[]).includes(input.kind)) return { ok: false, problems: [`unknown kind ${String(input.kind)}`] };
   if (input.kind === "brain" || input.kind === "voice") {
@@ -354,13 +358,23 @@ export async function createLearningProposal(db: D1Database, input: NewProposal,
   const shortId = crypto.randomUUID().replace(/-/g, "").slice(0, 8);
   const at = now.toISOString();
   const expiresAt = new Date(now.getTime() + PROPOSAL_TTL_DAYS * DAY_MS).toISOString();
-  await db
+  const section = sectionOf(input.kind, input.payload);
+  const proposedBy = input.proposedBy.slice(0, 64);
+  const insert = db
     .prepare(
       `INSERT INTO learnings_proposals (id, short_id, kind, section, proposed_text, proposed_digest, payload, rationale, source_run_id, proposed_by, status, expires_at, created_at, updated_at)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?12, ?12)`,
     )
-    .bind(id, shortId, input.kind, sectionOf(input.kind, input.payload), textOf(input.kind, input.payload), digest, JSON.stringify(input.payload), rationale, input.sourceRunId ?? null, input.proposedBy.slice(0, 64), expiresAt, at)
-    .run();
+    .bind(id, shortId, input.kind, section, textOf(input.kind, input.payload), digest, JSON.stringify(input.payload), rationale, input.sourceRunId ?? null, proposedBy, expiresAt, at);
+  if (input.kind === "brain" || input.kind === "voice") {
+    // One pending file per component and proposer: a newer one replaces the older, which was never
+    // decided (expired, with the reason), so the list holds no second version waiting beside it.
+    // Another proposer's pending file stays; whichever is approved first makes the other stale.
+    const supersede = db
+      .prepare("UPDATE learnings_proposals SET status = 'expired', status_reason = ?1, updated_at = ?2 WHERE kind = ?3 AND section = ?4 AND proposed_by = ?5 AND status = 'pending' AND id <> ?6")
+      .bind(`superseded by ${shortId}`, at, input.kind, section, proposedBy, id);
+    await db.batch([insert, supersede]);
+  } else await insert.run();
   const stored = await loadLearningProposal(db, shortId);
   if (!stored) throw new Error("the proposal was not stored");
   return { ok: true, proposal: stored, created: true };

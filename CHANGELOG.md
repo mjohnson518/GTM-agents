@@ -6,6 +6,14 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Fixes
+
+- The self-improvement checks (brain edits, snippets, the competitor watch's note, defanged examples) and the meeting-notes quote filter now catch every link the outbound quality gate does, a bare host on any top-level domain (`globex-login.ru`, `acme.click/offer`) included, where they knew only a fixed list before, plus any URL scheme and a host joined to a path or a dash. The gate and the automatic-reply rules share one definition (`shared/links.ts`). A brain edit is checked only on the fields it changes, so text already served never blocks it, and a discovery query may name a product such as "Next.js".
+- A proposer keeps at most one brain or voice file pending per component: a newer one supersedes the older (expired, "superseded by <id>"), so reviewing the same component twice on the Product and ICP page no longer leaves two versions waiting ([docs/LEARNING.md](docs/LEARNING.md)).
+- A competitor digest sent again after a failed one names the week's pending proposal again, and a database error during the competitor watch now stops the run and gives its claims back instead of counting as a failed search.
+- `watch-list` shows every pinned account, marking one whose name is too generic for the watch to match.
+- `@gtm-agents/core` pins `hono` 4.13.16, which fixes five moderate advisories in earlier versions (routing, `mount()`, `css`, `csrf()` and form validation). The Worker uses none of the affected `mount()`, `css`, `csrf()` or validator helpers, and a new test checks that the token check on `/api/*` still applies to paths holding an encoded line terminator.
+
 ### Getting started
 
 - `gtm brain init` asks seven short batches of questions and writes draft `personas`, `icp`, `message-pillars`, `facts` and `voice` files, every one `status: draft`. A skipped answer is never filled, an existing file is never overwritten, and the company, sender, booking and send-window answers are printed as `gtm.config.ts` lines to paste. `--answers <file.json>` and `--questions` let a coding agent run the interview in chat ([docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md#starting-from-an-interview)).

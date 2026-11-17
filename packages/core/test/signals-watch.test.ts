@@ -306,6 +306,51 @@ describe("competitor watch", () => {
     expect(op.sent[0]).toContain("Globex Test Insights adds automatic test retries");
   });
 
+  it("names this week's pending proposal again in a digest re-sent after a failed one", async () => {
+    const kv = await brainKv();
+    const model = fakeModel(proposalAnswer, MODEL);
+    const run = (op: OperatorChannel | undefined) => runCompetitorWatch({ db, kv, news: globexNews(), boards: undefined, gate: competitorGate(), now: NOW, log: silentLog, operator: op, proposals: true, model, config });
+    const first = await run(undefined);
+    expect(first).toMatchObject({ digest: "no_channel", proposal: { status: "made" } });
+    const id = first.proposal.status === "made" ? first.proposal.id : "";
+    const op = operator();
+    expect(await run(op)).toMatchObject({ digest: "sent", proposal: { status: "waiting", id } });
+    expect(op.sent[0]).toContain(`learning-show ${id}`);
+    expect(model.requests).toHaveLength(1);
+    // Next run the same week, its digest released again and no news left: the proposal is still named.
+    await db.prepare("DELETE FROM event_effects WHERE event_id LIKE 'report:competitor_watch:%'").run();
+    const quiet = await runCompetitorWatch({ db, kv, news: fakeNews([]), boards: undefined, gate: competitorGate(), now: NOW, log: silentLog, operator: operator(), proposals: true, model, config });
+    expect(quiet.proposal).toEqual({ status: "waiting", id });
+  });
+
+  it("never names another week's proposal as this week's", async () => {
+    const kv = await brainKv();
+    await db.prepare("INSERT INTO event_effects (event_id, effect, created_at) VALUES (?1, 'competitor_proposal', ?2)").bind(`competitor_proposal:${isoWeek(NOW)}`, NOW.toISOString()).run();
+    await db
+      .prepare("INSERT INTO learnings_proposals (id, short_id, kind, section, proposed_text, proposed_digest, rationale, proposed_by, status) VALUES ('lp_old', 'oldweek1', 'brain', 'brain:competitors', 'x', ?1, ?2, 'competitor_watch', 'pending')")
+      .bind("a".repeat(64), `Competitor watch ${isoWeek(new Date(NOW.getTime() - 7 * DAY_MS))}. Older.`)
+      .run();
+    const r = await runCompetitorWatch({ db, kv, news: globexNews(), boards: undefined, gate: competitorGate(), now: NOW, log: silentLog, operator: operator(), proposals: true, model: fakeModel(proposalAnswer, MODEL), config });
+    expect(r.proposal).toEqual({ status: "none" });
+  });
+
+  it("gives its claims back when the run fails on a database error", async () => {
+    const kv = await brainKv();
+    let claims = 0;
+    const failing = new Proxy(db, {
+      get(target, prop) {
+        if (prop !== "prepare") return Reflect.get(target, prop) as unknown;
+        return (sql: string) => {
+          if (/INSERT OR IGNORE INTO event_effects/.test(sql) && ++claims === 2) throw new Error("database unavailable");
+          return target.prepare(sql);
+        };
+      },
+    });
+    const news = fakeNews((text) => (text === "Globex Test Insights" ? [hit("Globex Test Insights adds retries", "https://news.example/g1"), hit("Globex Test Insights adds reports", "https://news.example/g2")] : []));
+    await expect(runCompetitorWatch({ db: failing, kv, news, boards: undefined, gate: competitorGate(), now: NOW, log: silentLog, operator: operator(), proposals: false, config })).rejects.toThrow("database unavailable");
+    expect(await firstSighting(db, "competitor:globex-test-insights", "https://news.example/g1")).not.toBeNull();
+  });
+
   it("does not search a competitor whose name is too generic to match in a title", async () => {
     const generic = ["## data", "- name: Data", "- positioning: A rival.", "- differentiators: Acme is different.", ""].join("\n");
     const news = fakeNews([]);
@@ -391,6 +436,9 @@ describe("watch commands", () => {
     await seedAccount(db, "plainco.example", "Software");
     expect(await run("watch-add plainco.example")).toMatch(/too generic to match/);
     expect((await watchedAccounts(db)).map((a) => a.accountKey)).toEqual([]);
+    const listed = await run("watch-list");
+    expect(listed).toContain("- plainco.example (its name is too generic to match a news title, so the watch skips it)");
+    expect(listed).toContain("The next account watch covers none.");
   });
 });
 

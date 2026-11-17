@@ -44,6 +44,7 @@ import { detectInjection } from "../security/redact.ts";
 import { AUTONOMY_FLAGS } from "./flags.ts";
 import type { ActionClass, AutonomyLevel } from "./levels.ts";
 import { figuresIn } from "./scorers.ts";
+import { cleanLink, linksIn } from "../shared/links.ts";
 
 /** The reply classes that may be sent automatically once earned. */
 export const AUTO_SEND_CLASSES: readonly ActionClass[] = Object.freeze<ActionClass[]>(["reply_send", "reply_demo_link"]);
@@ -171,17 +172,10 @@ export function groundingProblem(body: string, facts: readonly string[] | null):
   return null;
 }
 
-const LINK = /\bhttps?:\/\/[^\s<>()"']+|\bwww\.[^\s<>()"']+/gi;
-const BARE_HOST = /(?<![@\w./-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?:\/[^\s<>()"']*)?(?![\w@-])/gi;
-const cleanLink = (url: string) => url.replace(/[.,;:!?)\]]+$/, "");
 const sameLink = (a: string, b: string) => cleanLink(a).replace(/\/+$/, "").toLowerCase() === cleanLink(b).replace(/\/+$/, "").toLowerCase();
 
-/** Every link in a text: full URLs, www. links, and bare hosts a mail client could turn into links. Pure. */
-export function linksIn(text: string): string[] {
-  const urls = (text.match(LINK) ?? []).map(cleanLink);
-  const bare = (text.replace(LINK, " ").match(BARE_HOST) ?? []).map(cleanLink);
-  return [...urls, ...bare];
-}
+// One definition of a link, shared with the quality gate (shared/links.ts).
+export { linksIn };
 
 /**
  * One plain address, lowercased, from a bare address or "Name <address>"; null for anything else

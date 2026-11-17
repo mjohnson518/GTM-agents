@@ -26,7 +26,9 @@ Each record stores the detail you are shown, rendered from its fields, and the S
 4. it is claimed with a compare-and-set, so two approvals never both apply;
 5. what it changes still holds the value it was made against: the component's bytes, the objection's pattern, the playbook field's value. Otherwise it is marked expired as stale and nothing changes.
 
-A write that fails puts it back to pending. Approvals and rejections of loop proposals are recorded as autonomy evidence: brain and voice edits count toward `brain_edit`, the retrospective's proposals toward `retrospective_actuation`.
+A write that fails puts it back to pending. A new brain or voice file replaces the same proposer's pending file for that component, which is marked expired with the reason "superseded by <id>" and can no longer be approved. Another proposer's pending file for the same component stays, and whichever is approved first makes the other stale (the base file it was made against changed), so two pending files never both apply.
+
+Approvals and rejections of loop proposals are recorded as autonomy evidence: brain and voice edits count toward `brain_edit`, the retrospective's proposals toward `retrospective_actuation`.
 
 **Applying a brain edit** reads the served brain from KV (the lock, and every file whose bytes still match their lock entry), replaces the one component, validates the whole brain (`validateBrain`: the schema, references, no URLs outside `url` fields, no prices outside `commercial`), computes the new lock over the approved files with `computeLock`, and writes the file first and the lock last, as `gtm brain upload` does. A file that had drifted from its lock was not being served and is left out of the new lock. `commercial` is never edited by a loop.
 
@@ -46,7 +48,7 @@ A write that fails puts it back to pending. Approvals and rejections of loop pro
 
 ## The learnings document
 
-Proven insights the operator approved, in five sections: `writing_rules`, `objection_handling`, `template_performance`, `process` and `general`. The document is the set of applied `learning` proposals, so the database is its one source and every line was approved byte for byte. Each entry is checked against its approved digest every time the document is read, and one that no longer matches is left out. `learningsText(db)` renders it for prompts, optionally under a byte budget; the retrospective and evolution read it ([below](#what-the-writers-read)). The mutation constraints, checked when a snippet is proposed and again when it is applied: 1 to 400 characters, no link or host name, no email address, no em or en dash, no injection pattern, nothing the content lint blocks, at most 20 entries and 4 KB per section. A full section takes a new entry only as a replacement of an existing one.
+Proven insights the operator approved, in five sections: `writing_rules`, `objection_handling`, `template_performance`, `process` and `general`. The document is the set of applied `learning` proposals, so the database is its one source and every line was approved byte for byte. Each entry is checked against its approved digest every time the document is read, and one that no longer matches is left out. `learningsText(db)` renders it for prompts, optionally under a byte budget; the retrospective and evolution read it ([below](#what-the-writers-read)). The mutation constraints, checked when a snippet is proposed and again when it is applied: 1 to 400 characters, no link or host name (everything the outbound quality gate counts as a link, a URL with any scheme, and any dotted host such as `acme.click/offer` or `docs/evil.example`; a discovery query may name a product such as "Next.js", but never hold a URL), no email address, no em or en dash, no injection pattern, nothing the content lint blocks, at most 20 entries and 4 KB per section. A full section takes a new entry only as a replacement of an existing one.
 
 ## What the writers read
 

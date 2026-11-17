@@ -265,7 +265,7 @@ export class GtmTargeting extends GtmView {
       confirmLabel: "Approve",
     });
     if (!answer.confirmed) {
-      this.notice = { tone: "ok", text: "Not approved. The proposal stays in the Proposals view until it is decided or expires." };
+      this.notice = { tone: "ok", text: "Not approved. The proposal stays in the Proposals view until it is decided, expires, or a newer review of the same component here replaces it." };
       return;
     }
     const ok = await this.perform("Approve", async () => {
@@ -399,7 +399,7 @@ export class GtmTargeting extends GtmView {
       confirmLabel: "Approve",
     });
     if (!answer.confirmed) {
-      this.notice = { tone: "ok", text: "Not approved. The proposal stays in the Proposals view until it is decided or expires." };
+      this.notice = { tone: "ok", text: "Not approved. The proposal stays in the Proposals view until it is decided, expires, or a newer review of the same component here replaces it." };
       return;
     }
     const ok = await this.perform("Approve", async () => {

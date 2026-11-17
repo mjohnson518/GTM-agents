@@ -162,6 +162,38 @@ describe("a brain edit", () => {
   });
 });
 
+describe("one pending brain proposal per component and proposer", () => {
+  const pillars = (text: string) => renderBrainFile({ component: "message-pillars", version: 2, updated: "2026-11-09", items: [{ id: "trust-red", fields: { text } }] });
+  async function propose(kv: Awaited<ReturnType<typeof servedBrain>>["kv"], content: string, proposedBy: string) {
+    const current = (await kv.get(brainFileKey("message-pillars"))) ?? "";
+    const r = await createLearningProposal(db, { kind: "brain", payload: { component: "message-pillars", baseSha256: await sha256Hex(current), content, previousContent: current }, proposedBy }, NOW);
+    if (!r.ok) throw new Error(r.problems.join("; "));
+    return r.proposal;
+  }
+  const statusOf = (shortId: string) => db.prepare("SELECT status, status_reason FROM learnings_proposals WHERE short_id = ?1").bind(shortId).first<{ status: string; status_reason: string | null }>();
+
+  it("a newer proposal for the same component from the same proposer supersedes the pending one, which can no longer be approved", async () => {
+    const { kv } = await servedBrain();
+    const first = await propose(kv, pillars("A red build means a real problem again."), "operator:ops@acme.example");
+    const second = await propose(kv, pillars("A red build means a real problem, every time."), "operator:ops@acme.example");
+    expect(await statusOf(first.shortId)).toEqual({ status: "expired", status_reason: `superseded by ${second.shortId}` });
+    expect(await statusOf(second.shortId)).toEqual({ status: "pending", status_reason: null });
+    const late = await approveLearningProposal({ db, kv, now: NOW }, first.shortId, approvalCode(first), "operator:1");
+    expect(late.status).not.toBe("applied");
+  });
+
+  it("leaves another proposer's pending proposal, and an identical proposal returns the pending one", async () => {
+    const { kv } = await servedBrain();
+    const mine = await propose(kv, pillars("A red build means a real problem again."), "operator:ops@acme.example");
+    const loop = await propose(kv, pillars("Red builds are real again."), "evolution");
+    expect(await statusOf(mine.shortId)).toEqual({ status: "pending", status_reason: null });
+    expect(await statusOf(loop.shortId)).toEqual({ status: "pending", status_reason: null });
+    const again = await propose(kv, pillars("A red build means a real problem again."), "operator:ops@acme.example");
+    expect(again.shortId).toBe(mine.shortId);
+    expect(await statusOf(loop.shortId)).toEqual({ status: "pending", status_reason: null });
+  });
+});
+
 describe("other proposal kinds", () => {
   it("an objection answer is written with the digest of its pattern and response", async () => {
     await db.prepare("INSERT INTO objections (id, pattern, response_template, author) VALUES ('ob-1', 'We built this in house', '', 'inbound:in-1')").run();

@@ -54,15 +54,13 @@ import { distinctiveName } from "./news.ts";
 import { digestSent, firstSighting, isoWeek, keepHit, releaseSightings, settleSightings, type WatchItem } from "./watch.ts";
 
 const DAY_MS = 86_400_000;
-// Any dotted host ("globex-login.ru", "acme.click"), wider than hasLink's list, and the dashes the
-// house rules forbid in generated text: a note with either is not shown.
-const NOTE_HOST = /[a-z0-9-]\.[a-z]{2,}\b/i;
+// The dashes the house rules forbid in generated text: a note with one is not shown.
 const NOTE_DASH = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
 
-/** The model's note as shown with the proposal: one cleaned line, or "" when it holds a link, a host or a dash. Pure. */
+/** The model's note as shown with the proposal: one cleaned line, or "" when it holds a link, a host, an address or a dash. Pure. */
 export function proposalNote(raw: string): string {
   const note = cleanProviderText(raw, 300);
-  return note && !hasLink(note) && !NOTE_HOST.test(note) && !NOTE_DASH.test(note) ? note : "";
+  return note && !hasLink(note) && !NOTE_DASH.test(note) ? note : "";
 }
 export const COMPETITOR_PROPOSER = "competitor_watch";
 /** The fields a competitor item may hold (brain/schema.ts). */
@@ -89,7 +87,8 @@ export interface CompetitorWatchStats {
   boards: number;
   errors: number;
   budgetStopped: boolean;
-  proposal: { status: "made"; id: string } | { status: "refused"; reason: string } | { status: "none" };
+  /** waiting: this week's slot was used by an earlier run, whose proposal is still pending. */
+  proposal: { status: "made"; id: string } | { status: "waiting"; id: string } | { status: "refused"; reason: string } | { status: "none" };
   digest: DeliveryStatus | "not_sent";
 }
 
@@ -185,7 +184,7 @@ export function renderCompetitorDigest(week: string, findings: readonly Competit
     }
   }
   if (lines.length === 1) lines.push("", "Nothing new this week.");
-  if (proposal.status === "made") lines.push("", `A proposed edit to the competitors brain component waits for you: learning-show ${proposal.id}`);
+  if (proposal.status === "made" || proposal.status === "waiting") lines.push("", `A proposed edit to the competitors brain component waits for you: learning-show ${proposal.id}`);
   lines.push("", "Titles are as the publishers wrote them, unverified.");
   return lines.join("\n");
 }
@@ -206,9 +205,22 @@ async function rolesFor(boards: HiringBoardSource, domain: string, log: JobLogge
   return null;
 }
 
+/**
+ * This week's proposal from the watch, when it is still pending. An earlier run's digest may not
+ * have reached you (a digest that failed is sent again by the next run), so it is named again.
+ */
+async function waitingProposal(db: D1Database, week: string): Promise<CompetitorWatchStats["proposal"]> {
+  const waiting = await db
+    .prepare("SELECT short_id FROM learnings_proposals WHERE kind = 'brain' AND proposed_by = ?1 AND status = 'pending' AND rationale LIKE ?2 ORDER BY created_at DESC LIMIT 1")
+    .bind(COMPETITOR_PROPOSER, `Competitor watch ${week}.%`)
+    .first<{ short_id: string }>();
+  return waiting ? { status: "waiting", id: waiting.short_id } : { status: "none" };
+}
+
 /** Ask for at most one edit, check it, and propose it. Never throws for a model or check failure. */
 async function propose(input: CompetitorWatchInput, served: NonNullable<Awaited<ReturnType<typeof servedCompetitors>>>, findings: readonly CompetitorFinding[], week: string): Promise<CompetitorWatchStats["proposal"]> {
-  if (!(await claimEffect(input.db, `competitor_proposal:${week}`, "competitor_proposal"))) return { status: "none" };
+  // An earlier run this week used the slot: name its proposal if it still waits.
+  if (!(await claimEffect(input.db, `competitor_proposal:${week}`, "competitor_proposal"))) return waitingProposal(input.db, week);
   const evidence = findings
     .flatMap((f) => [
       ...f.items.map((i) => `${f.competitor.name}: ${i.publishedAt.slice(0, 10)} ${i.title}`),
@@ -314,23 +326,26 @@ async function competitorWatchRun(
         stats.budgetStopped = true;
         searching = false;
       } else {
+        let hits: Awaited<ReturnType<NewsSource["searchNews"]>>["items"] = [];
         try {
           const page = await input.news.searchNews({ text: competitor.name, since, limit: SIGNAL_LIMITS.watchResultsPerSearch });
           await input.gate.record(page.cost, { provider: input.news.name, capability: "news" });
           stats.searches += 1;
-          for (const hit of page.items.slice(0, SIGNAL_LIMITS.watchResultsPerSearch)) {
-            if (items.length >= SIGNAL_LIMITS.watchItemsPerSubject) break;
-            const item = keepHit(hit, { accountKey: competitor.id, name: competitor.name }, input.now);
-            if (!item || items.some((i) => i.url === item.url)) continue;
-            const key = await firstSighting(input.db, `competitor:${competitor.id}`, item.url);
-            if (!key) continue;
-            claimed.push(key);
-            items.push(item);
-          }
+          hits = page.items.slice(0, SIGNAL_LIMITS.watchResultsPerSearch);
         } catch (error) {
           stats.errors += 1;
           input.log.warn("competitor news search failed", { error: sanitizeErrorMessage(error) });
           if (!(error instanceof AdapterError) || !error.retryable) searching = false;
+        }
+        // Outside the provider's try: a database error here throws, and the run gives its claims back.
+        for (const hit of hits) {
+          if (items.length >= SIGNAL_LIMITS.watchItemsPerSubject) break;
+          const item = keepHit(hit, { accountKey: competitor.id, name: competitor.name }, input.now);
+          if (!item || items.some((i) => i.url === item.url)) continue;
+          const key = await firstSighting(input.db, `competitor:${competitor.id}`, item.url);
+          if (!key) continue;
+          claimed.push(key);
+          items.push(item);
         }
       }
     }
@@ -339,9 +354,10 @@ async function competitorWatchRun(
     stats.items += items.length;
     findings.push({ competitor, items, roles });
   }
-  if (input.proposals && stats.items > 0) {
+  if (input.proposals) {
     try {
-      stats.proposal = await propose(input, served, findings, week);
+      // A week with news may propose; a run without (the news aged out, or the provider failed) still names one waiting.
+      stats.proposal = stats.items > 0 ? await propose(input, served, findings, week) : await waitingProposal(input.db, week);
     } catch (error) {
       stats.proposal = { status: "refused", reason: sanitizeErrorMessage(error) };
     }

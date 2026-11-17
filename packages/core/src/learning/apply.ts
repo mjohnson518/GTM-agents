@@ -178,7 +178,7 @@ export async function approveLearningProposal(deps: ApplyDeps, id: string, shown
   if (!/^[0-9a-f]{32,64}$/.test(shown) || !p.digest.startsWith(shown)) {
     return { status: "refused", message: `What you approved is not what proposal ${p.shortId} holds now. Show it again with learning-show ${p.shortId}.` };
   }
-  if (!(await claim(deps, p, actor))) return { status: "refused", message: `Proposal ${p.shortId} was decided by someone else first.` };
+  if (!(await claim(deps, p, actor))) return { status: "refused", message: `Proposal ${p.shortId} is no longer pending: it was decided, expired, or replaced by a newer proposal.` };
   let outcome: ApplyResult;
   try {
     outcome = await applyChange(deps, p, actor);

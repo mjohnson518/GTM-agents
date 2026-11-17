@@ -83,6 +83,9 @@ export function editProblems(args: { component: ComponentId; before: readonly Br
   if (NEVER_PROPOSED_COMPONENTS.includes(args.component)) problems.push(`${args.component} is never edited by a loop`);
   if (args.after.length === 0) problems.push("the edit leaves the component empty");
   const ids = new Set<string>();
+  // Content checks run on what the edit changes: text already served (approved by a person) never
+  // blocks an edit to another field, even where these checks are stricter than the validator.
+  const served = new Map(args.before.map((i) => [i.id, i.fields]));
   for (const item of args.after) {
     if (!ITEM_ID.test(item.id)) problems.push(`item id "${item.id.slice(0, 40)}" is malformed`);
     if (ids.has(item.id)) problems.push(`item id "${item.id}" appears twice`);
@@ -90,7 +93,7 @@ export function editProblems(args: { component: ComponentId; before: readonly Br
     for (const [key, value] of Object.entries(item.fields)) {
       if (!FIELD_KEY.test(key)) problems.push(`field "${key.slice(0, 40)}" is malformed`);
       if (typeof value !== "string" || value.trim() === "" || value.length > 400) problems.push(`field ${item.id}.${key} must be 1 to 400 characters`);
-      else {
+      else if (served.get(item.id)?.[key] !== value) {
         if (hasLink(value)) problems.push(`field ${item.id}.${key} holds a link`);
         if (/[\u2013\u2014]/.test(value)) problems.push(`field ${item.id}.${key} holds an em or en dash`);
         if (detectInjection(value) > 0) problems.push(`field ${item.id}.${key} reads like an instruction to the model`);

@@ -290,6 +290,15 @@ describe("meeting notes: extraction", () => {
     expect(JSON.parse(String(row?.next_steps))).toEqual([{ quote: "I will send over the pilot plan on Friday", owner: "us" }]);
   });
 
+  it("drops a quote that carries a bare host, a URL of any scheme or a host joined to a path", () => {
+    for (const text of ["You can see it at globex-login.ru today", "The files are on ftp://intranet/share", "Check docs/acme.click for the plan"]) {
+      const lines = [{ side: "them" as const, text }];
+      expect(keepQuote(text, lines, `[them] ${text}`), text).toBeNull();
+    }
+    const plain = [{ side: "them" as const, text: "Our builds fail twice a week" }];
+    expect(keepQuote("Our builds fail twice a week", plain, "[them] Our builds fail twice a week")).toMatchObject({ quote: "Our builds fail twice a week" });
+  });
+
   it("drops a quote that carries a side tag anywhere, even one spoken on a single line", () => {
     const lines = [{ side: "them" as const, text: "I pasted [us] into the chat by mistake" }];
     expect(keepQuote("I pasted [us] into the chat", lines, "[them] I pasted [us] into the chat by mistake")).toBeNull();

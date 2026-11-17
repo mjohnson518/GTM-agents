@@ -62,6 +62,14 @@ describe("bearer auth on /api/*", () => {
     expect((await call(new Request("https://agent.example/api/nothing-here"), { GATEWAY_TOKEN: TOKEN })).status).toBe(401);
   });
 
+  it("applies the token check to paths holding an encoded line terminator", async () => {
+    // hono's RegExpRouter once skipped wildcard middleware for these paths (GHSA-h7mg-cq63-vhpq).
+    for (const end of ["%0A", "%0D", "%E2%80%A8", "%E2%80%A9"]) {
+      const response = await call(new Request(`https://agent.example/api/v1/runs/run_1${end}`), { GATEWAY_TOKEN: TOKEN });
+      expect(response.status, end).toBe(401);
+    }
+  });
+
   it("leaves webhook paths to their own signature checks", async () => {
     const response = await call(new Request("https://agent.example/api/webhooks/custom", { method: "POST" }), { GATEWAY_TOKEN: undefined });
     expect(response.status).toBe(200);

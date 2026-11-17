@@ -2,7 +2,8 @@
 //
 //   watch-add <domain>      pin an existing account, so the account watch always covers it
 //   watch-remove <domain>   unpin it
-//   watch-list              the pinned accounts, then the accounts the next run would cover
+//   watch-list              every pinned account (a name too generic to match is marked), then the
+//                           accounts the next run would cover
 //
 // They are a ModuleCommand: matched before the model sees the message, for allowlisted operators
 // only, run once per message. A command only writes accounts.attributes.watch on an account that
@@ -44,11 +45,26 @@ async function setPinned(db: D1Database, raw: string, pinned: boolean): Promise<
     : `Pinned ${key}, but its name ("${account.name.slice(0, 80)}") is too generic to match in a news title, so the watch skips it. Give the account a more distinctive name to have it covered.`;
 }
 
+const MAX_PINNED_LISTED = 50;
+
 async function list(db: D1Database): Promise<string> {
+  // Every pinned account, including one whose name is too generic for the watch to match.
+  const { results: pinned } = await db
+    .prepare("SELECT account_key, name FROM accounts WHERE json_extract(attributes, '$.watch') IN (1, 'true') ORDER BY account_key LIMIT ?1")
+    .bind(MAX_PINNED_LISTED + 1)
+    .all<{ account_key: string; name: string }>();
   const accounts = await watchedAccounts(db, SIGNAL_LIMITS.watchAccountsPerRun);
-  if (accounts.length === 0) return "Nothing is watched yet: pin an account with watch-add <domain>, or the watch covers open deals and the best fit once there are any.";
+  if (pinned.length === 0 && accounts.length === 0) return "Nothing is watched yet: pin an account with watch-add <domain>, or the watch covers open deals and the best fit once there are any.";
+  const lines: string[] = [];
+  if (pinned.length > 0) {
+    lines.push(`Pinned (${pinned.length > MAX_PINNED_LISTED ? `first ${MAX_PINNED_LISTED}` : pinned.length}):`);
+    for (const p of pinned.slice(0, MAX_PINNED_LISTED)) lines.push(`- ${p.account_key}${distinctiveName(p.name) ? "" : " (its name is too generic to match a news title, so the watch skips it)"}`);
+    lines.push("");
+  }
   const reason = { pinned: "pinned", deal: "open deal", fit: "top fit" } as const;
-  return [`The next account watch covers ${accounts.length}:`, ...accounts.map((a) => `- ${a.accountKey} (${reason[a.reason]})`)].join("\n");
+  if (accounts.length === 0) lines.push("The next account watch covers none.");
+  else lines.push(`The next account watch covers ${accounts.length}:`, ...accounts.map((a) => `- ${a.accountKey} (${reason[a.reason]})`));
+  return lines.join("\n");
 }
 
 /** The watch commands, for createWorker's `commands`. */

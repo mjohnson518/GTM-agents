@@ -184,7 +184,7 @@ The other capabilities add their own commands, documented with them. `/help` lis
 | `sequence-resume-<contact id>` | Resume a contact's paused sequence |
 | `channel-done-<id> [linkedin\|x]`, `channel-skip-<id>` | Record or skip the optional manual touch before the last step |
 | `/meetings`, `prep-<contact id or email>` | Meetings the calendar shows, and a one-page brief on any contact ([CONVERT.md](CONVERT.md)) |
-| `watch-add <domain>`, `watch-remove <domain>`, `watch-list` | Pin an existing account so the weekly account watch always covers it, unpin it, and see what the next watch covers ([SIGNALS.md](SIGNALS.md#account-watch)) |
+| `watch-add <domain>`, `watch-remove <domain>`, `watch-list` | Pin an existing account so the weekly account watch always covers it, unpin it, and see every pinned account and what the next watch covers ([SIGNALS.md](SIGNALS.md#account-watch)) |
 | `meeting-held-<code>`, `meeting-noshow-<code>`, `meeting-notes-<code> <notes>` | Record how a meeting went, and keep notes |
 | `meeting-link-<code> <contact>`, `meeting-unlink-<code>` | Attribute an ambiguous meeting to a contact, or make a meeting inert |
 | `autonomy-status` | Every action class with its level and evidence ([AUTONOMY.md](AUTONOMY.md)) |

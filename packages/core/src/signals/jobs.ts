@@ -344,7 +344,7 @@ export function createSignalJobs<E extends SourcingEnv>(deps: SignalDeps<E>): Re
         ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
         signal: ctx.signal,
       });
-      const proposal = r.proposal.status === "made" ? `proposed ${r.proposal.id}` : r.proposal.status === "refused" ? `no proposal (${r.proposal.reason})` : "no proposal";
+      const proposal = r.proposal.status === "made" ? `proposed ${r.proposal.id}` : r.proposal.status === "waiting" ? `proposal ${r.proposal.id} still pending` : r.proposal.status === "refused" ? `no proposal (${r.proposal.reason})` : "no proposal";
       if (r.competitors === 0) return { summary: "no competitors in the served brain", rows: 0 };
       return { summary: `${r.competitors} competitors, ${r.searches} searches, ${r.items} new items, ${r.boards} boards, ${proposal}, digest ${r.digest}${stopped(gate)}`, rows: r.items };
     },

@@ -22,6 +22,7 @@ import { countWords } from "../templates/variables.ts";
 import { accountNameKey } from "../sourcing/identity.ts";
 import { checkClaims } from "./claims.ts";
 import { lintOutbound } from "./lint.ts";
+import { bareHostsIn, urlLinksIn } from "../shared/links.ts";
 
 export type QualityVerdict = "pass" | "hold" | "block";
 export type FindingSeverity = "block" | "hold";
@@ -125,9 +126,6 @@ export type QualityExtras = Pick<QualityInput, "clicheLint" | "avoidPhrases">;
 // Lint warnings the gate checks more precisely itself (exclamations, and length by kind).
 const LINT_COVERED = new Set(["EXCLAMATIONS", "BODY_TOO_LONG"]);
 
-const LINK = /\bhttps?:\/\/[^\s<>()"']+|\bwww\.[^\s<>()"']+/gi;
-// A bare host a mail client may turn into a link ("evil.example/offer"), not part of an address or a URL.
-const BARE_HOST = /(?<![@\w./-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}(?:\/[^\s<>()"']*)?(?![\w@-])/gi;
 
 /** Phrases a writer falls back on when it does not know the company's name. */
 const ACCOUNT_FALLBACK = /\byour (?:company|firm|organi[sz]ation|business|startup|employer)\b/i;
@@ -262,11 +260,11 @@ export function checkOutboundQuality(input: QualityInput): QualityResult {
   }
 
   if (/[\r\n]/.test(input.subject ?? "")) add("SUBJECT_LINE_BREAK", "the subject holds a line break");
-  for (const raw of all.match(LINK) ?? []) {
+  for (const raw of urlLinksIn(all)) {
     const url = raw.replace(/[.,;:!?)\]]+$/, "");
     if (!linkAllowed(url, input.links)) add("LINK_NOT_ALLOWED", `a link to ${hostOf(url) ?? url.slice(0, 40)} is not allowed`);
   }
-  for (const raw of all.replace(LINK, " ").match(BARE_HOST) ?? []) {
+  for (const raw of bareHostsIn(all)) {
     const url = `https://${raw.replace(/[.,;:!?)\]]+$/, "")}`;
     if (!linkAllowed(url, input.links)) add("LINK_NOT_ALLOWED", `a bare link to ${hostOf(url) ?? raw.slice(0, 40)} is not allowed`);
   }

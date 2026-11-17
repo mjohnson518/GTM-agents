@@ -99,7 +99,7 @@ Accounts with a model fit of 7 or more, fewer than 2 keep-listed contacts, and a
 
 The news searches above look for categories (a round raised, a leader appointed) across every account. The account watch looks at the accounts that matter most, by name, every Monday:
 
-- **Who.** Up to 10 accounts, in this order: those you pinned with `watch-add <domain>`, those with an open deal past contacted (engaged, demo scheduled, trial, proposal or negotiation), then the best model fit (not below the fit floor). An account whose name is too generic to match in a title (fewer than 4 letters, or a word such as "Labs") is skipped. `watch-list` shows who the next run covers.
+- **Who.** Up to 10 accounts, in this order: those you pinned with `watch-add <domain>`, those with an open deal past contacted (engaged, demo scheduled, trial, proposal or negotiation), then the best model fit (not below the fit floor). An account whose name is too generic to match in a title (fewer than 4 letters, or a word such as "Labs") is skipped. `watch-list` shows every pinned account, marking one whose name is too generic, and who the next run covers.
 - **What.** One dated news search for the account's name over the last 7 days. A hit is kept only when its title names that account, with a published date in the window and an http(s) URL, and only the first time it is seen, so an article is listed once, ever: at most 5 per account a week. A run in a week whose digest has gone searches nothing, and when the digest cannot be sent (no channel, the channel failed, or a run alongside it sent the week's digest first), the items are released and listed by the next run. A channel that times out after accepting the message can therefore show the same items twice: a repeated digest is preferred to a lost one.
 - **Where it goes.** One digest a week in your chat: per account, each new title (cleaned to one line, as the publisher wrote it), its date and its link. A week with nothing new says so. A funding or leadership item also becomes a signal by the news rules above (source `account_watch`), so it can open a first touch.
 
@@ -109,7 +109,7 @@ Every Monday, for up to 8 competitors in your brain's approved `competitors` com
 
 - **News.** One dated search for the competitor's name over the last 7 days, kept only when the title names it as a whole phrase, and listed once, ever (at most 5 a week each; a digest that cannot be sent releases them for the next run). A name too generic to match in a title is not searched.
 - **Open roles.** For a competitor with a `domain` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)), the public job boards for the token the domain gives (Greenhouse, Lever, Ashby), counted per role kind, never titles.
-- **The digest.** One message a week: per competitor, the new titles with dates and links, and the open roles.
+- **The digest.** One message a week: per competitor, the new titles with dates and links, and the open roles. A digest sent again after a failed one names the week's pending proposal again.
 - **A proposed edit** (`signals:competitor_proposals_enabled`). A week with news makes at most one strategist call:
   - The model reads the approved `competitors` file and the week's titles and counts, fenced as untrusted, and may change at most 3 items.
   - The edit is refused if it adds a link, a dash, anything that reads like an instruction, or a figure the brain does not already hold (so no number from the news). It is also refused if it does not validate.

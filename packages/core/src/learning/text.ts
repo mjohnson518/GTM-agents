@@ -4,9 +4,12 @@
 import { lintOutbound } from "../quality/lint.ts";
 import { detectInjection } from "../security/redact.ts";
 import { sanitizeMemoryText } from "../security/sanitize.ts";
-
-const URL_LIKE = /\b(?:https?:\/\/|www\.)[^\s<>"')]+/gi;
-const BARE_HOST = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|ai|dev|app|example|xyz|info|biz)\b/gi;
+import { containsLink } from "../shared/links.ts";
+// Wider than the outbound definition on purpose: untrusted text reaches these checks, and refusing
+// too much only drops a proposal. Any scheme (ftp://, data://), and any dotted host, including one
+// joined to a path, a dash or dots ("docs/evil.example", "evil.example-hosted").
+const ANY_SCHEME = /\b[a-z][a-z0-9+.-]*:\/\/[^\s<>"')]*/gi;
+const LOOSE_HOST = /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,24}\b/gi;
 const EMAIL = /\b[^\s@<>()]+@[^\s@<>()]+\.[a-z]{2,}\b/gi;
 const DASHES = /[\u2013\u2014]/;
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
@@ -18,8 +21,9 @@ const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
  */
 export function defang(text: string, max = 240): string {
   let out = text.replace(CONTROL, "").replace(EMAIL, "[email]");
-  out = out.replace(URL_LIKE, (url) => url.replace(/^http/i, "hxxp").replace(/\./g, "[.]"));
-  out = out.replace(BARE_HOST, (host) => host.replace(/\./g, "[.]"));
+  out = out.replace(ANY_SCHEME, (url) => url.replace(/^http/i, "hxxp").replace(/\./g, "[.]"));
+  out = out.replace(/\bwww\.[^\s<>"')]+/gi, (url) => url.replace(/\./g, "[.]"));
+  out = out.replace(LOOSE_HOST, (host) => host.replace(/\./g, "[.]"));
   out = sanitizeMemoryText(out.replace(/\s+/g, " ").trim());
   return out.length > max ? `${out.slice(0, max - 3).trimEnd()}...` : out;
 }
@@ -46,14 +50,14 @@ export function foldSentence(sentence: string): string {
 
 export const wordsIn = (text: string): number => text.split(/\s+/).filter(Boolean).length;
 
-/** True when the text holds a link or a bare host name. */
+/** True when the text holds a URL (any scheme) or a host name: everything the outbound gate counts, and more. */
+export function holdsLinkOrHost(text: string): boolean {
+  return containsLink(text) || (text.match(ANY_SCHEME) ?? []).length > 0 || (text.match(LOOSE_HOST) ?? []).length > 0;
+}
+
+/** True when the text holds a URL, a host name or an email address. */
 export function hasLink(text: string): boolean {
-  URL_LIKE.lastIndex = 0;
-  BARE_HOST.lastIndex = 0;
-  const found = URL_LIKE.test(text) || BARE_HOST.test(text);
-  URL_LIKE.lastIndex = 0;
-  BARE_HOST.lastIndex = 0;
-  return found;
+  return (text.match(EMAIL) ?? []).length > 0 || holdsLinkOrHost(text);
 }
 
 /**
@@ -99,12 +103,13 @@ export const SNIPPET_MAX_CHARS = 400;
  * en dash, no control character, no injection pattern, and nothing the content lint blocks. Returns
  * what is wrong; empty means it may be proposed.
  */
-export function snippetProblems(text: string, max = SNIPPET_MAX_CHARS): string[] {
+export function snippetProblems(text: string, max = SNIPPET_MAX_CHARS, options: { hosts?: boolean } = {}): string[] {
   const problems: string[] = [];
   const trimmed = text.trim();
   if (trimmed.length === 0) problems.push("it is empty");
   if (trimmed.length > max) problems.push(`it is over ${max} characters`);
-  if (hasLink(trimmed)) problems.push("it holds a link or a host name");
+  // A host name counts unless the caller says it may stand (a search query, which never reaches mail).
+  if (options.hosts === false ? (trimmed.match(ANY_SCHEME) ?? []).length > 0 || /\bwww\./i.test(trimmed) : holdsLinkOrHost(trimmed)) problems.push("it holds a link or a host name");
   EMAIL.lastIndex = 0;
   if (EMAIL.test(trimmed)) problems.push("it holds an email address");
   EMAIL.lastIndex = 0;
