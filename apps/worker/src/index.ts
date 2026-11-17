@@ -18,6 +18,7 @@ import { createWorker, kvFlagReader, type Env } from "@gtm-agents/core";
 import { createAdapterContext } from "@gtm-agents/core/adapters";
 import { createConvertJobs } from "@gtm-agents/core/convert";
 import { createCrmJobs } from "@gtm-agents/core/crm";
+import { createMeetingNotesJobs } from "@gtm-agents/core/notes";
 import { createExperimentJobs } from "@gtm-agents/core/experiments";
 import { createOperatorOutboxJobs, createOperatorTimerJobs, withOperatorOutbox } from "@gtm-agents/core/operator";
 import { createOutreachJobs } from "@gtm-agents/core/outreach";
@@ -39,6 +40,8 @@ import { createAdapter as createLeadMagic } from "@gtm-agents/adapters/data-lead
 import { createAdapter as createStripe } from "@gtm-agents/adapters/billing-stripe";
 import { createAdapter as createGoogleCalendar } from "@gtm-agents/adapters/calendar-google";
 import { createAdapter as createAttio } from "@gtm-agents/adapters/crm-attio";
+import { createAdapter as createFathom } from "@gtm-agents/adapters/notes-fathom";
+import { createAdapter as createGranola } from "@gtm-agents/adapters/notes-granola";
 import { createAdapter as createRoutedMail } from "@gtm-agents/adapters/email-cloudflare";
 import { createAdapter as createResend } from "@gtm-agents/adapters/email-resend";
 import { createAdapter as createGmail } from "@gtm-agents/adapters/inbox-gmail";
@@ -141,6 +144,18 @@ const reports = createReportJobs<Env>({ operator, options: { owedWindowDays } })
 // Convert: calendar sync, meeting follow-ups and deal handoff briefs. Nothing is sent automatically.
 const convert = createConvertJobs<Env>({ calendar, operator });
 
+// Meeting notes (docs/MEETING-NOTES.md): recordings from Fathom or Granola, kept only when a known
+// contact was invited, their transcripts stored for a year and read once by a worker-role call for
+// quotes; behind convert:notes_enabled. Enable notes-fathom or notes-granola in gtm.config.ts and
+// put its key (FATHOM_API_KEY or GRANOLA_API_KEY).
+const meetingNotes = createMeetingNotesJobs<Env>({
+  providers: (env) => [
+    ...(config.adapters["notes-fathom"]?.enabled ? [createFathom(context(env, "notes-fathom"))] : []),
+    ...(config.adapters["notes-granola"]?.enabled ? [createGranola(context(env, "notes-granola"))] : []),
+  ],
+  model,
+});
+
 // Lifecycle: product events and billing move contacts and deals (docs/LIFECYCLE.md). The events
 // queues are the EVENTS_QUEUE names gtm setup creates. Pass `billing: (env) => adapter` once you have
 // a BillingProvider adapter; MRR comes from the amounts billing events carry.
@@ -182,7 +197,7 @@ const retention = createRetentionJob<Env>();
 
 export default createWorker(config, {
   // Scheduled work. One per-minute cron trigger runs whichever of these jobs is due that minute.
-  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, ...outbox, ...crm, retention],
+  jobs: [...sourcing, ...signals, ...outreach, ...delivery, ...inboxJobs, ...replies, ...sequences, ...reports, ...convert, ...meetingNotes, ...lifecycle.jobs, ...followups.jobs, ...autonomy, ...experiments, ...learning, ...timers, ...outbox, ...crm, retention],
 
   // Queue consumers, keyed by the queue names in wrangler.jsonc. The chat queue is wired by `agent`.
   queueConsumers: {},

@@ -205,6 +205,13 @@ Open and click counts are deliberately absent, per contact or in aggregate: mail
 - `crm_links`: a local `account` (by account key) or `contact` (by id) and its record id in the CRM, with a digest of the fields last written, so an unchanged contact is not written again. The rows hold ids and a digest, never an address or a name. Erasing a person deletes their contact link in the same batch; nothing is sent to the CRM. A contact link is written only while the contact row exists.
 - `crm_erasures`: the CRM record of each erased person who was mirrored (sink, record id, when), which the operator deletes in the CRM. Erasure writes it in the same batch as a held operator notice naming the record; it keeps the record id for good, and no address.
 
+### Meeting notes (0038)
+
+- `meeting_notes_state`: per meeting-notes provider, the time its last full listing finished ([MEETING-NOTES.md](MEETING-NOTES.md)).
+- `meeting_recordings`: each recording a provider listed, once: `matched` (with the `meetings` row it became) or `skipped` with a reason (`no_contact`, `ambiguous`, `suppressed`, `no_transcript`, `invalid`). It holds the provider's id and no address, name or text.
+- `meetings` is now filled from recordings, as well as by the `notes` command. A recording's row has `external_id` `<provider>:<recording id>`, the transcript's blob key (`transcripts/<meeting id>.json`, kept a year), and, once processed, `pain_points`, `objections`, `next_steps` (verbatim quotes), `competitors_mentioned` (the brain's names), `sentiment`, `processed_at` and `extract_attempts` (new). Your own notes are the rows whose `external_id` starts `calendar:`.
+- Erasure deletes the person's transcripts from blob storage before their rows, and objections filed from their words (`inbound:<id>` or `meeting:<meeting id>:<n>`): unapproved ones go, approved ones lose `verbatim_example`.
+
 ## What is not in core
 
 Tables that only make sense for one market belong in a domain pack under `examples/packs/`, not in core. Examples: an investor's portfolio companies and check sizes, or a domain knowledge wiki. A pack adds its own migrations, and keeps per-record fields in `attributes`.

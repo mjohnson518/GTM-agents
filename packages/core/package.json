@@ -51,6 +51,8 @@
     "./scoring": "./src/scoring/index.ts",
     "./targeting": "./src/targeting/index.ts",
     "./crm": "./src/crm/index.ts",
+    "./notes": "./src/notes/index.ts",
+    "./notes/testing": "./src/notes/testing.ts",
     "./crm/testing": "./src/crm/testing.ts",
     "./agents": "./src/agents/index.ts",
     "./agents/testing": "./src/agents/testing.ts",

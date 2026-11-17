@@ -105,4 +105,5 @@ export { answerOutcome } from "./answer-outcome.ts";
 export type { AnswerOutcome } from "./answer-outcome.ts";
 // The filter funnel: candidates that stopped short of promotion, by reason code and by source and query.
 export { REJECTION_STATUSES, UNRECORDED_REASON, rejectionsByReason } from "./rejections.ts";
+export { competitorMentions } from "./calls.ts";
 export type { ReasonCount, RejectionCounts, RejectionReason, SourceReasonCount } from "./rejections.ts";

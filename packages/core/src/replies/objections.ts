@@ -153,14 +153,19 @@ export async function hadEarlierObjection(db: D1Database, contactId: string, inb
   return row !== null;
 }
 
-/** File an objection for curation: unapproved, with an empty response. Throws on a database error. */
-export async function fileObjection(db: D1Database, input: { inboundId: string; pattern: string; example: string | null; now: Date }): Promise<void> {
+/**
+ * File an objection for curation: unapproved, with an empty response, at most once per author (the
+ * inbound message, or the meeting and item it came from: `meeting:<meeting id>:<n>`). Throws on a
+ * database error.
+ */
+export async function fileObjection(db: D1Database, input: ({ inboundId: string } | { author: string }) & { pattern: string; example: string | null; now: Date }): Promise<void> {
+  const author = "author" in input ? input.author : `inbound:${input.inboundId}`;
   const at = input.now.toISOString();
   await db
     .prepare(
       `INSERT INTO objections (id, pattern, verbatim_example, response_template, author, created_at, updated_at)
        SELECT ?1, ?2, ?3, '', ?4, ?5, ?5 WHERE NOT EXISTS (SELECT 1 FROM objections WHERE author = ?4)`,
     )
-    .bind(`obj_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, input.pattern.slice(0, 80), input.example ? input.example.slice(0, 300) : null, `inbound:${input.inboundId}`, at)
+    .bind(`obj_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`, input.pattern.slice(0, 80), input.example ? input.example.slice(0, 300) : null, author, at)
     .run();
 }

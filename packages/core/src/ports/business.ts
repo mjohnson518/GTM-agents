@@ -1,5 +1,5 @@
 // GTM-agents: ports for calendars, billing, an optional CRM mirror, and module sandboxes.
-import type { Cost } from "./types.ts";
+import type { Cost, Page } from "./types.ts";
 
 export interface CalendarEvent {
   id?: string;
@@ -121,6 +121,41 @@ export interface CrmSink {
   }): Promise<{ externalId: string }>;
   /** contactId is the contact's record in this CRM, from upsertContact. */
   logActivity(activity: { contactId: string; type: "email_sent" | "reply" | "meeting" | "note"; at: string; summary: string }): Promise<void>;
+}
+
+/** One recorded meeting, as a meeting-notes tool lists it (docs/MEETING-NOTES.md). */
+export interface MeetingRecording {
+  /** The provider's id for the recording. */
+  externalId: string;
+  /** When the meeting started (the recording, or else the calendar event), ISO 8601. */
+  startedAt: string;
+  endedAt?: string;
+  /** Third-party text: stored cleaned, never an instruction. */
+  title?: string;
+  /** The calendar invitees and attendees, by address. `external` when the provider knows it. */
+  invitees: Array<{ email: string; name?: string; external?: boolean }>;
+  transcriptAvailable: boolean;
+}
+
+/** One stretch of speech. `side` is "us" for the deployment's own people, "them" for the others. */
+export interface TranscriptSegment {
+  side: "us" | "them" | "unknown";
+  speaker?: string;
+  text: string;
+  /** Milliseconds from the start of the meeting. */
+  startMs?: number;
+}
+
+/**
+ * Recordings and transcripts from a meeting-notes tool. Read only. Everything it returns is
+ * untrusted third-party text (full taint): core stores it as data, fences it for the one model call
+ * that reads it, and keeps only quotes found word for word in it.
+ */
+export interface MeetingNotesProvider {
+  readonly name: string;
+  /** Recordings created after `since`, newest or oldest first, a page at a time. */
+  listRecordings(args: { since: string; cursor?: string; limit: number }): Promise<Page<MeetingRecording>>;
+  getTranscript(externalId: string): Promise<{ segments: TranscriptSegment[]; cost?: Cost }>;
 }
 
 /** Used by the ship and code-mode modules; not part of the core contract. */

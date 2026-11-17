@@ -6,6 +6,12 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Meeting notes
+
+- Meeting notes, behind `convert:notes_enabled`: the new `meeting_notes_ingest` job reads recordings from Fathom or Granola hourly and keeps one only when an invitee is a known contact (never internal meetings or strangers), storing its transcript in `BUCKET` for a year; `meeting_notes_extract` makes one `worker`-role call per call recorded (100 cents a day) and keeps pain points, objections, next steps and competitors only as quotes found word for word in the transcript. They show in your prep and handoff briefs, kept apart from your own notes; objections are filed for you to answer; and Monday's digest names competitors mentioned on calls. With `convert:notes_in_recap`, recap drafts add the agreed next steps, quoted, and wait for your review. Needs migration 0038 ([docs/MEETING-NOTES.md](docs/MEETING-NOTES.md)).
+- Two adapters, `notes-fathom` and `notes-granola`, for the new `MeetingNotesProvider` port. The template lists both disabled.
+- Erasure now also deletes a person's meeting transcripts, and objections filed from their words (from calls, and from replies, where they were kept before) lose those words: unapproved ones are deleted, approved ones keep your answer.
+
 ### Sourcing and signals
 
 - A new adapter, `data-leadmagic` (ContactFinder, EmailVerifier and the new EmploymentChecker port), for LeadMagic. The template lists it disabled; enable it and put `LEADMAGIC_API_KEY`. Once enabled it is the second finder in the email waterfall, after Hunter, behind the existing `discovery:email_waterfall_enabled`; it charges only for an address it validated. A `VERIFIER` constant in `src/index.ts` chooses which adapter verifies: Hunter by default, or LeadMagic, which is cheaper but reports accept-all domains as unknown, so `allow_risky` has no effect with it ([docs/SOURCING.md](docs/SOURCING.md#choosing-the-verifier)).

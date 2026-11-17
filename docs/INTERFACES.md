@@ -637,6 +637,31 @@ export interface CrmSink {
 }
 ```
 
+### MeetingNotesProvider (optional)
+
+Recordings and transcripts from a meeting-notes tool, read only. The meeting notes jobs are its only callers ([MEETING-NOTES.md](MEETING-NOTES.md)): ingest lists recordings and fetches the transcript of one that belongs to a known contact, and extraction reads it once, fenced. Everything it returns is untrusted text (full taint).
+
+```ts
+export interface MeetingRecording {
+  externalId: string;
+  startedAt: string;                   // the recording's start, or the calendar event's
+  endedAt?: string;
+  title?: string;
+  invitees: Array<{ email: string; name?: string; external?: boolean }>;
+  transcriptAvailable: boolean;
+}
+
+export interface TranscriptSegment { side: "us" | "them" | "unknown"; speaker?: string; text: string; startMs?: number }
+
+export interface MeetingNotesProvider {
+  readonly name: string;
+  listRecordings(args: { since: string; cursor?: string; limit: number }): Promise<Page<MeetingRecording>>;
+  getTranscript(externalId: string): Promise<{ segments: TranscriptSegment[]; cost?: Cost }>;
+}
+```
+
+`side` is "us" for the deployment's own people and "them" for the others, as far as the tool can tell; core accepts pain points and objections only from "them" or "unknown". An adapter marks an invitee `external: false` only when the tool says so. There is no shared contract runner: an adapter tests its listing, paging and transcript mapping in its own `contract.test.ts`.
+
 ### Sandbox (modules only)
 
 Single commands in an isolated environment, for optional modules such as the planned `code-mode` module. Nothing in this release uses it, and it is not part of the core contract; it is declared here so module authors share one shape. The ship module runs its builds through `CodingSandbox` instead.
@@ -799,6 +824,8 @@ The adapters in `packages/adapters/`, each with a hermetic contract test, and th
 | `data-xai` | SignalSource | Planned. Public-post signals with live search |
 | `calendar-google` | CalendarProvider | Read-only: lists the primary calendar's events with privacy-limited fields, over the shared Google OAuth. Available |
 | `billing-stripe` | BillingProvider | `t=,v1=` signature verified before parsing, 5-minute tolerance; checkout links only through the human-only offers path. Available |
+| `notes-fathom` | MeetingNotesProvider | Fathom's API: recordings with calendar invitees (and their internal or external flag), transcripts with speakers matched to invitees. Available ([MEETING-NOTES.md](MEETING-NOTES.md)) |
+| `notes-granola` | MeetingNotesProvider | Granola's public API (Business or Enterprise plans): notes with their calendar event and attendees, paged transcripts attributed to the owner or the others. Available |
 | `crm-attio` | CrmSink | Attio's REST API: companies upserted on `domains`, people on `email_addresses` with a company reference, activity as dated plain-text notes; one retry on a `429` after `Retry-After`. Available ([CRM.md](CRM.md)) |
 | `code-github` | CodeHost | GitHub over plain fetch, for the ship module: one commit per task through the git data API on `ship/<task>`, in the target repository or a configured fork, idempotent pull requests, commit comparison for deploy detection, `X-Hub-Signature-256` verified in constant time before parsing. It cannot merge. Available |
 | `sandbox-cloudflare` | CodingSandbox | A Cloudflare Container per ship task with internet access off and no credentials; the Worker lets through a read-only clone, package reads and the coder model only. Agent profiles `claude-code` (default) and `opencode`. Needs a plan with Containers. Available |

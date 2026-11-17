@@ -3,8 +3,11 @@
 //
 // The text is deterministic: a short, plain-text note built from the contact's first name, the
 // product and agent names in gtm.config.ts, the booking URL when one is configured, and the meeting
-// day in the contact's time zone when it is known. No model writes it and nothing from outside goes
-// into it. It is a starting point the operator edits in their mail client.
+// day in the contact's time zone when it is known. No model writes it. The one outside text it can
+// carry is a recap's "What we agreed" list (convert:notes_in_recap): next steps quoted word for
+// word from the recorded call (notes/read.ts); such a draft is marked per_draft_review. A recap
+// rebuilt by calendar sync carries none. It is a starting point the operator edits in their mail
+// client.
 //
 // Each draft is keyed `convert:<meeting code>:<kind>` (drafts.idempotency_key), so a rerun, a
 // redelivered command or two jobs racing can never write it twice; the insert is the claim. A draft
@@ -14,6 +17,7 @@
 // follow-up or rebook action classes, which stay at "draft and ask" here: nothing is sent
 // automatically, whatever the class's level. Mailbox mirroring is not offered for these drafts: the
 // operator approves in chat and sends from the mail client.
+import { recapNextSteps } from "../notes/read.ts";
 import type { ActionClass } from "../autonomy/levels.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { DraftKind } from "../data/enums.ts";
@@ -47,6 +51,8 @@ export interface DraftContext {
   meetingStart: string;
   /** Why a rebook is drafted. */
   reason?: "cancelled" | "no_show";
+  /** Next steps agreed on the recorded call, quoted as said (convert:notes_in_recap). Recap only. */
+  agreed?: readonly string[];
 }
 
 /** "Tuesday, 10 November", in the time zone when it is a valid one, else in UTC. */
@@ -80,6 +86,7 @@ export function draftText(kind: ConvertDraftKind, ctx: DraftContext, config: Pic
       subject: "Following up on our conversation",
       lines: [
         `Thank you for your time on ${day} and for walking me through how your team works today.`,
+        ...(ctx.agreed && ctx.agreed.length > 0 ? [["What we agreed:", ...ctx.agreed.map((q) => `- "${q}"`)].join("\n")] : []),
         `If questions about ${product} came up afterwards, or you would like to bring a colleague into the next conversation, just reply here.`,
         next,
       ],
@@ -114,6 +121,12 @@ export interface ConvertDraftDeps {
   chatId?: string | undefined;
   now: Date;
   log: JobLogger;
+  /**
+   * convert:notes_in_recap: a recap carries the next steps agreed on the recorded call. Such a draft
+   * is the prospect's words sent back to them, so it is marked for review of that draft and, like
+   * every meeting draft, waits for your approval.
+   */
+  callNotesInRecap?: boolean;
 }
 
 export interface ConvertDraftInput {
@@ -142,10 +155,21 @@ export async function createConvertDraft(deps: ConvertDraftDeps, input: ConvertD
     // A gate: a suppressed, opted-out or erased address, or a check that cannot be read, gets no draft.
     const suppression = await checkSuppression(db, [input.contact.email]);
     if (!suppression.ok) return { status: "suppressed" };
-    const text = draftText(input.kind, { firstName: input.contact.first_name, timezone: input.contact.timezone, meetingStart: input.meetingStart, ...(input.reason ? { reason: input.reason } : {}) }, deps.config);
+    const agreed = input.kind === "recap" && deps.callNotesInRecap ? await recapNextSteps(db, input.contact.id, input.meetingStart) : [];
+    const text = draftText(
+      input.kind,
+      { firstName: input.contact.first_name, timezone: input.contact.timezone, meetingStart: input.meetingStart, ...(input.reason ? { reason: input.reason } : {}), ...(agreed.length > 0 ? { agreed } : {}) },
+      deps.config,
+    );
     const filed = FILED[input.kind];
     const at = deps.now.toISOString();
-    const notes = JSON.stringify({ meeting: input.code, step: input.kind, attribution: input.attribution, ...(input.reason ? { reason: input.reason } : {}) });
+    const notes = JSON.stringify({
+      meeting: input.code,
+      step: input.kind,
+      attribution: input.attribution,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(agreed.length > 0 ? { per_draft_review: true, call_quotes: agreed.length } : {}),
+    });
     const chat = deps.chatId ?? deps.config.operator.allowedChatIds[0];
     const ask = async (id: string): Promise<boolean> => {
       if (!deps.operator || !deps.shown || !chat) return false;

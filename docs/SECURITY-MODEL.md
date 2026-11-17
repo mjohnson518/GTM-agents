@@ -231,6 +231,18 @@ The same page suggests `keyword-portfolio` queries and `personas` from the appro
 
 `tests/security/targeting-suggest.test.ts` proves the gates, that a pick outside the suggestion or an edit beyond its main text is refused, that served items are kept, and that nothing reaches discovery before a person approves the exact file.
 
+## Meeting notes
+
+Call transcripts are a new source of untrusted text (full taint), from the deployment's meeting-notes tool ([MEETING-NOTES.md](MEETING-NOTES.md)):
+
+- **Read only for known contacts.** A recording is read only when an invitee is an existing, unsuppressed contact. Internal meetings and strangers are never fetched.
+- **One fenced model call.** The extraction call puts the transcript, redacted and fenced, in the user turn. Its system prompt is a fixed rubric and the brain's approved competitor names, and no tool is offered, so nothing in a transcript can call one, choose a recipient or change a send.
+- **Only the speaker's words are kept.** Every stored item must be found word for word in the redacted transcript (pain points and objections on the prospect's side), and is dropped if it holds a link, an address, a dash or a redaction marker. A competitor must be a name in the brain. No text the model writes is stored.
+- **Where it goes.** Your briefs, which only you see, labelled as the prospect's words. Recap drafts, only behind `convert:notes_in_recap`, marked for review of that draft and always waiting for approval. Objections, filed unapproved for you to answer.
+- **Erasure and retention.** Transcripts are deleted when the person is erased (before their rows, refusing without the bucket) and a year after the meeting. Objections filed from a person's words, from calls or replies, lose those words on erasure.
+
+`tests/security/meeting-notes.test.ts` proves that an injected transcript causes no tool call, draft or send and leaves only clean quotes, and the erasure of transcripts and objections.
+
 ## The CRM mirror
 
 The `crm_mirror` job is the one path that copies data about people to a third party on a schedule ([CRM.md](CRM.md)). What it may send is fixed in code:

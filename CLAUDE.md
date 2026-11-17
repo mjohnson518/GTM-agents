@@ -59,7 +59,7 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/, ship/ (the ship module wired in)
 docs/                QUICKSTART, ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
-                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, CRM, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, TARGETING, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
+                     SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, MEETING-NOTES, CRM, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, TARGETING, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
 scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
 ```
@@ -170,6 +170,7 @@ A pull request that weakens any of these is rejected, whatever else it does.
 | How metrics and reports are defined | [docs/MEASUREMENT.md](docs/MEASUREMENT.md) |
 | How meetings are detected and what a booking does | [docs/CONVERT.md](docs/CONVERT.md) |
 | What the CRM mirror copies into a CRM, and what it never sends | [docs/CRM.md](docs/CRM.md) |
+| How call recordings become quotes in briefs, recaps and objections | [docs/MEETING-NOTES.md](docs/MEETING-NOTES.md) |
 | How product events and billing move contacts and deals | [docs/LIFECYCLE.md](docs/LIFECYCLE.md) |
 | How autonomy is earned, proposed, confirmed and lost | [docs/AUTONOMY.md](docs/AUTONOMY.md) |
 | How signal sources find dated reasons to write | [docs/SIGNALS.md](docs/SIGNALS.md) |

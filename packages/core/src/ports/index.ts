@@ -27,7 +27,7 @@ export { EMPLOYMENT_STATUSES, VERIFICATION_STATUSES } from "./contact.ts";
 export type { ContactFinder, EmailVerifier, EmploymentChecker, EmploymentStatus, VerificationStatus } from "./contact.ts";
 export type { EmailEvent, EmailProvider, InboundMessage, InboxProvider, OutboundMessage, SendOutcome } from "./email.ts";
 export type { ApprovalRequest, OperatorChannel, OperatorMessage, OperatorUpdate } from "./operator.ts";
-export type { BillingEvent, BillingInterval, BillingProvider, CalendarAttendee, CalendarEvent, CalendarEventSummary, CalendarProvider, CrmSink, Sandbox } from "./business.ts";
+export type { BillingEvent, BillingInterval, BillingProvider, CalendarAttendee, CalendarEvent, CalendarEventSummary, CalendarProvider, CrmSink, MeetingNotesProvider, MeetingRecording, Sandbox, TranscriptSegment } from "./business.ts";
 export { SHIP_BRANCH_PREFIX, SHIP_TASK_ID, shipBranch, type ChangedFile, type CheckConclusion, type ChecksState, type ChecksSummary, type CodeHost, type CodeHostEvent, type CodingCollectFailure, type CodingCollectResult, type CodingRunState, type CodingSandbox, type CodingSandboxLimits, type CodingStatus, type CodingStep, type CodingStepKind, type CommitRequest, type PathKind, type CommitResult, type DeploymentState, type PullRequestRef, type PullRequestRequest, type PullRequestState, type RepoFile } from "./code.ts";
 export { MODEL_ROLES } from "./model.ts";
 export type { CompletionRequest, CompletionResult, ModelContentBlock, ModelGateway, ModelRole, ModelStreamHandlers } from "./model.ts";

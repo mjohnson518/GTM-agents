@@ -58,7 +58,7 @@ export const OUTBOUND_WRITERS: readonly OutboundWriter[] = Object.freeze([
   },
   {
     id: "meeting-recap",
-    writes: "the note after a held meeting",
+    writes: "the note after a held meeting; with convert:notes_in_recap, plus next steps quoted word for word from the recorded call, marked for review of each draft",
     module: "packages/core/src/convert/drafts.ts",
     actionClasses: ["post_meeting_followup"],
     source: "fixed",

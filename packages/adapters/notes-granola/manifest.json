@@ -1,0 +1,13 @@
+{
+  "name": "notes-granola",
+  "version": "1.0.0",
+  "ports": ["MeetingNotesProvider"],
+  "capabilities": [],
+  "requiredSecrets": ["GRANOLA_API_KEY"],
+  "optionalSecrets": [],
+  "flags": ["convert:notes_enabled"],
+  "tools": {},
+  "costs": {},
+  "limits": { "perSecond": 5 },
+  "contract": "./contract.test.ts"
+}

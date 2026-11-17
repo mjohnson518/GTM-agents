@@ -17,6 +17,7 @@ import {
   fullDaysBefore,
   maturedTotals,
   rejectionsByReason,
+  competitorMentions,
   replyRate,
   startOfUtcDay,
   windowLabel,
@@ -58,6 +59,11 @@ export interface FunnelData {
   matured: MaturedTotals | null;
   holdout: HoldoutReportData | null;
   rejections: RejectionCounts | null;
+  /**
+   * Competitors named on processed call recordings in the week, by the brain's own names
+   * (docs/MEETING-NOTES.md). Absent or empty: no line.
+   */
+  competitors?: Array<{ name: string; count: number }> | null;
 }
 
 async function section<T>(load: () => Promise<T>): Promise<T | null> {
@@ -71,15 +77,16 @@ async function section<T>(load: () => Promise<T>): Promise<T | null> {
 /** Load every section. Never throws. */
 export async function loadFunnelDigest(db: D1Database, now: Date): Promise<FunnelData> {
   const windows = funnelWindows(now);
-  const [sends, replies, delivery, matured, holdout, rejections] = await Promise.all([
+  const [sends, replies, delivery, matured, holdout, rejections, competitors] = await Promise.all([
     section(() => countSends(db, windows.week)),
     section(() => countReplies(db, windows.week)),
     section(() => deliveryHealth(db, windows.week)),
     section(() => maturedTotals(db, windows.matured, now)),
     section(() => loadHoldoutReport(db, now)),
     section(() => rejectionsByReason(db, windows.week)),
+    section(() => competitorMentions(db, windows.week)),
   ]);
-  return { windows, sends, replies, delivery, matured, holdout, rejections };
+  return { windows, sends, replies, delivery, matured, holdout, rejections, competitors };
 }
 
 export interface FunnelFlags {
@@ -122,6 +129,7 @@ export function renderFunnelDigest(d: FunnelData): string {
   lines.push(d.holdout ? liftLine(d.holdout) : `Holdout: ${UNREADABLE}`);
   lines.push(`Meetings, sign-ups, activations and paid: ${NOT_MEASURED}.`);
   lines.push(...rejectionLines(d.rejections));
+  if (d.competitors && d.competitors.length > 0) lines.push(`Competitors named on calls: ${d.competitors.map((c) => `${label(c.name, 40)} ${c.count}`).join(", ")}`);
 
   const flags = funnelFlags(d);
   if (flags.replyRate && d.matured) attention.push(`reply rate ${pct(replyRate(d.matured.humanReplies, d.matured.sends))} is under ${pct(FUNNEL_REPLY_RATE_FLOOR)} (${d.matured.sends} matured first touches)`);

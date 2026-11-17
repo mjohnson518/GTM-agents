@@ -17,6 +17,7 @@
 //     withdrawn, on any mail from the contact or anyone at the account after the meeting, a
 //     suppressed address, a sign-up, or a newer meeting with the contact or the account. A no-show
 //     never gets them.
+import { notesInRecap } from "../notes/flags.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import { PRODUCT_STATES } from "../data/enums.ts";
 import { claimEffect, releaseEffect } from "../events/effects.ts";
@@ -192,7 +193,7 @@ export async function runMeetingFollowups(deps: FollowupDeps): Promise<FollowupR
     .bind(new Date(now.getTime() - CONVERT_LIMITS.followUpLookbackDays * DAY_MS).toISOString(), new Date(now.getTime() + 25 * HOUR_MS).toISOString(), deps.maxRows)
     .all<FollowupRow>();
   result.meetings = rows.length;
-  const draftDeps = { db, config: deps.config, operator: deps.operator, shown: deps.shown, chatId: deps.chatId, now, log };
+  const draftDeps = { db, config: deps.config, operator: deps.operator, shown: deps.shown, chatId: deps.chatId, now, log, callNotesInRecap: await notesInRecap(deps.flags) };
 
   for (const row of rows) {
     try {

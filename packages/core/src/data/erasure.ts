@@ -29,6 +29,9 @@
 // records to a marker (the hash of the customer id) so a later billing event for them is refused.
 // The product user id comes from the caller or from the contact's lifecycle row, and the tombstone
 // keeps it so a later event naming that user is refused too.
+// Recorded meetings (notes/): each transcript is deleted from blob storage before the rows go, and
+// objections filed from the person's words (from their inbound mail or their meetings) are deleted,
+// or, once approved, lose the verbatim example.
 // A person followed to a new employer (signals/employment.ts) is one person at two addresses: a
 // champion candidate links the new address to the old contact (candidates.source_contact_id), and
 // erasure follows that link both ways, through addresses only (withLineage), so erasing either
@@ -65,13 +68,50 @@ const addressIn = (column: string) =>
 // Inbound mail about the person: mail they sent (by address, address hash or contact), delivery
 // reports about them (by failed-recipient hash), and mail whose subject, preview or headers name
 // one of their addresses. ?1 is the JSON list of addresses, ?2 of contact ids, ?3 of address hashes.
-const inboundAbout = `SELECT id, body_key FROM inbound_emails WHERE ${addressIn("sender_email")}
+const inboundWhere = `${addressIn("sender_email")}
   OR contact_id IN (SELECT value FROM json_each(?2))
   OR sender_sha256 IN (SELECT value FROM json_each(?3))
   OR sender_mailbox_sha256 IN (SELECT value FROM json_each(?3))
   OR EXISTS (SELECT 1 FROM json_each(inbound_emails.failed_recipients) f WHERE f.value IN (SELECT value FROM json_each(?3)))
-  OR EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(coalesce(subject, '') || ' ' || coalesce(body_preview, '') || ' ' || coalesce(headers, '')), value) > 0)
-  LIMIT 500`;
+  OR EXISTS (SELECT 1 FROM json_each(?1) WHERE instr(lower(coalesce(subject, '') || ' ' || coalesce(body_preview, '') || ' ' || coalesce(headers, '')), value) > 0)`;
+const inboundAbout = `SELECT id, body_key FROM inbound_emails WHERE ${inboundWhere} LIMIT 500`;
+
+/**
+ * Objections filed from the person's words: from their inbound mail (author inbound:<id>) or from
+ * their recorded meetings (author meeting:<meeting id>:<n>). An unapproved one is deleted; an
+ * approved one keeps its pattern and answer and loses the verbatim example. Run before the inbound
+ * rows go: the authors name them, and deleting an inbound row renames its objections' author to
+ * inbound:erased. ?1 is the JSON list of addresses, ?2 of contact ids, ?3 of address hashes.
+ */
+async function eraseObjections(db: D1Database, binds: [string, string, string]): Promise<D1PreparedStatement[]> {
+  const { results: inbound } = await db.prepare(`SELECT 'inbound:' || id AS author FROM inbound_emails WHERE ${inboundWhere}`).bind(...binds).all<{ author: string }>();
+  const { results: meetings } = await db.prepare("SELECT id FROM meetings WHERE contact_id IN (SELECT value FROM json_each(?1))").bind(binds[1]).all<{ id: string }>();
+  if (inbound.length === 0 && meetings.length === 0) return [];
+  // An exact prefix compare: LIKE would read the underscore in a meeting id as a wildcard.
+  const theirs = `(author IN (SELECT value FROM json_each(?1)) OR EXISTS (SELECT 1 FROM json_each(?2) m WHERE substr(objections.author, 1, length('meeting:' || m.value || ':')) = 'meeting:' || m.value || ':'))`;
+  const authors = JSON.stringify(inbound.map((r) => r.author));
+  const meetingIds = JSON.stringify(meetings.map((r) => r.id));
+  return [
+    db.prepare(`DELETE FROM objections WHERE approved_digest IS NULL AND ${theirs}`).bind(authors, meetingIds),
+    db.prepare(`UPDATE objections SET verbatim_example = NULL WHERE ${theirs}`).bind(authors, meetingIds),
+  ];
+}
+
+/**
+ * Delete the transcripts of the person's recorded meetings from blob storage before their rows go
+ * (the rows cascade with the contact). Throws on a storage error, or when transcripts exist and no
+ * bucket was given, so the erasure can simply run again.
+ */
+async function eraseTranscripts(db: D1Database, bucket: Pick<R2Bucket, "delete"> | null | undefined, contactIds: string): Promise<void> {
+  const { results } = await db
+    .prepare("SELECT transcript_key FROM meetings WHERE contact_id IN (SELECT value FROM json_each(?1)) AND transcript_key IS NOT NULL")
+    .bind(contactIds)
+    .all<{ transcript_key: string }>();
+  const keys = results.map((r) => r.transcript_key);
+  if (keys.length === 0) return;
+  if (!bucket) throw new TypeError("this person has stored meeting transcripts; pass the BUCKET binding as options.bucket so they are erased too");
+  for (let i = 0; i < keys.length; i += BLOB_DELETE_CHUNK) await bucket.delete(keys.slice(i, i + BLOB_DELETE_CHUNK));
+}
 
 // R2 deletes at most 1,000 keys per call.
 const BLOB_DELETE_CHUNK = 1000;
@@ -276,7 +316,11 @@ export async function eraseContact(db: D1Database, email: string, options: Erasu
   const productUserId = userIds[0] ?? null;
   // Inbound mail first, bodies before rows, then event payloads: a storage failure throws before
   // the person's other rows are touched, so the erasure can simply run again.
+  // Objections from their words first: their authors name the inbound rows about to go.
+  const objections = await eraseObjections(db, [addresses, ids, addressHashes]);
+  if (objections.length > 0) await db.batch(objections);
   await eraseInbound(db, options.bucket, inboundAbout, [addresses, ids, addressHashes]);
+  await eraseTranscripts(db, options.bucket, ids);
   const productData = await eraseProductData(db, options.bucket, { contactIds: contacts.map((c) => c.id), userIds, hashes: JSON.parse(addressHashes) as string[] });
   await db.batch([
     tombstone.bind(fields.email_sha256, fields.mailbox_sha256, productUserId, options.source, now),
@@ -355,6 +399,8 @@ export async function eraseByHash(db: D1Database, emailSha256: string, options: 
   const now = (options.now ?? new Date()).toISOString();
   // Mail they sent and delivery reports about them are found by the hash too, and so are their
   // billing records; their product user id, when known, finds their event payloads and feedback.
+  const objections = await eraseObjections(db, ["[]", "[]", JSON.stringify([emailSha256])]);
+  if (objections.length > 0) await db.batch(objections);
   await eraseInbound(db, options.bucket, inboundAbout, ["[]", "[]", JSON.stringify([emailSha256])]);
   const productData = await eraseProductData(db, options.bucket, { contactIds: [], userIds: options.productUserId ? [options.productUserId] : [], hashes: [emailSha256] });
   await db.batch([

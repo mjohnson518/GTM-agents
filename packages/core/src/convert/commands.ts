@@ -13,6 +13,7 @@
 // keys; notes are stored as written, for the operator. The meeting commands need
 // convert:calendar_enabled (an unreadable flag refuses); /meetings and prep only read, so they need
 // no flag beyond the operator agent. Nothing here sends mail: drafts wait for approval.
+import { notesInRecap } from "../notes/flags.ts";
 import type { GtmConfig } from "../config/schema.ts";
 import type { FlagReader, JobLogger } from "../jobs/registry.ts";
 import { readOn } from "../outreach/flags.ts";
@@ -221,7 +222,7 @@ export async function runConvertCommand(deps: ConvertCommandDeps, command: Conve
   if (!(await readOn(deps.flags, CONVERT_FLAGS.calendar))) return `Calendar sync is off (${CONVERT_FLAGS.calendar}), so meeting commands do nothing. Nothing was changed.`;
   const row = await byCode(db, command.code);
   if (!row) return `There is no booking ${command.code}. /meetings lists them.`;
-  const draftDeps = { db, config: deps.config, operator: deps.operator, shown: deps.shown, chatId: deps.chatId, now, log };
+  const draftDeps = { db, config: deps.config, operator: deps.operator, shown: deps.shown, chatId: deps.chatId, now, log, callNotesInRecap: await notesInRecap(deps.flags) };
 
   if (command.kind === "link") {
     if (row.state === "attributed" && row.m_contact) return `Meeting ${row.code} is already linked to ${row.m_contact}. Send meeting-unlink-${row.code} first to change it.`;

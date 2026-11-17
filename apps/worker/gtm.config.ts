@@ -48,6 +48,10 @@ export default defineConfig({
     "inbox-gmail": { options: {} },
     "email-cloudflare": { options: {} },
     "calendar-google": { options: {} },
+    // Meeting notes (docs/MEETING-NOTES.md). Off until you set enabled to true and put the key
+    // (FATHOM_API_KEY, or GRANOLA_API_KEY, which needs a Granola Business or Enterprise plan).
+    "notes-fathom": { enabled: false, options: {} },
+    "notes-granola": { enabled: false, options: {} },
     "data-jobboards": { options: {} },
     "billing-stripe": { options: {} },
     // The CRM mirror's sink (docs/CRM.md). Off until you set enabled to true and put ATTIO_API_KEY.

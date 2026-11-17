@@ -18,6 +18,7 @@ export const PORT_NAMES = [
   "BillingProvider",
   "ModelGateway",
   "CrmSink",
+  "MeetingNotesProvider",
   "CodeHost",
   "CodingSandbox",
 ] as const;

@@ -80,8 +80,10 @@ The Worker has exactly one cron trigger, `* * * * *`. Every minute the scheduled
 | `data-jobboards` | SignalSource | Open-role counts from public hiring boards; no key | Signals |
 | `billing-stripe` | BillingProvider | Signed billing webhooks and subscription reads | Lifecycle billing |
 | `crm-attio` | CrmSink | A one-way copy of contacts, companies and our activity into Attio | The CRM mirror ([CRM.md](CRM.md)) |
+| `notes-fathom` | MeetingNotesProvider | Call recordings and transcripts from Fathom | Meeting notes ([MEETING-NOTES.md](MEETING-NOTES.md)) |
+| `notes-granola` | MeetingNotesProvider | Call notes and transcripts from Granola (Business or Enterprise) | Meeting notes |
 
-The template's `gtm.config.ts` and `src/index.ts` wire all twelve; `data-leadmagic` and `crm-attio` start with `enabled: false`. Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
+The template's `gtm.config.ts` and `src/index.ts` wire all fourteen; `data-leadmagic`, `crm-attio`, `notes-fathom` and `notes-granola` start with `enabled: false`. Each adapter's `manifest.json` in [packages/adapters](../packages/adapters/) lists its secrets, flags and cost table.
 
 ## 2. Requirements by capability
 
@@ -100,11 +102,12 @@ Start with the foundation and the operator chat, then add one capability at a ti
 | **Reports** | Operator chat | none | none | none | `ops:daily_scorecard`, `ops:funnel_digest`, `ops:cost_digest` | none | None: no model calls, no spend |
 | **Lifecycle** (product events and billing) | Operator chat | Your product (the host application), and a billing provider (the template wires Stripe) if you want billing events | `PRODUCT_WEBHOOK_SECRET`; `PRODUCT_READ_SECRET` for the pull; for Stripe, `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` | `PRODUCT_APP_URL`; in `src/index.ts`, `createLifecycle` with your events queue names (its `billing` is already `billing-stripe`); `adapters` `billing-stripe` | `lifecycle:enabled`; optional `lifecycle:reconcile_enabled`, `billing:enabled`; `outreach:ref_tokens_enabled` for attribution tokens | Your host posts to `/api/webhooks/product`; your billing provider to `/api/webhooks/billing` | Event sweeps every 5 minutes, hourly lifecycle checks, a nightly pull of at most 1,800 rows; no model calls |
 | **Meetings** (calendar sync) | Operator chat; inbox and delivery recommended | Google Cloud and the operator's Google Calendar | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (shared with the inbox), `GOOGLE_CALENDAR_REFRESH_TOKEN` | `adapters` `calendar-google` | `convert:calendar_enabled`; optional `convert:post_demo_enabled`, `convert:handoff_enabled` | none | `calendar_sync` every 15 minutes; no model calls, no spend |
+| **Meeting notes** ([MEETING-NOTES.md](MEETING-NOTES.md)) | Meetings recommended; delivery for recap drafts | Fathom, or Granola on a Business or Enterprise plan | `FATHOM_API_KEY` or `GRANOLA_API_KEY` | `adapters` `notes-fathom` or `notes-granola` with `enabled: true`; `models.roles.worker` and its price; brain `competitors` | `convert:notes_enabled`; optional `convert:notes_in_recap` | none | Ingest hourly with no spend; one worker-role call per call recorded (100 cents a day) |
 | **CRM mirror** ([CRM.md](CRM.md)) | Foundation; useful once sourcing runs | Attio | `ATTIO_API_KEY` | `adapters` `crm-attio` with `enabled: true` (the template lists it disabled) | `crm:mirror_enabled`; optional `crm:mirror_per_run` | none | `crm_mirror` every 15 minutes; no model calls, no spend |
 
 The cents figures are each job's default daily spend cap in this toolkit, always enforced; they are not vendor prices.
 
-**Adding capabilities one at a time.** The template's `gtm.config.ts` enables ten adapters (it lists `data-leadmagic` and `crm-attio` too, disabled), and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
+**Adding capabilities one at a time.** The template's `gtm.config.ts` enables ten adapters (it lists `data-leadmagic`, `crm-attio`, `notes-fathom` and `notes-granola` too, disabled), and `src/index.ts` wires all of them. An adapter's `enabled` setting decides only which secrets `gtm setup` and `gtm doctor` ask for; its flags decide whether anything uses it. So, to start with only the chat, set `enabled: false` on the adapters you have not set up yet:
 
 ```ts
 adapters: {
@@ -342,6 +345,8 @@ Before the first deploy, Wrangler offers to create the Worker so it can hold the
 | `MAIL_PUSH_SECRET` | `inbox-gmail` push, `/api/webhooks/mail` | No (needed for push) | Generate: `openssl rand -hex 32`; also goes in the push subscription's endpoint | `/api/webhooks/mail` answers 503 |
 | `STRIPE_SECRET_KEY` | `billing-stripe` | Yes, when enabled | Stripe: a secret or restricted key that can read customers and subscriptions | Customer and subscription reads fail |
 | `STRIPE_WEBHOOK_SECRET` | `billing-stripe` | Yes, when enabled | Stripe: the webhook endpoint's signing secret | `/api/webhooks/billing` answers 503 |
+| `FATHOM_API_KEY` | `notes-fathom` | Yes, when enabled | Fathom: Settings, API Access | The meeting notes ingest run fails; nothing else is affected |
+| `GRANOLA_API_KEY` | `notes-granola` | Yes, when enabled | Granola: an API key (Business or Enterprise plan) | As above |
 | `ATTIO_API_KEY` | `crm-attio` | Yes, when enabled | Attio: an access token with `record_permission:read-write`, `object_configuration:read` and `note:read-write` | The `crm_mirror` run fails and nothing is mirrored; nothing else is affected |
 
 `email-cloudflare` and `data-jobboards` need no secret. "Required, when enabled" means `gtm setup` and `gtm doctor` ask for it while the adapter is enabled in `gtm.config.ts`; `gtm doctor --remote` fails until each required secret is set, and `gtm setup` ends by printing one `npx wrangler secret put` line per missing secret.

@@ -164,7 +164,7 @@ describe("referrals", () => {
 });
 
 describe("objections", () => {
-  it("are filed unapproved for curation, and the sender's example is cleared when their mail is erased", async () => {
+  it("are filed unapproved for curation, and deleted when the sender is erased before anyone answered them", async () => {
     const contact = await seedReplyContact(db, { email: "jane@globex.example" });
     await seedInbound(db, env.BUCKET, { sender: contact.email, contactId: contact.id, body: "Our CI already retries failed tests automatically." });
     await triage(triageAnswer({ intent: "objection", confidence: 0.85, quote: "Our CI already retries failed tests automatically." }));
@@ -173,8 +173,9 @@ describe("objections", () => {
     expect(filed?.response_template).toBe("");
     expect(filed?.verbatim_example).toBe("Our CI already retries failed tests automatically.");
     await eraseContact(db, contact.email, { source: "operator", bucket: env.BUCKET });
-    const after = await one<{ author: string; verbatim_example: string | null }>("SELECT author, verbatim_example FROM objections");
-    expect(after).toEqual({ author: "inbound:erased", verbatim_example: null });
+    // Unapproved, it held nothing but their words: it goes with them. (An approved one keeps its
+    // answer and loses the example; tests/security/meeting-notes.test.ts covers that.)
+    expect(await one("SELECT author, verbatim_example FROM objections")).toBeNull();
   });
 
   it("get one answer per contact: a second objection gets no draft", async () => {

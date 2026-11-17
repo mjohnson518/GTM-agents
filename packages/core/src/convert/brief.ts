@@ -2,13 +2,17 @@
 //
 // Both are built from the database alone, deterministically, with no model call: who the person is,
 // the account and its fit, recent signals (type and date only), the last touches, how they replied
-// (intents only), the deal, earlier meetings and the operator's own notes. They go to the operator
+// (intents only), the deal, earlier meetings, the operator's own notes, and what recorded calls
+// produced (notes/read.ts: the prospect's words, checked against the transcript, under their own
+// heading so they never pose as the operator's notes). They go to the operator
 // and nowhere else.
 //
 // What never goes in: inbound mail text or subjects, signal headlines or source pages (text from
 // outside), calendar titles (never fetched), and other people at the account by name or address
-// (they are counted). Every value read from a record is passed through label(), which keeps plain
+// (they are counted). Call quotes are the one outside text shown, each found word for word in a
+// transcript and labelled as the prospect's. Every value read from a record is passed through label(), which keeps plain
 // characters and caps the length. Erasure deletes stored briefs about a person (data/erasure.ts).
+import { CALL_NOTES_HEADING, CALL_NOTES_SQL, callNotesFromRows, type CallNotes } from "../notes/read.ts";
 import { fitMessage, label, plural } from "../reports/format.ts";
 
 export interface ContactBrief {
@@ -34,6 +38,8 @@ export interface ContactBrief {
   deal: { id: string; stage: string; value_cents: number | null; currency: string | null } | null;
   meetings: Array<{ starts_at: string; status: string; outcome: string | null }>;
   notes: Array<{ occurred_at: string | null; summary: string }>;
+  /** What processed call recordings produced: the prospect's words, checked against the transcript. */
+  calls: CallNotes[];
   colleagues: { total: number; warm: number };
 }
 
@@ -60,7 +66,7 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
     .first<ContactBrief["contact"]>();
   if (!contact) return null;
   const key = contact.account_key;
-  const [account, fit, persona, first, signals, touches, replies, deal, meetings, notes, colleagues] = await db.batch([
+  const [account, fit, persona, first, signals, touches, replies, deal, meetings, notes, colleagues, calls] = await db.batch([
     db
       .prepare(
         `SELECT a.name, COALESCE(af.segment, a.segment) AS segment, a.tier, af.fit_score, af.prescore, af.team_size
@@ -88,13 +94,17 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
       )
       .bind(contactId, key ?? ""),
     db.prepare("SELECT starts_at, status, outcome FROM calendar_meetings WHERE contact_id = ?1 ORDER BY starts_at DESC LIMIT 5").bind(contactId),
-    db.prepare("SELECT occurred_at, summary FROM meetings WHERE contact_id = ?1 AND summary IS NOT NULL ORDER BY COALESCE(occurred_at, created_at) DESC LIMIT 2").bind(contactId),
+    // Only your own notes (the notes command writes calendar: rows). Call recordings are read below.
+    db
+      .prepare("SELECT occurred_at, summary FROM meetings WHERE contact_id = ?1 AND summary IS NOT NULL AND external_id LIKE 'calendar:%' ORDER BY COALESCE(occurred_at, created_at) DESC LIMIT 2")
+      .bind(contactId),
     db
       .prepare(
         `SELECT COUNT(*) AS total, SUM(CASE WHEN warmth IN ('warming', 'engaged', 'hot', 'customer') THEN 1 ELSE 0 END) AS warm
            FROM contacts WHERE ?2 <> '' AND account_key = ?2 AND id <> ?1`,
       )
       .bind(contactId, key ?? ""),
+    db.prepare(CALL_NOTES_SQL).bind(contactId),
   ]);
   const one = <T>(r: D1Result<unknown> | undefined) => (r?.results?.[0] as T | undefined) ?? null;
   const all = <T>(r: D1Result<unknown> | undefined) => (r?.results ?? []) as T[];
@@ -111,6 +121,7 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
     deal: one<NonNullable<ContactBrief["deal"]>>(deal),
     meetings: all<ContactBrief["meetings"][number]>(meetings),
     notes: all<ContactBrief["notes"][number]>(notes),
+    calls: callNotesFromRows(all<unknown>(calls)),
     colleagues: { total: Number(counts?.total ?? 0), warm: Number(counts?.warm ?? 0) },
   };
 }
@@ -158,6 +169,12 @@ function contactLines(b: ContactBrief): string[] {
   lines.push(b.deal ? `Deal: ${label(b.deal.stage, 20)}, ${money(b.deal.value_cents, b.deal.currency)}` : "Deal: none");
   if (b.meetings.length > 0) lines.push(`Meetings: ${b.meetings.map((m) => `${day(m.starts_at)} ${label(m.outcome ?? m.status, 15)}`).join("; ")}`);
   for (const note of b.notes) lines.push(`Your notes (${day(note.occurred_at)}): ${label(note.summary.replace(/\s+/g, " "), 300)}`);
+  for (const call of b.calls) {
+    lines.push(`${CALL_NOTES_HEADING}, ${day(call.occurred_at)}:`);
+    for (const q of call.pain_points) lines.push(`  Pain: "${label(q, 200)}"`);
+    for (const q of call.objections) lines.push(`  Objection: "${label(q, 200)}"`);
+    for (const s of call.next_steps) lines.push(`  Next step (${s.owner === "us" ? "ours" : "theirs"}): "${label(s.quote, 200)}"`);
+  }
   return lines;
 }
 

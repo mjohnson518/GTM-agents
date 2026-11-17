@@ -125,7 +125,7 @@ Warmth, the deal stage and stopped sequences only move forward. Unlinking or can
 
 Both are static, deterministic and built from the database alone: no model, no web.
 
-- **Prep brief** (on booking, in the 24-hour reminder, and on demand with `prep-<contact id or email>` for any contact): who they are, the account, segment, team size and fit, recent signals (type and date only), relationship history, the last touches (subjects of your own emails only), reply intents (never their text), the deal, earlier meetings and your own meeting notes. Other people at the account are counted, never named.
+- **Prep brief** (on booking, in the 24-hour reminder, and on demand with `prep-<contact id or email>` for any contact): who they are, the account, segment, team size and fit, recent signals (type and date only), relationship history, the last touches (subjects of your own emails only), reply intents (never their text), the deal, earlier meetings, your own meeting notes and, with meeting notes on, what recorded calls produced (the prospect's words, checked against the transcript, kept apart from your notes; [MEETING-NOTES.md](MEETING-NOTES.md)). Other people at the account are counted, never named.
 - **Deal handoff brief** (with `convert:handoff_enabled`, hourly): when a deal reaches `proposal` or `negotiation`, its value, age, stage history, meetings held and missed, and the contact section above, once per deal and stage. Pricing, offers and discounts stay with you.
 
 ## The drafts
@@ -157,6 +157,8 @@ The meeting commands need `convert:calendar_enabled`; `/meetings` and `prep-` on
 | `convert:calendar_enabled` | off | Calendar sync, the booked effects, reminders, the held question, recap and rebook drafts, and the meeting commands |
 | `convert:post_demo_enabled` | off | The day 4 and day 10 follow-up drafts |
 | `convert:handoff_enabled` | off | The deal handoff brief |
+| `convert:notes_enabled` | off | Meeting notes from Fathom or Granola: recordings, transcripts and the quotes extracted from them ([MEETING-NOTES.md](MEETING-NOTES.md)) |
+| `convert:notes_in_recap` | off | Recap drafts add the next steps agreed on the recorded call, quoted, and are marked for review of that draft |
 
 An unreadable flag counts as off.
 
@@ -168,7 +170,7 @@ An unreadable flag counts as off.
 | `meeting_followups` | :05, :20, :35, :50 | `convert:calendar_enabled` | 1 minute, 200 meetings |
 | `deal_handoffs` | hourly at :10 | `convert:handoff_enabled` | 30 seconds, 20 deals |
 
-None calls a model or spends. `calendar_sync` is critical, so the cron health check watches it, and safe to rerun.
+None calls a model or spends; the meeting notes jobs are in [MEETING-NOTES.md](MEETING-NOTES.md). `calendar_sync` is critical, so the cron health check watches it, and safe to rerun.
 
 ## Limits
 
