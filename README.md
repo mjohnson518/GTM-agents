@@ -83,7 +83,7 @@ npx gtm doctor --remote              # also checks SPF, DKIM and DMARC on your s
 npx wrangler deploy --dry-run        # the Worker bundles from placeholders
 ```
 
-`examples/brains/acme` is a complete brain to copy from. To deploy, follow [docs/DEPLOYING.md](docs/DEPLOYING.md): `gtm setup` creates the Cloudflare resources and fills in `wrangler.jsonc`, then `gtm migrate`, `gtm brain upload`, `gtm flags` and `gtm deploy`. Workers Paid is required.
+`npx gtm brain init` writes a first, draft brain from a short interview, and `examples/brains/acme` is a complete brain to copy from. With Claude Code, `/plugin install gtm-agents --marketplace mjohnson518/GTM-agents` adds skills that guide an agent through setup, the staged rollout and the day's approvals ([docs/QUICKSTART.md](docs/QUICKSTART.md#with-a-coding-agent)). To deploy, follow [docs/DEPLOYING.md](docs/DEPLOYING.md): `gtm setup` creates the Cloudflare resources and fills in `wrangler.jsonc`, then `gtm migrate`, `gtm brain upload`, `gtm flags` and `gtm deploy`. Workers Paid is required.
 
 ## Documentation
 

@@ -58,10 +58,12 @@ apps/worker          the deployable and the template `gtm init` copies (wrangler
                      src/index.ts, gtm.config.ts, brain/, templates/)
 apps/admin           Lit + Vite operator dashboard, served at /admin through the ASSETS binding
 examples/            brains/acme (fictional company), host-nextjs, packs/, overlay/, ship/ (the ship module wired in)
+plugins/gtm-agents   the Claude Code plugin: skills for deployers' and contributors' agents, listed by
+                     .claude-plugin/marketplace.json at the root
 docs/                QUICKSTART, ARCHITECTURE, INTERFACES, SECURITY-MODEL, DATA-MODEL, OPERATOR, SOURCING, OUTREACH, SENDING,
                      SEQUENCES, INBOX, REPLIES, MEASUREMENT, CONVERT, MEETING-NOTES, CRM, LIFECYCLE, AUTONOMY, SIGNALS, EXPERIMENTS, DASHBOARD, TARGETING, LEARNING, SHIP, DEPLOYING, RELEASING, BLUEPRINT, EVENT-CONTRACT, BRAIN-SCHEMA, DECISIONS, ROADMAP
 tests/               cross-package suites: security contract, evals, contract vectors (all synthetic)
-scripts/             placeholder check, secrets scan, migration order, house rules, doc links, hooks
+scripts/             placeholder check, secrets scan, migration order, house rules, doc links, plugin, hooks
 ```
 
 Core never imports a vendor SDK. Everything that talks to a third party is an adapter behind a port in [docs/INTERFACES.md](docs/INTERFACES.md). Everything company-specific lives in `brain/`, `templates/` and `gtm.config.ts`. Selling a different product must never require a code change.

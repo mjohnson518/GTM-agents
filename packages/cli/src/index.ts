@@ -17,6 +17,7 @@ Commands, in the order a new deployment uses them:
   setup             create the Cloudflare resources (D1, KV, R2, Vectorize, queues), reusing any
                     that exist, and fill their ids into wrangler.jsonc; lists the missing secrets
   migrate           apply the D1 migrations after checking their order
+  brain init        a short interview that writes a draft brain (--answers <file> for agents)
   brain validate    check brain/ and templates/ against the schema, byte budgets and lock file
   brain upload      upload the locked brain and approved templates to KV (files first, locks last)
   brain diff        show which components and templates differ from what is uploaded

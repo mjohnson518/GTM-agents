@@ -8,6 +8,8 @@ export interface Io {
   err(line: string): void;
   /** Ask a yes or no question. Absent when there is no terminal to ask on; commands then need --yes. */
   confirm?(question: string): Promise<boolean>;
+  /** Ask for one line of text; an empty line is an empty string. Absent when there is no terminal. */
+  ask?(question: string): Promise<string>;
 }
 
 async function askOnTerminal(question: string): Promise<boolean> {
@@ -19,11 +21,20 @@ async function askOnTerminal(question: string): Promise<boolean> {
   }
 }
 
+async function readLineOnTerminal(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(`${question} `)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
 export const processIo: Io = {
   cwd: process.cwd(),
   out: (line) => process.stdout.write(`${line}\n`),
   err: (line) => process.stderr.write(`${line}\n`),
-  ...(process.stdin.isTTY ? { confirm: askOnTerminal } : {}),
+  ...(process.stdin.isTTY ? { confirm: askOnTerminal, ask: readLineOnTerminal } : {}),
 };
 
 export interface CommandResult {

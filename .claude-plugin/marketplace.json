@@ -1,0 +1,12 @@
+{
+  "name": "gtm-agents",
+  "description": "Skills for deploying, operating and extending GTM-agents, the go-to-market system that runs as one Cloudflare Worker.",
+  "owner": { "name": "GTM-agents maintainers" },
+  "plugins": [
+    {
+      "name": "gtm-agents",
+      "source": "./plugins/gtm-agents",
+      "description": "Write a draft brain from an interview, read gtm doctor, turn capabilities on in a safe order, run the day and add an adapter."
+    }
+  ]
+}

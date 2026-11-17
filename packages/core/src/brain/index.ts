@@ -6,7 +6,9 @@ export { COMPONENT_SCHEMAS, ITEM_ID, PRICE_COMPONENT, REFERENCES, URL_FIELDS, co
 export type { BrainFrontmatter } from "./schema.ts";
 export { parseBrainFile } from "./parse.ts";
 export type { BrainItem, ParsedBrainFile } from "./parse.ts";
-export { validateBrain } from "./validate.ts";
+export { renderBrainFile } from "./render.ts";
+export type { BrainItemInput } from "./render.ts";
+export { PRICE_PATTERN, URL_PATTERN, validateBrain } from "./validate.ts";
 export type { BrainFileInput, BrainValidation, ValidateOptions } from "./validate.ts";
 export { brainVersion, computeLock, lockSchema, parseLock, serializeLock, sha256Hex } from "./lock.ts";
 export type { BrainLock } from "./lock.ts";

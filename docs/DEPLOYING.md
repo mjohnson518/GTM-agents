@@ -427,7 +427,7 @@ Each `create*Jobs` factory also takes `options` to change a job's schedule, rows
 
 The brain is a set of short Markdown files, one per component (`personas.md`, `icp.md`, `facts.md` and the rest), that prompts read. Templates are your email copy, one Markdown file each, with frontmatter and `{{variables}}`. Only files marked `status: approved` whose bytes match the lock are ever served. [BRAIN-SCHEMA.md](BRAIN-SCHEMA.md) lists every component, field, variable and rule.
 
-1. **Copy the example.** [examples/brains/acme](../examples/brains/acme/) is a complete brain for the fictional Acme, with a three-step template sequence:
+1. **Start from an interview, or copy the example.** `npx gtm brain init` asks about your company, buyers, accounts, proof and voice, and writes draft `personas`, `icp`, `message-pillars`, `facts` and `voice` files ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#starting-from-an-interview)). Or start from [examples/brains/acme](../examples/brains/acme/), a complete brain for the fictional Acme, with a three-step template sequence:
 
    ```bash
    # from your deployment directory; TOOLKIT is a checkout of the repository, or its source

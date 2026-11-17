@@ -96,6 +96,7 @@ Coding agents are welcome, as long as a person stays accountable for every commi
 - **The agent follows [CLAUDE.md](CLAUDE.md)** like any contributor: the same non-negotiables, the same checks, the same review rules.
 - **Hooks are never bypassed** by the agent or by the person.
 - **Say so in the pull request** when an agent wrote a substantial part of the change, and confirm that you reviewed the full diff yourself.
+- **For an adapter,** the Claude Code plugin's `add-adapter` skill walks an agent through the checklist above ([docs/QUICKSTART.md](docs/QUICKSTART.md#with-a-coding-agent)).
 
 Both hooks in `.githooks/` run `.local/hooks/pre-commit` or `.local/hooks/commit-msg` last, if that file exists and is executable. `.local/` is gitignored. Use it for checks that only make sense on your machine.
 

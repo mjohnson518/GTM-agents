@@ -99,7 +99,7 @@ npx gtm deploy --env staging
 curl -s https://agent-staging.acme.example/health   # {"ok":true,"service":"gtm-agents"}
 ```
 
-The chat needs no brain, so locking and uploading the empty one is enough for now. Missing components are warnings, not errors. Before you turn on anything that writes, write your own brain and templates ([section 7](DEPLOYING.md#7-writing-your-brain-and-templates)).
+The chat needs no brain, so locking and uploading the empty one is enough for now. To start your own, `npx gtm brain init` asks a few short questions and writes draft files ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md#starting-from-an-interview)). Missing components are warnings, not errors. Before you turn on anything that writes, write your own brain and templates ([section 7](DEPLOYING.md#7-writing-your-brain-and-templates)).
 
 Use `npx gtm deploy`, not `npm run deploy`: it runs `gtm doctor`, checks for placeholders and applies the migrations before `wrangler deploy`.
 
@@ -155,6 +155,27 @@ npx gtm doctor --remote --env staging
 Expect PASS for the bindings, the cron trigger, the jobs queue, the chat queue, the placeholders, `gtm.config.ts`, both adapters, the secrets ("all 5 required secrets are set"), the footer and unsubscribe, and the halt flag and both kill-switch keys ("is unset"). One WARN stays while the operator adapter is enabled, because doctor cannot see Telegram: the reminder to register its webhook. Doctor also prints every flag with its default; `npx gtm flags list --env staging` shows the deployed values.
 
 Every minute the cron trigger runs the jobs that are due, and with their flags off each leaves a `skipped` run row with the summary `flag off` ([step 6](DEPLOYING.md#step-6-verify)).
+
+## With a coding agent
+
+The repository publishes a Claude Code plugin whose skills guide an agent through the steps on this page and after them. Install it in Claude Code (2.1.275 or later) with:
+
+```text
+/plugin install gtm-agents --marketplace mjohnson518/GTM-agents
+```
+
+On an older version, run `/plugin marketplace add mjohnson518/GTM-agents`, then `/plugin install gtm-agents@gtm-agents`.
+
+| Skill | What it does |
+|---|---|
+| `/gtm-agents:guide` | Which skill fits the task, and the rules an agent keeps on a deployment |
+| `/gtm-agents:brain-from-interview` | Interviews you in chat and writes a draft brain with `gtm brain init --answers` |
+| `/gtm-agents:read-doctor` | Runs `gtm doctor` and explains each FAIL and WARN with its next step |
+| `/gtm-agents:turn-on-a-slice` | Turns on the next capability of the staged rollout, staging first; it runs only when you ask |
+| `/gtm-agents:run-the-day` | What waits for you in the operator chat today, and the command for each |
+| `/gtm-agents:add-adapter` | Adds an adapter for a new vendor, in a checkout of this repository |
+
+The skills never handle a secret: you set each one yourself, in a terminal of your own, with `npx wrangler secret put <NAME> --env staging`. They never approve, release or send for you, never turn on sending in staging, change flags only through `turn-on-a-slice` when you start it, hand you production writes to run yourself, and never set a brain file to approved unless you have read it and said so.
 
 ## Where next
 

@@ -1,5 +1,5 @@
-// GTM-agents: brain edits from the self-improvement loops: rendering a component file, the mutation
-// constraints a proposed file meets, and applying an approved one, which re-locks the brain.
+// GTM-agents: brain edits from the self-improvement loops: the mutation constraints a proposed file
+// meets, and applying an approved one, which re-locks the brain.
 //
 // A brain edit is applied only from an approved proposal (or, for the components loops may edit on
 // their own, at brain_edit level 2 or above). Applying it:
@@ -13,6 +13,7 @@
 //      the lock last, as `gtm brain upload` does, so a half-finished write is never served.
 // `commercial` is never edited here: prices and offers belong to a person.
 import { brainFileKey, BRAIN_LOCK_KEY } from "../brain/load.ts";
+import { renderBrainFile, type BrainItemInput } from "../brain/render.ts";
 import { brainVersion, computeLock, parseLock, serializeLock, sha256Hex, type BrainLock } from "../brain/lock.ts";
 import { parseBrainFile } from "../brain/parse.ts";
 import { validateBrain } from "../brain/validate.ts";
@@ -23,6 +24,9 @@ import type { KvStore } from "../shared/kv.ts";
 import { detectInjection } from "../security/redact.ts";
 import { hasLink } from "./text.ts";
 
+// The file format lives with the brain (brain/render.ts); re-exported for the loops that write files.
+export { renderBrainFile, type BrainItemInput };
+
 /** Components a loop may never propose an edit to. */
 export const NEVER_PROPOSED_COMPONENTS: readonly ComponentId[] = Object.freeze(["commercial"]);
 /** Components a loop may edit on its own at brain_edit level 2 or above. Everything else waits for a person. */
@@ -32,27 +36,8 @@ export const MAX_CHANGED_ITEMS = 3;
 
 export type BrainKv = Pick<KvStore, "get" | "put">;
 
-export interface BrainItemInput {
-  id: string;
-  fields: Record<string, string>;
-}
-
 const ITEM_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const FIELD_KEY = /^[a-z][a-z_]{0,31}$/;
-const TITLES: Partial<Record<ComponentId, string>> = { product: "Product", "message-pillars": "Message pillars", voice: "Voice", "market-profile": "Market profile", icp: "ICP", "keyword-portfolio": "Keyword portfolio" };
-
-/** A component file in the brain's format. Field values are single lines. */
-export function renderBrainFile(args: { component: ComponentId; version: number; updated: string; owner?: string | null; items: readonly BrainItemInput[] }): string {
-  const title = TITLES[args.component] ?? args.component.replace(/-/g, " ").replace(/^./, (c) => c.toUpperCase());
-  const lines = ["---", `component: ${args.component}`, "status: approved", `version: ${args.version}`, `updated: ${args.updated}`];
-  if (args.owner) lines.push(`owner: ${args.owner.replace(/\s+/g, " ").trim()}`);
-  lines.push("---", "", `# ${title}`);
-  for (const item of args.items) {
-    lines.push("", `## ${item.id}`);
-    for (const [key, value] of Object.entries(item.fields)) lines.push(`- ${key}: ${value.replace(/\s+/g, " ").trim()}`);
-  }
-  return `${lines.join("\n")}\n`;
-}
 
 /** The items of a component file as plain fields. */
 export function itemsOf(content: string, component: ComponentId): BrainItemInput[] {

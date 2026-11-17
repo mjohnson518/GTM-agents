@@ -7,6 +7,18 @@ This page is for deployers writing the brain and templates for their company, an
 
 Both are plain Markdown with a small frontmatter block, so they are easy to write, review and diff. `gtm brain validate` checks both against the rules in this document. The machine-readable JSON Schemas generated from the same definitions are published under `packages/core/brain/schema/`, for editors and other tools.
 
+## Starting from an interview
+
+`npx gtm brain init` asks seven short batches of questions and writes a first draft of `personas`, `icp`, `message-pillars`, `facts` and `voice`:
+
+- **Drafts only.** Every file is written `status: draft`, so nothing is served until you read it, set `status: approved` and lock it. An existing component file is never overwritten.
+- **Skips stay skips.** A blank answer leaves its field out, an item missing a required answer is not written, and a component with no answers is not written, so tasks are told it is missing. A skipped ICP question becomes an `unknown` item.
+- **Claims only from you.** The proof answers write one `facts` item (the claim, its exact figure and its public link). Without a claim there is no `facts.md`; without a figure the item has no `value`. No pillar is tied to the fact for you: add `- proof: customer-result` to the pillar it backs up.
+- **Checked as you answer,** with the rules on this page: an answer the schema refuses, a link outside a `url` field or a price outside `commercial` is asked again (in an answers file, it stops the command with nothing written).
+- **Config is printed, not written.** The company, sender, booking link and send window answers are printed as `gtm.config.ts` lines to paste.
+
+A coding agent can run the same interview in chat: `npx gtm brain init --questions` prints the questions as JSON, and `npx gtm brain init --answers <file.json>` writes from a file of `"<question id>": "<answer>"` ([QUICKSTART.md](QUICKSTART.md#with-a-coding-agent)). The components the interview does not cover are written by hand, from the rest of this page.
+
 ## Brain files
 
 One file per component: `brain/<component>.md`. A `README.md` in the folder is ignored, so you can keep notes next to the files. A file has three parts:

@@ -185,6 +185,22 @@ export function stageDir(ws) {
 }
 
 /**
+ * The Claude Code plugin manifests (plugins/<name>/.claude-plugin/plugin.json), versioned with the
+ * packages so an installed plugin's version names the release its skills describe.
+ * @param {string} [root]
+ * @returns {string[]} paths relative to the root
+ */
+export function pluginManifests(root = ROOT) {
+  const dir = join(root, "plugins");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .sort()
+    .map((name) => join("plugins", name, ".claude-plugin", "plugin.json"))
+    .filter((path) => existsSync(join(root, path)))
+    .map(toPosix);
+}
+
+/**
  * Every version problem in the workspace: packages whose version differs from the root's, and
  * internal dependency ranges that are not exactly that version. Versions move in lockstep.
  * @param {string} [root]
@@ -205,6 +221,10 @@ export function lockstepProblems(root = ROOT) {
         if (names.has(dep) && range !== version) problems.push(`${ws.dir}/package.json: ${field}.${dep} is "${range}", expected "${version}"`);
       }
     }
+  }
+  for (const path of pluginManifests(root)) {
+    const plugin = readJson(join(root, path));
+    if (plugin.version !== version) problems.push(`${path}: version ${plugin.version}, expected ${version} (the root's)`);
   }
   return { version, problems };
 }

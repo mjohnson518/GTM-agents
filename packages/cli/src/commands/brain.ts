@@ -1,4 +1,5 @@
 // GTM-agents: `gtm brain`, for the brain and templates.
+//   init      a short interview that writes a draft brain (commands/brain-init.ts);
 //   validate  checks a brain and its templates against the schema, the per-task byte budgets and
 //             the lock file, and can write the lock;
 //   upload    validates, then writes the approved files and their locks to the deployment's KV
@@ -34,15 +35,19 @@ import {
 } from "@gtm-agents/core/brain";
 import { TEMPLATES_LOCK_KEY, computeTemplateLock, parseTemplateLock, templateFileKey, validateTemplates, type TemplateFile, type TemplateLock } from "@gtm-agents/core/templates";
 import { EXIT, confirmProductionWrite, spawnRunner, type CommandRunner, type Io } from "../lib/io.ts";
+import { brainInit } from "./brain-init.ts";
 import { loadDeploymentConfig, locateBrain, readFlatDir, type BrainLocation } from "../lib/project.ts";
 import { findWranglerConfig, kvReadiness } from "../lib/wrangler-config.ts";
 import { envLabel, kvBulkGet, kvBulkPut, wranglerAt, wranglerEnv, type KvEntry, type Wrangler } from "../lib/wrangler.ts";
 
 export interface BrainOptions {
   runner?: CommandRunner;
+  /** Today's date for `gtm brain init` (tests). */
+  now?: () => Date;
 }
 
 const USAGE = `Usage:
+  gtm brain init     [dir] [--answers <file.json>] | --questions
   gtm brain validate [dir] [--templates <dir>] [--domain <domain>] [--write-lock]
   gtm brain upload   [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production] [--dry-run] [--yes] [--force]
   gtm brain diff     [dir] [--templates <dir>] [--domain <domain>] [--config <dir>] [--env staging|production]
@@ -50,6 +55,7 @@ const USAGE = `Usage:
 
 export async function brainCommand(args: string[], io: Io, options: BrainOptions = {}): Promise<number> {
   const [sub, ...rest] = args;
+  if (sub === "init") return brainInit(rest, io, { validate: (dir) => validate([dir], io), ...(options.now ? { now: options.now } : {}) });
   if (sub === "validate") return validate(rest, io);
   if (sub === "upload" || sub === "diff") return remote(sub, rest, io, options.runner ?? spawnRunner);
   if (sub === "pull") return pull(rest, io, options.runner ?? spawnRunner);

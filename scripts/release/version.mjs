@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// GTM-agents: lockstep versioning. Every workspace package and the root share one version, and every
-// dependency on another workspace package names exactly that version, so adopters only ever match
-// one number (`gtm init` pins the packages to the CLI's own version).
+// GTM-agents: lockstep versioning. Every workspace package, the root and the Claude Code plugin
+// manifests share one version, and every dependency on another workspace package names exactly
+// that version, so adopters only ever match one number (`gtm init` pins the packages to the CLI's
+// own version).
 //
 // Usage:
 //   node scripts/release/version.mjs <version>          set the version everywhere and sync package-lock.json
@@ -11,7 +12,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { isMain } from "../lib/files.mjs";
-import { ROOT, lockstepProblems, run, workspaces } from "./lib.mjs";
+import { ROOT, lockstepProblems, pluginManifests, run, workspaces } from "./lib.mjs";
 
 // Build metadata (+...) is refused: npm drops it, so two builds would publish as the same version.
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -30,7 +31,11 @@ export function setVersion(version, root = ROOT) {
   /** @type {string[]} */
   const changed = [];
   /** @type {{ path: string, label: string }[]} */
-  const manifests = [{ path: join(root, "package.json"), label: "package.json" }, ...all.map((w) => ({ path: join(w.path, "package.json"), label: `${w.dir}/package.json` }))];
+  const manifests = [
+    { path: join(root, "package.json"), label: "package.json" },
+    ...all.map((w) => ({ path: join(w.path, "package.json"), label: `${w.dir}/package.json` })),
+    ...pluginManifests(root).map((p) => ({ path: join(root, p), label: p })),
+  ];
   for (const { path, label } of manifests) {
     const before = readFileSync(path, "utf8");
     const manifest = JSON.parse(before);

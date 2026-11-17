@@ -9,6 +9,7 @@ Create a deployment from a published release with `npx @gtm-agents/cli@<version>
 | `gtm init <dir>` | Creates a new deployment from the worker template |
 | `gtm setup` | Creates the Cloudflare resources, reusing any that exist, fills their ids into `wrangler.jsonc`, and lists the missing secrets |
 | `gtm migrate` | Checks the migration order, then applies the D1 migrations |
+| `gtm brain init` | A short interview that writes a draft brain and prints the matching `gtm.config.ts` lines |
 | `gtm brain validate \| upload \| diff` | Validates the brain and templates, uploads them to KV with their locks, and shows what differs from KV |
 | `gtm flags list \| get \| set \| unset` | Reads and writes feature flags in KV, checked against the flag registry |
 | `gtm doctor` | Checks bindings, the cron trigger, configuration, adapters, secrets, webhooks, the kill switch and flags |
@@ -32,6 +33,13 @@ Every command that talks to Cloudflare runs the deployment's installed Wrangler 
 - A second run plans nothing. It ends with the chat queue's name and the jobs queue and its dead-letter queue, to list in `agent.chatQueue`, `scheduler.jobsQueue` and `scheduler.deadLetterQueue` in `src/index.ts`, and with the missing secrets as `npx wrangler secret put <NAME>` lines, from `wrangler secret list` (names only).
 
 **`gtm migrate [--env] [--local]`** checks that the migrations directory named by the `DB` binding exists and is numbered `0001`, `0002`, ... with no gaps or duplicates, then runs `wrangler d1 migrations apply DB --remote` (or `--local`). For the remote database it refuses while the database id is a placeholder.
+
+**`gtm brain init [dir] [--answers <file.json>]`** and **`gtm brain init --questions`** ([docs/BRAIN-SCHEMA.md](../../docs/BRAIN-SCHEMA.md#starting-from-an-interview))
+- Asks seven batches of questions on the terminal: company and sender, buyers, accounts, pain, offer and proof, the booking link, the send window, and voice. A blank answer skips.
+- Writes `personas`, `icp`, `message-pillars`, `facts` and `voice` into `dir` (default `./brain`), every file `status: draft`. It never overwrites an existing component file, never fills a skipped answer, and never writes `gtm.config.ts` or the lock. The company, sender, booking and window answers are printed as `gtm.config.ts` lines to paste. Then it runs `gtm brain validate` on the folder.
+- Every answer is checked as it is given, with the brain's own rules. On the terminal an invalid answer is asked again; an answers file with an invalid answer, an unknown question id or a value that is not text exits 2 and writes nothing.
+- `--answers` reads one JSON object of `"<question id>": "<answer>"` (at most 64 KB), for scripts and coding agents. `--questions` prints the batches, each question's id, prompt, help and what it writes, as JSON.
+- Nothing is fetched and no model is called. To draft `product.md` and `icp.md` from your website, use the dashboard's Product and ICP page, then `gtm brain pull`.
 
 **`gtm brain validate [dir] [--templates <dir>] [--domain <domain>] [--write-lock]`** checks every brain component and template; with `--write-lock` it writes `brain.lock.json` when there are no errors (warnings, such as a missing component, are allowed).
 

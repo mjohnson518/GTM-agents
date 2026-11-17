@@ -25,7 +25,7 @@ export interface ValidateOptions {
   lock?: BrainLock | null;
 }
 
-const URL_PATTERN = /\bhttps?:\/\/|\bwww\./i;
+export const URL_PATTERN = /\bhttps?:\/\/|\bwww\./i;
 export const PRICE_PATTERN = /[$\u20ac\u00a3\u00a5]\s?\d|\b\d[\d,.]*\s?(?:usd|eur|gbp|dollars?|euros?|pounds?)\b/i;
 
 export async function validateBrain(files: BrainFileInput[], options: ValidateOptions = {}): Promise<BrainValidation> {

@@ -2,7 +2,7 @@
 
 This folder is for the deployer writing their company's brain: one Markdown file per component (`personas.md`, `icp.md`, `facts.md` and the rest), plus `brain.lock.json` once you have approved and locked them. Prompts read short, typed slices of these files, and only files marked `status: approved` whose hash matches the lock are ever served.
 
-The folder starts empty. That is valid: tasks are told which components are unknown and work without them. Add components one at a time:
+The folder starts empty. That is valid: tasks are told which components are unknown and work without them. `npx gtm brain init` writes a first draft of personas, ICP, message pillars, the proof fact and voice from a short interview. Add components one at a time:
 
 1. Write a component, following [docs/BRAIN-SCHEMA.md](../../../docs/BRAIN-SCHEMA.md).
 2. Run `npx gtm brain validate` to check it against the schema and the byte budgets.

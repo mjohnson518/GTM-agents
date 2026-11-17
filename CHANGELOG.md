@@ -6,6 +6,12 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Getting started
+
+- `gtm brain init` asks seven short batches of questions and writes draft `personas`, `icp`, `message-pillars`, `facts` and `voice` files, every one `status: draft`. A skipped answer is never filled, an existing file is never overwritten, and the company, sender, booking and send-window answers are printed as `gtm.config.ts` lines to paste. `--answers <file.json>` and `--questions` let a coding agent run the interview in chat ([docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md#starting-from-an-interview)).
+- A Claude Code plugin, `gtm-agents`, published from this repository: skills to write a brain from an interview, read `gtm doctor`, turn on the staged rollout one capability at a time, run the day and add an adapter. They never handle a secret and never approve for you. Install it with `/plugin install gtm-agents --marketplace mjohnson518/GTM-agents` ([docs/QUICKSTART.md](docs/QUICKSTART.md#with-a-coding-agent)).
+- `renderBrainFile` moves to `@gtm-agents/core/brain` (still exported from `@gtm-agents/core/learning`) and takes an optional `status`.
+
 ### Watches and briefs
 
 - The account watch, behind `signals:account_watch_enabled`: every Monday, one dated news search for each of up to 10 accounts (pinned with `watch-add`, then open deals past contacted, then the best fit), within 50 cents a day. New items go to you in one digest with their links, each listed once ever; funding and leadership items also become signals ([docs/SIGNALS.md](docs/SIGNALS.md#account-watch)).

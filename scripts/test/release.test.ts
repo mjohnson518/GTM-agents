@@ -190,6 +190,17 @@ describe("release: lockstep versions", () => {
     ]);
   });
 
+  it("moves the Claude Code plugin manifest with the packages, and reports it out of step", () => {
+    const root = workspace();
+    mkdirSync(join(root, "plugins/acme/.claude-plugin"), { recursive: true });
+    const plugin = join(root, "plugins/acme/.claude-plugin/plugin.json");
+    writeFileSync(plugin, `${JSON.stringify({ name: "acme", version: "0.1.0" }, null, 2)}\n`);
+    expect(setVersion("0.2.0", root)).toContain("plugins/acme/.claude-plugin/plugin.json");
+    expect((JSON.parse(readFileSync(plugin, "utf8")) as { version: string }).version).toBe("0.2.0");
+    writeFileSync(plugin, `${JSON.stringify({ name: "acme", version: "0.1.9" }, null, 2)}\n`);
+    expect(lockstepProblems(root).problems).toEqual(["plugins/acme/.claude-plugin/plugin.json: version 0.1.9, expected 0.2.0 (the root's)"]);
+  });
+
   it("finds the repository's own versions in lockstep", () => {
     expect(lockstepProblems().problems).toEqual([]);
   });
