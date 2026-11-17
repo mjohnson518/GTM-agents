@@ -14,6 +14,8 @@ export const CONVERT_FLAGS = Object.freeze({
   postDemo: "convert:post_demo_enabled",
   /** Write a handoff brief when a deal reaches proposal or negotiation. */
   handoff: "convert:handoff_enabled",
+  /** Prep briefs show the account's research facts (account_facts), with sources, marked unverified. */
+  briefResearch: "convert:brief_research_enabled",
 });
 
 export const CONVERT_LIMITS = Object.freeze({

@@ -126,6 +126,7 @@ Fields marked * are required.
 - `positioning`*: how they present themselves
 - `differentiators`*: how you differ, stated honestly
 - `when_we_lose`
+- `domain`: their own lowercase domain (for example `globex.example`), so the competitor watch can count their open roles on public job boards ([SIGNALS.md](SIGNALS.md#competitor-watch)). Only a person sets it: the watch's proposals never write it
 
 **`influencers`**
 - `kind`*: one of `publication`, `newsletter`, `podcast`, `community`, `person`, `event`

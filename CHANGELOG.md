@@ -6,6 +6,14 @@ The file follows the format the operator dashboard's Changelog view reads: `## <
 
 ## Unreleased
 
+### Watches and briefs
+
+- The account watch, behind `signals:account_watch_enabled`: every Monday, one dated news search for each of up to 10 accounts (pinned with `watch-add`, then open deals past contacted, then the best fit), within 50 cents a day. New items go to you in one digest with their links, each listed once ever; funding and leadership items also become signals ([docs/SIGNALS.md](docs/SIGNALS.md#account-watch)).
+- The competitor watch, behind `signals:competitor_watch_enabled`: every Monday, news and public open-role counts for each competitor in the brain, in one digest. With `signals:competitor_proposals_enabled`, a week with news makes at most one proposed `competitors` edit (at most 3 items, checked for links, dashes, instructions and figures the brain does not hold), which you approve against its exact diff and which never applies on its own.
+- Competitor items in the brain take an optional `domain`, for the open-role counts ([docs/BRAIN-SCHEMA.md](docs/BRAIN-SCHEMA.md)). The Acme example brain sets one.
+- Prep briefs can show the account's research facts with their sources, marked unverified, behind `convert:brief_research_enabled` ([docs/CONVERT.md](docs/CONVERT.md)).
+- `watch-add`, `watch-remove` and `watch-list` in the chat pin the accounts the watch covers first ([docs/OPERATOR.md](docs/OPERATOR.md#commands)).
+
 ### Meeting notes
 
 - Meeting notes, behind `convert:notes_enabled`: the new `meeting_notes_ingest` job reads recordings from Fathom or Granola hourly and keeps one only when an invitee is a known contact (never internal meetings or strangers), storing its transcript in `BUCKET` for a year; `meeting_notes_extract` makes one `worker`-role call per call recorded (100 cents a day) and keeps pain points, objections, next steps and competitors only as quotes found word for word in the transcript. They show in your prep and handoff briefs, kept apart from your own notes; objections are filed for you to answer; and Monday's digest names competitors mentioned on calls. With `convert:notes_in_recap`, recap drafts add the agreed next steps, quoted, and wait for your review. Needs migration 0038 ([docs/MEETING-NOTES.md](docs/MEETING-NOTES.md)).

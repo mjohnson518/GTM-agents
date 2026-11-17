@@ -25,6 +25,11 @@ const ids = z.array(z.string().regex(ITEM_ID, "item ids are kebab-case")).min(1)
 const weight = z.number().min(0, "use a number from 0 to 1").max(1, "use a number from 0 to 1");
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "use YYYY-MM-DD").refine(isValidDate, "not a real date");
 const httpsUrl = z.url({ protocol: /^https$/, error: "use an https:// URL" });
+/** A lowercase company domain such as initech.example: what the competitor watch reads hiring boards by. */
+const domain = z
+  .string()
+  .max(253, "keep domains to 253 characters")
+  .regex(/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$/, "use a lowercase domain such as initech.example, without https:// or a path");
 
 export const frontmatterSchema = z.strictObject({
   component: z.enum(COMPONENT_IDS),
@@ -74,6 +79,8 @@ export const COMPONENT_SCHEMAS = {
     positioning: text,
     differentiators: text,
     when_we_lose: text.optional(),
+    /** Optional: the competitor's own domain, for open-role counts from its public job board. */
+    domain: domain.optional(),
   }),
   influencers: z.strictObject({
     kind: z.enum(["publication", "newsletter", "podcast", "community", "person", "event"]),

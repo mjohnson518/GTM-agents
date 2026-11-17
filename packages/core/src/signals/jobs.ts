@@ -13,6 +13,10 @@
 //   signal_coverage_fill  weekdays 12:00 UTC  signals:coverage_fill_enabled  5 accounts, 2 people each
 //   signal_employment     weekdays 08:00 UTC  signals:job_change_enabled     10 employment checks; with
 //                                             signals:champion_moves_enabled, 5 champion lookups
+//   signal_account_watch  Mondays 06:30 UTC   signals:account_watch_enabled  10 accounts, a digest
+//   signal_competitor_watch Mondays 07:30 UTC signals:competitor_watch_enabled 8 competitors, a digest;
+//                                             with signals:competitor_proposals_enabled, one
+//                                             strategist call and at most one brain proposal a week
 //   intent_scoring        daily 02:30 UTC     scoring:intent_enabled         shadow until enforced
 // Paid calls go through one spend gate per run with the job's daily cap. Each job re-reads its own
 // flag (failing closed), so calling run() directly with the flag off does nothing. A source whose
@@ -31,6 +35,10 @@ import type { EmploymentChecker } from "../ports/contact.ts";
 import type { OperatorChannel } from "../ports/operator.ts";
 import { runCoverageFill } from "./coverage.ts";
 import { runEmploymentChecks } from "./employment.ts";
+import { runCompetitorWatch } from "./competitors.ts";
+import { runAccountWatch } from "./watch.ts";
+import type { ModelGateway } from "../ports/model.ts";
+import { assertModelSchedule } from "../replies/jobs.ts";
 import { SIGNAL_FLAGS, SIGNAL_LIMITS } from "./flags.ts";
 import { runHiringBoards } from "./hiring.ts";
 import { runLookalikes } from "./lookalikes.ts";
@@ -48,6 +56,8 @@ export const SIGNAL_JOBS = Object.freeze({
   coverageFill: "signal_coverage_fill",
   intent: "intent_scoring",
   employment: "signal_employment",
+  accountWatch: "signal_account_watch",
+  competitorWatch: "signal_competitor_watch",
 });
 
 export interface SignalAdapters {
@@ -74,6 +84,8 @@ export interface SignalJobOptions {
   lookalikesMaxSpendCents: number;
   coverageMaxSpendCents: number;
   employmentMaxSpendCents: number;
+  accountWatchMaxSpendCents: number;
+  competitorWatchMaxSpendCents: number;
   schedules: Readonly<Record<keyof typeof SIGNAL_JOBS, string>>;
 }
 
@@ -86,6 +98,8 @@ export const DEFAULT_SIGNAL_JOB_OPTIONS: Readonly<SignalJobOptions> = Object.fre
   lookalikesMaxSpendCents: 50,
   coverageMaxSpendCents: 100,
   employmentMaxSpendCents: 60,
+  accountWatchMaxSpendCents: 50,
+  competitorWatchMaxSpendCents: 100,
   schedules: Object.freeze({
     websets: "0 10 * * MON-FRI",
     monitors: "*/30 * * * *",
@@ -95,14 +109,18 @@ export const DEFAULT_SIGNAL_JOB_OPTIONS: Readonly<SignalJobOptions> = Object.fre
     coverageFill: "0 12 * * MON-FRI",
     intent: "30 2 * * *",
     employment: "0 8 * * MON-FRI",
+    accountWatch: "30 6 * * MON",
+    competitorWatch: "30 7 * * MON",
   }),
 });
 
 export interface SignalDeps<E extends SourcingEnv = SourcingEnv> {
   /** Build the adapters for one run. Called inside the job, after its gates have passed. */
   adapters(env: E): SignalAdapters;
-  /** The operator channel, for notices about contacts who moved jobs. */
+  /** The operator channel, for notices about contacts who moved jobs and the watch digests. */
   operator?: (env: E) => OperatorChannel | undefined;
+  /** The model gateway, for the competitor watch's weekly proposal (strategist role). */
+  model?: (env: E) => ModelGateway | undefined;
   options?: Partial<Omit<SignalJobOptions, "schedules">> & { schedules?: Partial<SignalJobOptions["schedules"]> };
 }
 
@@ -269,5 +287,68 @@ export function createSignalJobs<E extends SourcingEnv>(deps: SignalDeps<E>): Re
     },
   });
 
-  return [websets, monitors, news, hiring, lookalikes, coverage, intent, employment];
+  const operatorFor = (ctx: JobContext<E>): OperatorChannel | undefined => {
+    try {
+      return deps.operator?.(ctx.env);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const accountWatch = defineJob<E>({
+    name: SIGNAL_JOBS.accountWatch,
+    schedule: options.schedules.accountWatch,
+    flag: SIGNAL_FLAGS.accountWatch,
+    ceilings: { maxDurationMs: 180_000, maxRows: SIGNAL_LIMITS.watchAccountsPerRun * SIGNAL_LIMITS.watchResultsPerSearch, maxSpendCents: options.accountWatchMaxSpendCents },
+    rerunnable: true,
+    async run(ctx) {
+      if (!(await readFlagOn(ctx.flags, SIGNAL_FLAGS.accountWatch))) return { summary: "flag off" };
+      const source = deps.adapters(ctx.env).news;
+      if (!source) return { summary: "no news source configured" };
+      const gate = gateFor(ctx, options.accountWatchMaxSpendCents);
+      const r = await runAccountWatch({ db: ctx.env.DB, source, gate, now: ctx.now, log: ctx.log, operator: operatorFor(ctx), signal: ctx.signal });
+      return { summary: `${r.accounts} accounts, ${r.searches} searches, ${r.items} new items, ${r.signals} signals, digest ${r.digest}${stopped(gate)}`, rows: r.items };
+    },
+  });
+
+  assertModelSchedule(options.schedules.competitorWatch, SIGNAL_JOBS.competitorWatch);
+  const competitorWatch = defineJob<E>({
+    name: SIGNAL_JOBS.competitorWatch,
+    schedule: options.schedules.competitorWatch,
+    flag: SIGNAL_FLAGS.competitorWatch,
+    ceilings: { maxDurationMs: 240_000, maxRows: SIGNAL_LIMITS.watchCompetitorsPerRun * SIGNAL_LIMITS.watchResultsPerSearch, maxSpendCents: options.competitorWatchMaxSpendCents },
+    rerunnable: true,
+    async run(ctx) {
+      if (!(await readFlagOn(ctx.flags, SIGNAL_FLAGS.competitorWatch))) return { summary: "flag off" };
+      const adapters = deps.adapters(ctx.env);
+      const proposals = await readFlagOn(ctx.flags, SIGNAL_FLAGS.competitorProposals);
+      let model: ModelGateway | undefined;
+      try {
+        model = proposals ? deps.model?.(ctx.env) : undefined;
+      } catch {
+        model = undefined;
+      }
+      const gate = gateFor(ctx, options.competitorWatchMaxSpendCents);
+      const r = await runCompetitorWatch({
+        db: ctx.env.DB,
+        kv: ctx.env.KV,
+        news: adapters.news,
+        boards: adapters.boards,
+        gate,
+        now: ctx.now,
+        log: ctx.log,
+        operator: operatorFor(ctx),
+        proposals,
+        model,
+        config: ctx.config,
+        ...(ctx.runId !== undefined ? { runId: ctx.runId } : {}),
+        signal: ctx.signal,
+      });
+      const proposal = r.proposal.status === "made" ? `proposed ${r.proposal.id}` : r.proposal.status === "refused" ? `no proposal (${r.proposal.reason})` : "no proposal";
+      if (r.competitors === 0) return { summary: "no competitors in the served brain", rows: 0 };
+      return { summary: `${r.competitors} competitors, ${r.searches} searches, ${r.items} new items, ${r.boards} boards, ${proposal}, digest ${r.digest}${stopped(gate)}`, rows: r.items };
+    },
+  });
+
+  return [websets, monitors, news, hiring, lookalikes, coverage, intent, employment, accountWatch, competitorWatch];
 }

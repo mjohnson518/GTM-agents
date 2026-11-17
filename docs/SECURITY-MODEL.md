@@ -231,6 +231,17 @@ The same page suggests `keyword-portfolio` queries and `personas` from the appro
 
 `tests/security/targeting-suggest.test.ts` proves the gates, that a pick outside the suggestion or an edit beyond its main text is refused, that served items are kept, and that nothing reaches discovery before a person approves the exact file.
 
+## The watches
+
+News titles are full taint ([SIGNALS.md](SIGNALS.md#account-watch)):
+
+- **Digests.** Titles reach the operator as one cleaned, capped line with injection patterns redacted. A funding or leadership title is also stored as a signal's headline, which can reach copy only through the opt-in headline variable, per source and reviewed per draft ([SIGNALS.md](SIGNALS.md)).
+- **The competitor proposal.** The proposal call puts the week's titles in the user turn, fenced, and its system prompt is a fixed rubric and the approved `competitors` file. No tool is offered.
+- **The answer.** It may change only the text fields of at most 3 items (never a `domain`). It must pass `editProblems` (no link, no dash, no injection pattern, no figure the brain does not hold) and validate.
+- **Approval.** It becomes a brain proposal a person approves against its exact diff; the model's note is shown with it only when it holds no link. `competitors` is not self-editable, so nothing applies on its own.
+
+`tests/security/watch.test.ts` proves that injected titles reach no system prompt, that an instruction-shaped edit is refused, that a watch proposal never auto-applies even at level 2, and that digest titles are cleaned.
+
 ## Meeting notes
 
 Call transcripts are a new source of untrusted text (full taint), from the deployment's meeting-notes tool ([MEETING-NOTES.md](MEETING-NOTES.md)):

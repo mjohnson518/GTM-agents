@@ -1,8 +1,8 @@
 ---
 component: competitors
 status: approved
-version: 1
-updated: 2026-11-01
+version: 2
+updated: 2026-11-17
 owner: Head of Marketing
 ---
 
@@ -15,6 +15,7 @@ All names below are fictional.
 - positioning: A broad CI analytics dashboard covering build times, costs and test results.
 - differentiators: Acme acts on flaky tests by quarantining them, while dashboards report the problem and leave the fixing to people.
 - when_we_lose: The buyer wants one dashboard for every CI metric and flakes are a minor concern.
+- domain: globex.example
 
 ## initech-ci-analytics
 - name: Initech CI Analytics

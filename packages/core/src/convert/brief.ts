@@ -40,6 +40,8 @@ export interface ContactBrief {
   notes: Array<{ occurred_at: string | null; summary: string }>;
   /** What processed call recordings produced: the prospect's words, checked against the transcript. */
   calls: CallNotes[];
+  /** The account's research facts (account_facts, found), each with its source; shown only with convert:brief_research_enabled. */
+  research: ResearchFacts | null;
   colleagues: { total: number; warm: number };
 }
 
@@ -66,7 +68,7 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
     .first<ContactBrief["contact"]>();
   if (!contact) return null;
   const key = contact.account_key;
-  const [account, fit, persona, first, signals, touches, replies, deal, meetings, notes, colleagues, calls] = await db.batch([
+  const [account, fit, persona, first, signals, touches, replies, deal, meetings, notes, colleagues, calls, facts] = await db.batch([
     db
       .prepare(
         `SELECT a.name, COALESCE(af.segment, a.segment) AS segment, a.tier, af.fit_score, af.prescore, af.team_size
@@ -105,6 +107,7 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
       )
       .bind(contactId, key ?? ""),
     db.prepare(CALL_NOTES_SQL).bind(contactId),
+    db.prepare(`SELECT ${RESEARCH_COLUMNS.join(", ")}, attributes, fetched_at, updated_at FROM account_facts WHERE account_key = ?1 AND status = 'found'`).bind(key ?? ""),
   ]);
   const one = <T>(r: D1Result<unknown> | undefined) => (r?.results?.[0] as T | undefined) ?? null;
   const all = <T>(r: D1Result<unknown> | undefined) => (r?.results ?? []) as T[];
@@ -122,6 +125,7 @@ export async function loadContactBrief(db: D1Database, contactId: string): Promi
     meetings: all<ContactBrief["meetings"][number]>(meetings),
     notes: all<ContactBrief["notes"][number]>(notes),
     calls: callNotesFromRows(all<unknown>(calls)),
+    research: researchFrom(one<Record<string, unknown>>(facts)),
     colleagues: { total: Number(counts?.total ?? 0), warm: Number(counts?.warm ?? 0) },
   };
 }
@@ -192,8 +196,76 @@ const ATTRIBUTION_TEXT: Record<string, string> = {
   operator_link: "you linked it",
 };
 
-/** The one-page prep brief. Pure. */
-export function renderPrepBrief(b: ContactBrief, meeting: BriefMeeting | null, now: Date): string {
+/** Research facts older than this are not shown in a brief. */
+export const BRIEF_RESEARCH_MAX_DAYS = 90;
+
+const RESEARCH_COLUMNS = ["headcount_band", "employees_count", "hq_country", "founded_year", "sector", "industry", "company_type", "funding_stage", "raised_usd", "technologies"] as const;
+const RESEARCH_LABELS: Readonly<Record<(typeof RESEARCH_COLUMNS)[number], string>> = {
+  headcount_band: "Headcount",
+  employees_count: "Employees",
+  hq_country: "HQ",
+  founded_year: "Founded",
+  sector: "Sector",
+  industry: "Industry",
+  company_type: "Type",
+  funding_stage: "Funding stage",
+  raised_usd: "Raised (USD)",
+  technologies: "Technologies",
+};
+
+export interface ResearchFacts {
+  /** When the facts were fetched. */
+  at: string;
+  fields: Array<{ label: string; value: string; source: string }>;
+}
+
+/** The research row as brief lines: only fields with a value and an http(s) source. Pure. */
+function researchFrom(row: Record<string, unknown> | null): ResearchFacts | null {
+  if (!row) return null;
+  const str = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" && Number.isFinite(v) ? String(v) : "");
+  const evidence = ((): Record<string, { url?: unknown }> => {
+    try {
+      return (JSON.parse(str(row.attributes) || "{}") as { evidence?: Record<string, { url?: unknown }> }).evidence ?? {};
+    } catch {
+      return {};
+    }
+  })();
+  const hostOf = (url: unknown): string | null => {
+    if (typeof url !== "string" || !/^https?:\/\//.test(url)) return null;
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
+  };
+  const fields: ResearchFacts["fields"] = [];
+  for (const column of RESEARCH_COLUMNS) {
+    let value = str(row[column]);
+    if (column === "technologies" && value) {
+      try {
+        const list = JSON.parse(value) as unknown;
+        value = Array.isArray(list) ? list.filter((t): t is string => typeof t === "string").slice(0, 8).join(", ") : "";
+      } catch {
+        value = "";
+      }
+    }
+    const host = hostOf(evidence[column]?.url);
+    if (value && host) fields.push({ label: RESEARCH_LABELS[column], value, source: host });
+  }
+  const at = str(row.fetched_at) || str(row.updated_at);
+  return fields.length > 0 && at ? { at, fields } : null;
+}
+
+/** The research lines, when shown and fresh. Pure. */
+function researchLines(r: ResearchFacts | null, now: Date): string[] {
+  if (!r) return [];
+  const at = Date.parse(r.at);
+  if (!Number.isFinite(at) || now.getTime() - at > BRIEF_RESEARCH_MAX_DAYS * 86_400_000) return [];
+  return [`Public context (unverified, from account research ${day(r.at)}):`, ...r.fields.map((f) => `  ${f.label}: ${label(f.value, 80)} (source ${label(f.source, 60)})`)];
+}
+
+/** The one-page prep brief. Pure. With `research`, the account's fresh research facts are shown, marked unverified. */
+export function renderPrepBrief(b: ContactBrief, meeting: BriefMeeting | null, now: Date, options: { research?: boolean } = {}): string {
   const lines = [`Prep brief: ${displayName(b.contact)}`];
   if (meeting) {
     const hours = Math.round((Date.parse(meeting.starts_at) - now.getTime()) / 3_600_000);
@@ -201,6 +273,7 @@ export function renderPrepBrief(b: ContactBrief, meeting: BriefMeeting | null, n
     lines.push(`Meeting ${meeting.code}: ${when(meeting.starts_at)} to ${when(meeting.ends_at).slice(11)}${relative}; matched because ${ATTRIBUTION_TEXT[meeting.attribution ?? ""] ?? "it was linked"}`);
   }
   lines.push(...contactLines(b));
+  if (options.research) lines.push(...researchLines(b.research, now));
   return fitMessage(lines);
 }
 

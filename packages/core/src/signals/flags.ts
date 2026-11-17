@@ -17,6 +17,12 @@ export const SIGNAL_FLAGS = Object.freeze({
   jobChange: "signals:job_change_enabled",
   /** An engaged contact who moved becomes a candidate at their new company. Needs jobChange. */
   championMoves: "signals:champion_moves_enabled",
+  /** Weekly news on the accounts that matter most, in one digest. */
+  accountWatch: "signals:account_watch_enabled",
+  /** Weekly news and open roles for each competitor in the brain, in one digest. */
+  competitorWatch: "signals:competitor_watch_enabled",
+  /** With the competitor watch, at most one proposed competitors brain edit a week. */
+  competitorProposals: "signals:competitor_proposals_enabled",
   /** Compute the nightly intent score (shadow: recorded, never used to select). */
   intent: "scoring:intent_enabled",
   /** Use the intent band to filter cold selection. Existing flag, read by selection. */
@@ -78,4 +84,11 @@ export const SIGNAL_LIMITS = Object.freeze({
   employmentSignalExpiryDays: 45,
   /** Champion lookups per run: an engaged contact who moved, at their new company. */
   championFindsPerRun: 5,
+  /** The watches: accounts and competitors a weekly run covers, the days of news each reads. */
+  watchAccountsPerRun: 10,
+  watchCompetitorsPerRun: 8,
+  watchWindowDays: 7,
+  watchResultsPerSearch: 10,
+  /** Items one digest lists per account or competitor. */
+  watchItemsPerSubject: 5,
 });

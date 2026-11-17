@@ -208,7 +208,7 @@ export async function runMeetingFollowups(deps: FollowupDeps): Promise<FollowupR
         let text = `${head}\nPrep brief on demand: prep-${row.contact_id}`;
         if (reminder === "24h") {
           const brief = await loadContactBrief(db, row.contact_id);
-          if (brief) text = `${head}\n\n${renderPrepBrief(brief, { code: row.code, starts_at: row.starts_at, ends_at: row.ends_at, attribution: row.attribution }, now)}`;
+          if (brief) text = `${head}\n\n${renderPrepBrief(brief, { code: row.code, starts_at: row.starts_at, ends_at: row.ends_at, attribution: row.attribution }, now, { research: await readOn(deps.flags, CONVERT_FLAGS.briefResearch) })}`;
         }
         if ((await notifyOnce(deps, row.code, `meeting_reminder_${reminder}:${row.starts_at}`, text)) === "sent") {
           result.reminders += 1;

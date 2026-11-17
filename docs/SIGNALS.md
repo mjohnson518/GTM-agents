@@ -41,9 +41,11 @@ npx gtm flags set scoring:intent_enabled true --env staging
 | Responder lookalikes | `signal_lookalikes`, Tuesday and Thursday 11:00 | `signals:lookalikes_enabled` | account candidates | 5 seeds, 30 inserts | $0.007 per find-similar of up to 10 results, $0.001 for each further result |
 | Coverage fill | `signal_coverage_fill`, weekdays 12:00 | `signals:coverage_fill_enabled` | person candidates | 5 accounts, 2 people each | the people provider's search price |
 | Intent score | `intent_scoring`, daily 02:30 | `scoring:intent_enabled` | `contacts.attributes.intent` | 5,000 contacts | free |
+| Account watch | `signal_account_watch`, Mondays 06:30 | `signals:account_watch_enabled` | a digest; funding and leadership signals | 10 accounts | about $0.022 per search, within 50 cents a day |
+| Competitor watch | `signal_competitor_watch`, Mondays 07:30 | `signals:competitor_watch_enabled` (proposals: `signals:competitor_proposals_enabled`) | a digest; at most one brain proposal a week | 8 competitors | about $0.022 per search, job boards free, one strategist call a week with proposals on; within 100 cents a day |
 | Employment checks | `signal_employment`, weekdays 08:00 | `signals:job_change_enabled` | `contacts.employment_status`, new-role signals; with `signals:champion_moves_enabled`, person candidates | 10 checks, 5 champion lookups | 3 LeadMagic credits a check (about 6 cents on the Essential plan; free when the profile is not found), 1 credit a champion address found |
 
-Every paid call goes through the spend gate with the job's daily cap (`websetsMaxSpendCents` 200, `newsMaxSpendCents` 50, `lookalikesMaxSpendCents` 50, `coverageMaxSpendCents` 100, `employmentMaxSpendCents` 60 by default; a `budget:job:<job>:daily_cents` flag lowers any of them). A cap that is reached, or a budget that cannot be read, stops the run's paid calls. None of these jobs calls a model.
+Every paid call goes through the spend gate with the job's daily cap (`websetsMaxSpendCents` 200, `newsMaxSpendCents` 50, `lookalikesMaxSpendCents` 50, `coverageMaxSpendCents` 100, `employmentMaxSpendCents` 60, `accountWatchMaxSpendCents` 50, `competitorWatchMaxSpendCents` 100 by default; a `budget:job:<job>:daily_cents` flag lowers any of them). A cap that is reached, or a budget that cannot be read, stops the run's paid calls. None of these jobs calls a model, except the competitor watch's weekly proposal (one strategist call, with `signals:competitor_proposals_enabled`).
 
 ### Websets
 
@@ -92,6 +94,29 @@ Seeds are accounts that responded in the last 180 days: a positive reply, a meet
 ### Coverage fill
 
 Accounts with a model fit of 7 or more, fewer than 2 keep-listed contacts, and a signal or a response in the last 30 days. Up to 5 accounts a run, best fit first, each claimed in `resource_claims` with a 30-day cooldown (given back when the lookup is stopped by the budget or a provider error), and up to 2 people each from the people provider, through the same people lookup enrichment uses (work addresses at the account's domain only, titles the brain's personas keep). Someone already a contact is skipped. Each person is a raw candidate.
+
+### Account watch
+
+The news searches above look for categories (a round raised, a leader appointed) across every account. The account watch looks at the accounts that matter most, by name, every Monday:
+
+- **Who.** Up to 10 accounts, in this order: those you pinned with `watch-add <domain>`, those with an open deal past contacted (engaged, demo scheduled, trial, proposal or negotiation), then the best model fit (not below the fit floor). An account whose name is too generic to match in a title (fewer than 4 letters, or a word such as "Labs") is skipped. `watch-list` shows who the next run covers.
+- **What.** One dated news search for the account's name over the last 7 days. A hit is kept only when its title names that account, with a published date in the window and an http(s) URL, and only the first time it is seen, so an article is listed once, ever: at most 5 per account a week. A run in a week whose digest has gone searches nothing, and when the digest cannot be sent (no channel, the channel failed, or a run alongside it sent the week's digest first), the items are released and listed by the next run. A channel that times out after accepting the message can therefore show the same items twice: a repeated digest is preferred to a lost one.
+- **Where it goes.** One digest a week in your chat: per account, each new title (cleaned to one line, as the publisher wrote it), its date and its link. A week with nothing new says so. A funding or leadership item also becomes a signal by the news rules above (source `account_watch`), so it can open a first touch.
+
+### Competitor watch
+
+Every Monday, for up to 8 competitors in your brain's approved `competitors` component:
+
+- **News.** One dated search for the competitor's name over the last 7 days, kept only when the title names it as a whole phrase, and listed once, ever (at most 5 a week each; a digest that cannot be sent releases them for the next run). A name too generic to match in a title is not searched.
+- **Open roles.** For a competitor with a `domain` ([BRAIN-SCHEMA.md](BRAIN-SCHEMA.md)), the public job boards for the token the domain gives (Greenhouse, Lever, Ashby), counted per role kind, never titles.
+- **The digest.** One message a week: per competitor, the new titles with dates and links, and the open roles.
+- **A proposed edit** (`signals:competitor_proposals_enabled`). A week with news makes at most one strategist call:
+  - The model reads the approved `competitors` file and the week's titles and counts, fenced as untrusted, and may change at most 3 items.
+  - The edit is refused if it adds a link, a dash, anything that reads like an instruction, or a figure the brain does not already hold (so no number from the news). It is also refused if it does not validate.
+  - It cannot write a competitor's `domain`, and an item it returns changes only the fields it names.
+  - A week whose call could not be made (no model, no price, the budget) gives its slot back.
+  - Otherwise it becomes an ordinary brain proposal, and the digest names `learning-show <id>`.
+  - It never applies on its own, at any autonomy level ([LEARNING.md](LEARNING.md#the-competitor-watchs-proposals)). Approved `competitors` text reaches the reply writers and the strategist, so read it as you would your own.
 
 ### Employment checks
 
@@ -178,6 +203,7 @@ A template that uses the angle variables is composed for a contact with an angle
 
 - Product usage is never carried to a colleague and never becomes an angle: what one person does in the product is never told to someone else.
 - Job boards keep role-kind counts, never titles, locations or descriptions.
+- The watches send the news provider an account's or a competitor's name, and nothing about any person.
 - Employment checks send the provider a contact's profile URL and the expected company, and nothing else. A champion lookup sends the profile URL and the name. A champion is erased at both addresses together.
 - Evidence and headlines are stored as data. They never reach a system prompt, and they reach copy only through the whitelisted headline variable.
 

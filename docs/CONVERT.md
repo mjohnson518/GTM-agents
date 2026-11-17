@@ -125,7 +125,7 @@ Warmth, the deal stage and stopped sequences only move forward. Unlinking or can
 
 Both are static, deterministic and built from the database alone: no model, no web.
 
-- **Prep brief** (on booking, in the 24-hour reminder, and on demand with `prep-<contact id or email>` for any contact): who they are, the account, segment, team size and fit, recent signals (type and date only), relationship history, the last touches (subjects of your own emails only), reply intents (never their text), the deal, earlier meetings, your own meeting notes and, with meeting notes on, what recorded calls produced (the prospect's words, checked against the transcript, kept apart from your notes; [MEETING-NOTES.md](MEETING-NOTES.md)). Other people at the account are counted, never named.
+- **Prep brief** (on booking, in the 24-hour reminder, and on demand with `prep-<contact id or email>` for any contact): who they are, the account, segment, team size and fit, recent signals (type and date only), relationship history, the last touches (subjects of your own emails only), reply intents (never their text), the deal, earlier meetings, your own meeting notes and, with meeting notes on, what recorded calls produced (the prospect's words, checked against the transcript, kept apart from your notes; [MEETING-NOTES.md](MEETING-NOTES.md)). With `convert:brief_research_enabled`, the prep brief also shows "Public context (unverified)": the account's research facts ([SOURCING.md](SOURCING.md#account-research): headcount, employees, HQ, founded, sector, industry, type, funding stage, raised, technologies), each with the host of its source, when the research found them in the last 90 days. A fact without a source is not shown. The handoff brief and every draft leave them out. Other people at the account are counted, never named.
 - **Deal handoff brief** (with `convert:handoff_enabled`, hourly): when a deal reaches `proposal` or `negotiation`, its value, age, stage history, meetings held and missed, and the contact section above, once per deal and stage. Pricing, offers and discounts stay with you.
 
 ## The drafts
@@ -157,6 +157,7 @@ The meeting commands need `convert:calendar_enabled`; `/meetings` and `prep-` on
 | `convert:calendar_enabled` | off | Calendar sync, the booked effects, reminders, the held question, recap and rebook drafts, and the meeting commands |
 | `convert:post_demo_enabled` | off | The day 4 and day 10 follow-up drafts |
 | `convert:handoff_enabled` | off | The deal handoff brief |
+| `convert:brief_research_enabled` | off | Prep briefs show the account's research facts, with their sources, marked unverified |
 | `convert:notes_enabled` | off | Meeting notes from Fathom or Granola: recordings, transcripts and the quotes extracted from them ([MEETING-NOTES.md](MEETING-NOTES.md)) |
 | `convert:notes_in_recap` | off | Recap drafts add the next steps agreed on the recorded call, quoted, and are marked for review of that draft |
 

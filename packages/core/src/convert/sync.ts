@@ -69,6 +69,8 @@ export interface SyncDeps {
   log: JobLogger;
   /** Events handled per run, at most. */
   maxRows: number;
+  /** convert:brief_research_enabled, read by the job: the booking's prep brief shows research facts. */
+  briefResearch?: boolean;
 }
 
 export interface SyncResult {
@@ -273,7 +275,7 @@ async function attach(deps: SyncDeps, event: CalendarEventSummary, code: string,
     .first<MeetingRecord>();
   if (!stored) return;
   await applyBooked(
-    { db: deps.db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now: deps.now, log: deps.log },
+    { db: deps.db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now: deps.now, log: deps.log, briefResearch: deps.briefResearch === true },
     { ...stored, event_id: event.id, code, otherContactIds: stored.contact_id === contactId ? others : [] },
   );
 }
@@ -524,7 +526,7 @@ export async function runCalendarSync(deps: SyncDeps): Promise<SyncResult> {
           await noticeOnce(deps, meetingEffectKey(code), `meeting_moved:${start}`, `The meeting with ${name} [${code}] moved to ${when(start)}. Reminders are reset.${drafts}`);
         }
         await applyBooked(
-          { db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now, log },
+          { db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now, log, briefResearch: deps.briefResearch === true },
           {
             event_id: event.id,
             code,

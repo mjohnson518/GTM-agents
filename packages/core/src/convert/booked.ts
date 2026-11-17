@@ -72,6 +72,8 @@ export interface BookedDeps {
   log: JobLogger;
   /** Skip the operator notice (a command answers in chat instead). The brief is still stored. */
   quiet?: boolean;
+  /** convert:brief_research_enabled: the prep brief shows the account's research facts. */
+  briefResearch?: boolean;
 }
 
 export interface BookedResult {
@@ -209,7 +211,7 @@ export async function applyBooked(deps: BookedDeps, meeting: BookedMeeting): Pro
   await step("brief", async () => {
     const data = await loadContactBrief(db, booked.id);
     if (!data) return;
-    const brief = renderPrepBrief(data, { code: meeting.code, starts_at: meeting.starts_at, ends_at: meeting.ends_at, attribution: meeting.attribution }, now);
+    const brief = renderPrepBrief(data, { code: meeting.code, starts_at: meeting.starts_at, ends_at: meeting.ends_at, attribution: meeting.attribution }, now, { research: deps.briefResearch === true });
     result.brief = brief;
     const deal = await dealFor(db, booked.id, booked.account_key);
     result.dealId = deal?.id ?? null;

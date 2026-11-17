@@ -453,7 +453,7 @@ describe("intent scoring rotation", () => {
 describe("the signal jobs", () => {
   it("register with named-day schedules and do nothing while their flags are off", async () => {
     const jobs = createSignalJobs({ adapters: () => ({ news: fakeNews([]), boards: fakeBoards({}), similar: fakeSimilar({}), discovery: fakeWebsets([]), people: fakePeople("p", {}) }) });
-    expect(jobs.map((j) => j.name)).toEqual(["signal_websets", "signal_monitor_drain", "signal_news", "signal_hiring_boards", "signal_lookalikes", "signal_coverage_fill", "intent_scoring", "signal_employment"]);
+    expect(jobs.map((j) => j.name)).toEqual(["signal_websets", "signal_monitor_drain", "signal_news", "signal_hiring_boards", "signal_lookalikes", "signal_coverage_fill", "intent_scoring", "signal_employment", "signal_account_watch", "signal_competitor_watch"]);
     for (const job of jobs) {
       expect(job.flag).toMatch(/^(signals|scoring):/);
       expect(job.ceilings.maxRows).toBeGreaterThan(0);

@@ -107,6 +107,7 @@ export function createConvertJobs<E extends ConvertEnv>(deps: ConvertDeps<E>): R
         now: ctx.now,
         log: ctx.log,
         maxRows: Math.min(options.syncMaxRows, ctx.ceilings.maxRows ?? options.syncMaxRows),
+        briefResearch: await readOn(ctx.flags, CONVERT_FLAGS.briefResearch),
       });
       return {
         summary: `listed ${result.listed}, handled ${result.handled}: booked ${result.booked}, ambiguous ${result.ambiguous}, unmatched ${result.unmatched}, moved ${result.moved}, cancelled ${result.cancelled}, failed ${result.failed}${result.truncated ? " (more than one run handles)" : ""}`,

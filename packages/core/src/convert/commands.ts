@@ -216,7 +216,7 @@ export async function runConvertCommand(deps: ConvertCommandDeps, command: Conve
       )
       .bind(contact.id, now.toISOString())
       .first<{ code: string; starts_at: string; ends_at: string; attribution: string | null }>();
-    return renderPrepBrief(brief, next, now);
+    return renderPrepBrief(brief, next, now, { research: await readOn(deps.flags, CONVERT_FLAGS.briefResearch) });
   }
 
   if (!(await readOn(deps.flags, CONVERT_FLAGS.calendar))) return `Calendar sync is off (${CONVERT_FLAGS.calendar}), so meeting commands do nothing. Nothing was changed.`;
@@ -248,14 +248,14 @@ export async function runConvertCommand(deps: ConvertCommandDeps, command: Conve
       db.prepare("UPDATE calendar_events SET state = 'attributed', updated_at = ?2 WHERE event_id = ?1").bind(row.event_id, at),
     ]);
     const applied = await applyBooked(
-      { db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now, log, quiet: true },
+      { db, config: deps.config, operator: deps.operator, chatId: deps.chatId, now, log, quiet: true, briefResearch: await readOn(deps.flags, CONVERT_FLAGS.briefResearch) },
       { event_id: row.event_id, code: row.code, contact_id: contact.id, starts_at: row.starts_at, ends_at: row.ends_at, status: row.status, attribution: "operator_link", first_seen_at: firstSeen },
     );
     const onInvite = parseJsonList(row.attendee_hashes).includes(contact.email_sha256) || (contact.account_key !== null && parseJsonList(row.attendee_domains).some((d) => d === contact.account_key || d.endsWith(`.${contact.account_key}`)));
     let brief = applied.brief;
     if (!brief) {
       const data = await loadContactBrief(db, contact.id);
-      brief = data ? renderPrepBrief(data, { code: row.code, starts_at: row.starts_at, ends_at: row.ends_at, attribution: "operator_link" }, now) : null;
+      brief = data ? renderPrepBrief(data, { code: row.code, starts_at: row.starts_at, ends_at: row.ends_at, attribution: "operator_link" }, now, { research: await readOn(deps.flags, CONVERT_FLAGS.briefResearch) }) : null;
     }
     return [
       `Linked meeting ${row.code} (${when(row.starts_at)}) to ${displayName(contact)}.${onInvite ? "" : " Note: they are not on the invite by address or company domain."}`,

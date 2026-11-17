@@ -31,7 +31,7 @@ import { createReportJobs } from "@gtm-agents/core/reports";
 import { createRetentionJob } from "@gtm-agents/core/runtime";
 import { createDeliveryJobs, createOutreachSender, readColdVolume, senderDepsFromEnv } from "@gtm-agents/core/sending";
 import { createSequenceJobs } from "@gtm-agents/core/sequences";
-import { createSignalJobs, handleMonitorWebhook, type MonitorConfig } from "@gtm-agents/core/signals";
+import { createSignalJobs, handleMonitorWebhook, watchCommands, type MonitorConfig } from "@gtm-agents/core/signals";
 import { createSourcingJobs } from "@gtm-agents/core/sourcing";
 import { createAdapter as createExa, parseMonitorDelivery, verifyMonitorSignature } from "@gtm-agents/adapters/data-exa";
 import { createAdapter as createJobBoards } from "@gtm-agents/adapters/data-jobboards";
@@ -93,8 +93,9 @@ const sourcing = createSourcingJobs<Env>({
   },
 });
 
-// Signals: websets, search monitors, dated news, hiring boards, responder lookalikes, coverage fill and
-// employment checks (with champion moves), each behind its own signals:* flag (docs/SIGNALS.md). Add your monitors here: each names its key, the
+// Signals: websets, search monitors, dated news, hiring boards, responder lookalikes, coverage fill,
+// employment checks (with champion moves) and the account and competitor watches, each behind its
+// own signals:* flag (docs/SIGNALS.md). Add your monitors here: each names its key, the
 // Worker secret that signs its deliveries, and whether its results are company sites or articles.
 const monitors: readonly MonitorConfig[] = [];
 const signals = createSignalJobs<Env>({
@@ -104,6 +105,8 @@ const signals = createSignalJobs<Env>({
     return { discovery: exa, similar: exa, news: exa, boards: createJobBoards(context(env, "data-jobboards")), people: createHunter(context(env, "data-hunter")), ...(employment ? { employment } : {}) };
   },
   operator,
+  // The competitor watch's weekly proposal (signals:competitor_proposals_enabled) uses the strategist role.
+  model,
   options: { monitors },
 });
 
@@ -230,6 +233,8 @@ export default createWorker(config, {
   // The operator dashboard at /admin, behind Cloudflare Access (docs/DASHBOARD.md): learning
   // proposals, fitness and the learnings summary come from the learning module.
   dashboard: learningDashboard<Env>(),
+  // watch-add, watch-remove and watch-list: pin the accounts the weekly account watch covers first.
+  commands: [watchCommands<Env>()],
   // Mail that Cloudflare Email Routing delivers to this Worker. Add `forwardTo` with a verified
   // destination address to keep a copy in a mailbox (docs/INBOX.md).
   inboundEmail: { parser: (env) => createRoutedMail(context(env, "email-cloudflare")) },

@@ -11,6 +11,11 @@ export type { CoverageClaim, CoverageRunInput, CoverageStats } from "./coverage.
 export { CHAMPION_SOURCE, EMPLOYMENT_SIGNAL_SOURCE, NEW_ROLE_HEADLINE, dueForEmploymentCheck, runEmploymentChecks } from "./employment.ts";
 export type { EmploymentRunInput, EmploymentStats } from "./employment.ts";
 export { SIGNAL_FLAGS, SIGNAL_LIMITS } from "./flags.ts";
+export { ACCOUNT_WATCH_SOURCE, WATCHED_DEAL_STAGES, digestSent, firstSighting, isoWeek, keepHit, releaseSightings, renderAccountDigest, runAccountWatch, settleSightings, watchedAccounts } from "./watch.ts";
+export type { AccountWatchInput, AccountWatchStats, WatchItem, WatchReason, WatchedAccount } from "./watch.ts";
+export { COMPETITOR_FIELDS, COMPETITOR_PROPOSER, PROPOSAL_FIELDS, PROPOSAL_RUBRIC, PROPOSAL_SCHEMA, parseProposal, proposalNote, renderCompetitorDigest, runCompetitorWatch } from "./competitors.ts";
+export type { Competitor, CompetitorFinding, CompetitorWatchInput, CompetitorWatchStats } from "./competitors.ts";
+export { WATCH_HELP_LINES, watchCommands } from "./watch-commands.ts";
 export { BOARD_TOKEN, DEFAULT_ROLE_KINDS, guessBoardToken, hiringAccounts, relevantRoles, runHiringBoards } from "./hiring.ts";
 export type { HiringRunInput, HiringStats } from "./hiring.ts";
 export { DEFAULT_SIGNAL_JOB_OPTIONS, SIGNAL_JOBS, createSignalJobs } from "./jobs.ts";
